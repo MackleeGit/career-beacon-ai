@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
-    title="Career Mentor AI Engine",
+    title="Career Beacon AI Engine",
     description="AI-Powered Micro-Learning and Mentorship Backend API service",
     version="1.0.0"
 )
@@ -20,7 +20,7 @@ app.add_middleware(
 def read_root():
     return {
         "status": "online",
-        "service": "Career Mentor AI Engine",
+        "service": "Career Beacon AI Engine",
         "version": "1.0.0"
     }
 

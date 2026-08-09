@@ -1,4 +1,4 @@
--- dbinit.sql – Full schema and seed data for Career Mentor project
+-- dbinit.sql – Full schema and seed data for Career Beacon project
 
 -- Enable pgvector extension (run once)
 create extension if not exists vector;
