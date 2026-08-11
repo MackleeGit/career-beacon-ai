@@ -14,7 +14,8 @@ frontend/.env.*.local
 backend/.venv/
 backend/env/
 backend/ENV/
-backend/__pycache__/
+**/__pycache__/
+.vscode/
 backend/*.pyc
 backend/*.pyo
 backend/*.pyd

@@ -1,15 +1,17 @@
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import EmbeddingRequest, EmbeddingResponse, GenerationRequest, GenerationResponse
 from app.services.gemini_service import GeminiService
+from app.services.embedding_service import EmbeddingService
 from app.core.database import supabase_client
 
 router = APIRouter(prefix="/api/test", tags=["Verification / Verification Endpoints"])
 gemini_service = GeminiService()
+embedding_service = EmbeddingService()
 
-@router.post("/gemini-embedding", response_model=EmbeddingResponse)
-async def test_gemini_embedding(request: EmbeddingRequest):
+@router.post("/minilm-embedding", response_model=EmbeddingResponse)
+async def test_minilm_embedding(request: EmbeddingRequest):
     try:
-        embedding = await gemini_service.get_embedding(request.text)
+        embedding = await embedding_service.get_embedding(request.text)
         return EmbeddingResponse(embedding=embedding, dimensions=len(embedding))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate embedding: {str(e)}")
