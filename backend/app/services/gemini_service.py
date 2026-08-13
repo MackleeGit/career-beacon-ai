@@ -15,7 +15,7 @@ class GeminiService:
         if not self.api_key or self.api_key == "your_gemini_api_key_here":
             raise ValueError("GEMINI_API_KEY is not configured correctly.")
 
-        url = f"{self.base_url}/models/gemini-3.5-flash:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/models/gemini-2.5-flash:generateContent?key={self.api_key}"
         payload = {
             "contents": [
                 {
