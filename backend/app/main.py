@@ -11,11 +11,16 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://careerbeacon.netlify.app"],  # Adjust this in production
+    allow_origins=[
+        "https://careerbeacon.netlify.app",  # Production (Netlify)
+        "http://localhost:5173",              # Vite dev server
+        "http://localhost:3000",              # Alternative dev port
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Include routers
 app.include_router(test.router)
