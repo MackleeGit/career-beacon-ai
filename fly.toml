@@ -1,0 +1,25 @@
+app = "career-mentor"
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[env]
+  # Keep empty so runtime secrets are pulled from Fly secrets instead
+  SUPABASE_URL = ""
+
+[[services]]
+  internal_port = 8000
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20

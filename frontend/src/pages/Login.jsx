@@ -23,17 +23,14 @@ export default function Login() {
       if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-
-        if (data?.user) {
-          // Insert profile row — email is the only required field at this stage
-          const { error: profileError } = await supabase.from('profiles').insert({
-            id: data.user.id,
-            email: data.user.email,
-          });
-          // Don't hard-fail if profile row already exists (idempotency)
-          if (profileError && !profileError.message.includes('duplicate')) throw profileError;
+        // Profile row is created automatically by the `on_auth_user_created` DB trigger.
+        // If email confirmation is OFF, signUp returns a live session and onAuthStateChange
+        // in App.jsx will auto-navigate. The message below is a fallback for when
+        // confirmation is ON (user won't be redirected automatically).
+        if (!data.session) {
+          setMsg({ type: 'success', text: 'Account created — check your email to confirm, then sign in.' });
         }
-        setMsg({ type: 'success', text: 'Account created — check your email for a verification link.' });
+        // If data.session exists, App.jsx picks it up and navigates automatically.
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
