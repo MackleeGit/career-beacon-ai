@@ -4,7 +4,10 @@ class EmbeddingService:
     def __init__(self):
         # The PDF specifically mentions using the all-MiniLM-L6-v2 model 
         # which natively outputs 384-dimensional dense vectors.
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        try:
+            self.model = SentenceTransformer('all-MiniLM-L6-v2', local_files_only=True)
+        except Exception:
+            self.model = SentenceTransformer('all-MiniLM-L6-v2')
 
     async def get_embedding(self, text: str) -> list[float]:
         """

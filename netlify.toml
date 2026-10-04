@@ -3,8 +3,9 @@
   command = "npm run build"
   publish = "dist"
 
-[build.environment]
-  VITE_API_URL = "https://career-mentor.fly.dev"
+# VITE_API_URL must be set in the Netlify dashboard → Site Settings → Environment Variables
+# Value: your Render service URL, e.g. https://career-beacon-api.onrender.com
+# Do NOT hardcode it here — it changes per deployment environment.
 
 # SPA fallback – send all routes to index.html so React Router works
 [[redirects]]

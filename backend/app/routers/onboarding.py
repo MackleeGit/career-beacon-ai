@@ -3,12 +3,12 @@ from pydantic import BaseModel
 from typing import List, Dict, Any
 from app.core.database import supabase_client
 from app.services.embedding_service import EmbeddingService
-from app.services.gemini_service import GeminiService
+from app.services.ai_service import AIService
 
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
 
 embedding_service = EmbeddingService()
-gemini_service = GeminiService()
+ai_service = AIService()
 
 class CareerSearchRequest(BaseModel):
     career_query: str
@@ -31,11 +31,11 @@ async def search_career(request: CareerSearchRequest):
     # 1. Embed the user's query
     query_vector = await embedding_service.get_embedding(query)
 
-    # 2. Search Supabase for existing careers with similarity > 0.85
+    # 2. Search Supabase for existing careers using semantic vector search
     try:
         response = supabase_client.rpc(
             "match_careers",
-            {"query_embedding": query_vector, "match_threshold": 0.85, "match_count": 1}
+            {"query_embedding": query_vector, "match_threshold": 0.30, "match_count": 1}
         ).execute()
 
         if response.data and len(response.data) > 0:
@@ -69,26 +69,31 @@ async def search_career(request: CareerSearchRequest):
     }
     """
     try:
-        ai_data = await gemini_service.generate_json(query, system_instruction=system_prompt)
-        
+        ai_data = await ai_service.generate_json(query, system_instruction=system_prompt)
+    except Exception as ai_err:
+        print(f"AI provider error: {ai_err}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI career generation is currently unavailable. Please try again later."
+        )
+
+    try:
         # 4. Save to Database
-        # 4a. Embed the new career title
-        career_vector = await embedding_service.get_embedding(ai_data["title"])
-        
+        career_vector = await embedding_service.get_embedding(f"{ai_data['title']}: {ai_data['description']}")
+
         # Insert Career
         career_res = supabase_client.table("careers").insert({
             "title": ai_data["title"],
             "description": ai_data["description"],
             "career_vector": career_vector
         }).execute()
-        
+
         new_career = career_res.data[0]
         career_id = new_career["id"]
-        
-        # Insert Skills (Upsert to avoid duplicates, although we need to handle this carefully)
+
+        # Insert Skills
         inserted_skills = []
         for sk in ai_data["skills"]:
-            # Try to find existing skill
             exist_sk = supabase_client.table("skills").select("*").eq("name", sk["name"]).execute()
             if exist_sk.data:
                 sk_id = exist_sk.data[0]["id"]
@@ -100,7 +105,7 @@ async def search_career(request: CareerSearchRequest):
                 }).execute()
                 sk_id = new_sk.data[0]["id"]
                 inserted_skills.append(new_sk.data[0])
-            
+
             # Link to career
             supabase_client.table("career_skills").insert({
                 "career_id": career_id,
@@ -114,7 +119,7 @@ async def search_career(request: CareerSearchRequest):
             "skills": inserted_skills
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate career path: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save generated career path: {str(e)}")
 
 @router.post("/save-skills")
 async def save_skills(request: SaveSkillsRequest):

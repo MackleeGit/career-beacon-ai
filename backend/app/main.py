@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import test, onboarding
@@ -9,14 +10,16 @@ app = FastAPI(
 )
 
 # Configure CORS
+IS_DEV = os.getenv("ENVIRONMENT", "development") == "development"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
+    # In dev: allow all origins so any LAN IP / network works automatically.
+    # In production: restrict to the explicit whitelist only.
+    allow_origins=["*"] if IS_DEV else [
         "https://careerbeacon.netlify.app",  # Production (Netlify)
-        "http://localhost:5173",              # Vite dev server
-        "http://localhost:3000",              # Alternative dev port
     ],
-    allow_credentials=True,
+    allow_credentials=not IS_DEV,  # credentials can't be used with wildcard origin
     allow_methods=["*"],
     allow_headers=["*"],
 )

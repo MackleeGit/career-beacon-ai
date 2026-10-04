@@ -1,0 +1,33 @@
+# Render deployment configuration
+# Docs: https://render.com/docs/render-yaml-spec
+#
+# One-click deploy: connect this repo in Render dashboard,
+# it will auto-detect this file and configure the service.
+#
+# After deploy, copy the service URL (e.g. https://career-beacon-api.onrender.com)
+# and set it as VITE_API_URL in Netlify's Environment Variables dashboard.
+
+services:
+  - type: web
+    name: career-beacon-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+
+    # Environment variables — set secret values in Render dashboard, not here
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: SUPABASE_URL
+        sync: false          # Set in Render dashboard
+      - key: SUPABASE_SERVICE_KEY
+        sync: false          # Set in Render dashboard
+      - key: GROQ_API_KEY
+        sync: false          # Set in Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false          # Set in Render dashboard
+
+    # Health check — Render will ping this to confirm service is up
+    healthCheckPath: /health
