@@ -35,7 +35,7 @@ async def search_career(request: CareerSearchRequest):
     try:
         response = supabase_client.rpc(
             "match_careers",
-            {"query_embedding": query_vector, "match_threshold": 0.30, "match_count": 1}
+            {"query_embedding": query_vector, "match_threshold": 0.88, "match_count": 1}
         ).execute()
 
         if response.data and len(response.data) > 0:
