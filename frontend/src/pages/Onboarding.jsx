@@ -1,6 +1,8 @@
 // src/pages/Onboarding.jsx
 import { useState, useCallback } from 'react';
+import { supabase } from '../lib/SupabaseClient';
 import { searchCareer, saveSkills } from '../lib/api';
+import Toast from '../components/Toast';
 
 const PROFICIENCY_LEVELS = [
   { label: 'Novice',       value: 20 },
@@ -9,10 +11,10 @@ const PROFICIENCY_LEVELS = [
 ];
 
 // ─── Step 1: Career Search ────────────────────────────────────────────────────
-function CareerSearch({ onCareerFound }) {
-  const [query, setQuery]   = useState('');
+function CareerSearch({ onCareerFound, onLogoutRequest }) {
+  const [query, setQuery]     = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError]   = useState(null);
+  const [error, setError]     = useState(null);
 
   const handleSearch = useCallback(async (e) => {
     e.preventDefault();
@@ -73,12 +75,32 @@ function CareerSearch({ onCareerFound }) {
       </form>
 
       {error && <div className="alert alert--error">{error}</div>}
+
+      {/* Logout link at bottom of step 1 */}
+      <p style={{ textAlign: 'center', marginTop: '24px', fontSize: '0.8rem' }}>
+        <button
+          id="onboarding-logout-btn"
+          type="button"
+          onClick={onLogoutRequest}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--text-muted)',
+            cursor: 'pointer',
+            fontSize: '0.8rem',
+            textDecoration: 'underline',
+            padding: 0,
+          }}
+        >
+          Log out
+        </button>
+      </p>
     </div>
   );
 }
 
 // ─── Step 2: Skill Sliders ────────────────────────────────────────────────────
-function SkillAssessment({ career, skills, userId, onComplete }) {
+function SkillAssessment({ career, skills, userId, onComplete, onBack }) {
   // Default everyone to Novice (20)
   const [proficiency, setProficiency] = useState(
     () => Object.fromEntries(skills.map((s) => [s.id, 20]))
@@ -94,11 +116,7 @@ function SkillAssessment({ career, skills, userId, onComplete }) {
     setLoading(true);
     setError(null);
     try {
-      const payload = Object.entries(proficiency).map(([skill_id, prof]) => ({
-        skill_id,
-        proficiency: prof,
-      }));
-      await saveSkills(userId, career.id, payload);
+      await saveSkills(userId, career, skills, proficiency);
       onComplete({ career, skills: skills.map((s) => ({ ...s, proficiency: proficiency[s.id] })) });
     } catch (err) {
       setError(err.message || 'Failed to save. Please try again.');
@@ -197,9 +215,10 @@ function SkillAssessment({ career, skills, userId, onComplete }) {
 
 // ─── Onboarding Orchestrator ─────────────────────────────────────────────────
 export default function Onboarding({ user, onComplete }) {
-  const [step, setStep]     = useState(1);  // 1 = search, 2 = sliders
-  const [career, setCareer] = useState(null);
-  const [skills, setSkills] = useState([]);
+  const [step, setStep]         = useState(1);  // 1 = search, 2 = sliders
+  const [career, setCareer]     = useState(null);
+  const [skills, setSkills]     = useState([]);
+  const [showLogoutToast, setShowLogoutToast] = useState(false);
 
   const handleCareerFound = ({ career: c, skills: s }) => {
     setCareer(c);
@@ -211,6 +230,10 @@ export default function Onboarding({ user, onComplete }) {
     setStep(1);
     setCareer(null);
     setSkills([]);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
 
   return (
@@ -231,14 +254,18 @@ export default function Onboarding({ user, onComplete }) {
 
           <div className="card">
             {step === 1 && (
-              <CareerSearch onCareerFound={handleCareerFound} />
+              <CareerSearch
+                onCareerFound={handleCareerFound}
+                onLogoutRequest={() => setShowLogoutToast(true)}
+              />
             )}
             {step === 2 && career && (
               <>
                 {/* Back navigation */}
                 <button
                   type="button"
-                  onClick={handleBack}
+                  id="onboarding-back-btn"
+                  onClick={() => setShowLogoutToast(true)}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -279,6 +306,7 @@ export default function Onboarding({ user, onComplete }) {
                     skills={skills}
                     userId={user.id}
                     onComplete={onComplete}
+                    onBack={handleBack}
                   />
                 )}
               </>
@@ -291,6 +319,24 @@ export default function Onboarding({ user, onComplete }) {
           </p>
         </div>
       </div>
+
+      {/* Logout / back confirmation toast */}
+      {showLogoutToast && (
+        <Toast
+          message={
+            step === 2
+              ? 'Going back will discard your current career selection. Are you sure?'
+              : 'Are you sure you want to log out?'
+          }
+          confirmLabel={step === 2 ? 'Yes, go back' : 'Yes, log out'}
+          onConfirm={() => {
+            setShowLogoutToast(false);
+            if (step === 2) handleBack();
+            else handleLogout();
+          }}
+          onCancel={() => setShowLogoutToast(false)}
+        />
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 // src/pages/Dashboard.jsx
 import { useState } from 'react';
 import { supabase } from '../lib/SupabaseClient';
+import Toast from '../components/Toast';
 
 const LEVEL_LABEL = { 20: 'Novice', 50: 'Intermediate', 80: 'Advanced', 100: 'Mastered' };
 
@@ -43,10 +44,12 @@ function SkillCard({ skill }) {
 }
 
 export default function Dashboard({ user, career, skills }) {
-  const [signingOut, setSigningOut] = useState(false);
+  const [signingOut, setSigningOut]           = useState(false);
+  const [showLogoutToast, setShowLogoutToast] = useState(false);
 
   const handleSignOut = async () => {
     setSigningOut(true);
+    setShowLogoutToast(false);
     await supabase.auth.signOut();
   };
 
@@ -91,7 +94,7 @@ export default function Dashboard({ user, career, skills }) {
               id="sign-out-btn"
               type="button"
               className="btn btn--ghost btn--sm"
-              onClick={handleSignOut}
+              onClick={() => setShowLogoutToast(true)}
               disabled={signingOut}
             >
               {signingOut ? 'Signing out…' : 'Sign out'}
@@ -206,6 +209,16 @@ export default function Dashboard({ user, career, skills }) {
           </div>
         </main>
       </div>
+
+      {/* Logout confirmation toast */}
+      {showLogoutToast && (
+        <Toast
+          message="Are you sure you want to log out?"
+          confirmLabel="Yes, log out"
+          onConfirm={handleSignOut}
+          onCancel={() => setShowLogoutToast(false)}
+        />
+      )}
     </>
   );
 }
