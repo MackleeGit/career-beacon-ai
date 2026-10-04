@@ -18,6 +18,8 @@ app.add_middleware(
     # In production: restrict to the explicit whitelist only.
     allow_origins=["*"] if IS_DEV else [
         "https://careerbeacon.netlify.app",  # Production (Netlify)
+        "http://localhost:5173",             # Local development
+        "http://127.0.0.1:5173",             # Local development (alternative)
     ],
     allow_credentials=not IS_DEV,  # credentials can't be used with wildcard origin
     allow_methods=["*"],
