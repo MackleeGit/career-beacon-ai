@@ -184,28 +184,7 @@ export default function Dashboard({ user, career, skills }) {
             )}
           </div>
 
-          {/* Planned modules */}
-          <div
-            style={{
-              marginTop: '24px',
-              padding: '20px 24px',
-              borderRadius: 'var(--r-lg)',
-              border: '1px dashed var(--border)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '16px',
-              background: 'var(--bg-surface)',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '2px' }}>
-                Personalised Learning Feed and Mentorship (Sprint III)
-              </div>
-              <p style={{ fontSize: '0.85rem', margin: 0 }}>
-                Micro-content recommendations and mentor matching tailored to your skill gaps will be integrated in Sprint III.
-              </p>
-            </div>
-          </div>
+
         </main>
       </div>
 
