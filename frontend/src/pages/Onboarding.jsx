@@ -100,7 +100,7 @@ function CareerSearch({ onCareerFound, onLogoutRequest }) {
 }
 
 // ─── Step 2: Skill Sliders ────────────────────────────────────────────────────
-function SkillAssessment({ career, skills, userId, onComplete, onBack }) {
+function SkillAssessment({ career, skills, source, userId, onComplete, onBack }) {
   // Default everyone to Novice (20)
   const [proficiency, setProficiency] = useState(
     () => Object.fromEntries(skills.map((s) => [s.id, 20]))
@@ -136,7 +136,11 @@ function SkillAssessment({ career, skills, userId, onComplete, onBack }) {
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>{career.title}</h2>
-          <span className="badge badge--accent">Matched</span>
+          {source === 'matched' ? (
+            <span className="badge badge--success">Catalog Match</span>
+          ) : (
+            <span className="badge badge--accent">AI Generated</span>
+          )}
         </div>
         {career.description && (
           <p style={{ fontSize: '0.9rem' }}>{career.description}</p>
@@ -218,11 +222,13 @@ export default function Onboarding({ user, onComplete }) {
   const [step, setStep]         = useState(1);  // 1 = search, 2 = sliders
   const [career, setCareer]     = useState(null);
   const [skills, setSkills]     = useState([]);
+  const [source, setSource]     = useState(null); // 'matched' | 'generated'
   const [showLogoutToast, setShowLogoutToast] = useState(false);
 
-  const handleCareerFound = ({ career: c, skills: s }) => {
+  const handleCareerFound = ({ career: c, skills: s, status }) => {
     setCareer(c);
     setSkills(s);
+    setSource(status); // 'matched' or 'generated' from backend
     setStep(2);
   };
 
@@ -303,6 +309,7 @@ export default function Onboarding({ user, onComplete }) {
                   <SkillAssessment
                     career={career}
                     skills={skills}
+                    source={source}
                     userId={user.id}
                     onComplete={onComplete}
                     onBack={handleBack}

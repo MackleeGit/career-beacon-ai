@@ -299,6 +299,12 @@ input::placeholder, textarea::placeholder {
   border: 1px solid hsla(174, 72%, 56%, 0.3);
 }
 
+.badge--success {
+  background: hsla(142, 72%, 29%, 0.18);
+  color: hsl(142, 69%, 58%);
+  border: 1px solid hsla(142, 69%, 58%, 0.3);
+}
+
 /* ============================================================
    PROGRESS BAR
    ============================================================ */
