@@ -2,13 +2,13 @@
 import { useEffect } from 'react';
 
 /**
- * A slide-up confirmation toast.
+ * Confirmation toast modal component.
  * Props:
- *   message    – string shown in the toast
- *   onConfirm  – called when user clicks the confirm button
- *   onCancel   – called when user clicks Cancel or the backdrop
- *   confirmLabel – text for the confirm button (default: "Yes, log out")
- *   confirmDanger – if true, confirm button is styled red (default: true)
+ *   message: string shown in the toast
+ *   onConfirm: called when user clicks the confirm button
+ *   onCancel: called when user clicks Cancel or the backdrop
+ *   confirmLabel: text for the confirm button (default: "Yes, log out")
+ *   confirmDanger: if true, confirm button is styled red (default: true)
  */
 export default function Toast({
   message,

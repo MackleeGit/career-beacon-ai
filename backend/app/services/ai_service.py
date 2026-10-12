@@ -4,8 +4,8 @@ ai_service.py
 Multi-provider AI service with automatic fallback.
 
 Priority:
-  1. Groq  – openai/gpt-oss-120b      (free, fast, reliable)
-  2. Gemini – gemini-2.5-flash         (free, Google, backup)
+  1. Groq - openai/gpt-oss-120b (fast, reliable)
+  2. Gemini - gemini-2.5-flash (backup)
 
 Each provider gets MAX_RETRIES attempts with exponential backoff on
 transient errors (429, 503) before the next provider is tried.
@@ -55,7 +55,7 @@ async def _call_groq(prompt: str, system_instruction: str, client: httpx.AsyncCl
 
 
 async def _call_gemini(prompt: str, system_instruction: str, client: httpx.AsyncClient) -> dict:
-    """Call the Gemini REST API (v1, not v1beta — more stable model support)."""
+    """Call the Gemini REST API."""
     payload: dict = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json"},
@@ -93,12 +93,12 @@ async def _with_retries(provider_fn, label: str, **kwargs) -> dict:
     async with httpx.AsyncClient() as client:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                print(f"[AI] {label} – attempt {attempt}/{MAX_RETRIES}")
+                print(f"[AI] {label} - attempt {attempt}/{MAX_RETRIES}")
                 return await provider_fn(client=client, **kwargs)
             except httpx.HTTPStatusError as e:
                 last_err = e
                 if e.response.status_code in TRANSIENT_CODES and attempt < MAX_RETRIES:
-                    print(f"[AI] {label} transient error ({e.response.status_code}), retrying in {delay}s…")
+                    print(f"[AI] {label} transient error ({e.response.status_code}), retrying in {delay}s...")
                     await asyncio.sleep(delay)
                     delay *= 2
                 else:
@@ -118,7 +118,7 @@ async def _with_retries(provider_fn, label: str, **kwargs) -> dict:
 
 class AIService:
     """
-    Drop-in replacement for GeminiService.
+    Service for structured JSON generation with multi-provider fallback.
     Usage: await ai_service.generate_json(prompt, system_instruction=...)
     """
 
@@ -143,7 +143,7 @@ class AIService:
                 return await _with_retries(fn, label, prompt=prompt, system_instruction=system_instruction)
             except Exception as e:
                 last_err = e
-                print(f"[AI] {label} exhausted, trying next provider…")
+                print(f"[AI] {label} exhausted, trying next provider...")
                 continue
 
         raise RuntimeError(

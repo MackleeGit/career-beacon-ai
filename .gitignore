@@ -1,5 +1,6 @@
 # Project Management
 management/
+pdf-forge-exports/
 
 # Frontend (Node.js / React / Vite)
 frontend/node_modules/

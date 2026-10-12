@@ -82,7 +82,7 @@ export default function Dashboard({ user, career, skills }) {
           }}
         >
           <div className="logo-mark">
-            <div className="logo-mark__icon">🧭</div>
+            <div className="logo-mark__icon">CB</div>
             Career Beacon
           </div>
 
@@ -97,12 +97,12 @@ export default function Dashboard({ user, career, skills }) {
               onClick={() => setShowLogoutToast(true)}
               disabled={signingOut}
             >
-              {signingOut ? 'Signing out…' : 'Sign out'}
+              {signingOut ? 'Signing out...' : 'Sign out'}
             </button>
           </div>
         </header>
 
-        {/* ── Main content ── */}
+        {/* Main content */}
         <main className="container--wide">
           {/* Welcome + career banner */}
           <div className="card" style={{ marginBottom: '24px', textAlign: 'left' }}>
@@ -121,11 +121,11 @@ export default function Dashboard({ user, career, skills }) {
                   WELCOME BACK
                 </p>
                 <h2 style={{ marginBottom: '4px' }}>
-                  Hello, <span className="gradient-text">{displayName}</span> 👋
+                  Hello, <span className="gradient-text">{displayName}</span>
                 </h2>
                 <p style={{ fontSize: '0.9rem' }}>
                   Your target career:{' '}
-                  <strong style={{ color: 'var(--text-primary)' }}>{career?.title ?? '—'}</strong>
+                  <strong style={{ color: 'var(--text-primary)' }}>{career?.title ?? 'Not specified'}</strong>
                 </p>
               </div>
 
@@ -167,7 +167,7 @@ export default function Dashboard({ user, career, skills }) {
 
             {skills.length === 0 ? (
               <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '32px 0' }}>
-                No skills found. Something may have gone wrong — try refreshing.
+                No skills found. Please try refreshing.
               </p>
             ) : (
               <div
@@ -184,7 +184,7 @@ export default function Dashboard({ user, career, skills }) {
             )}
           </div>
 
-          {/* Coming soon teaser */}
+          {/* Planned modules */}
           <div
             style={{
               marginTop: '24px',
@@ -197,13 +197,12 @@ export default function Dashboard({ user, career, skills }) {
               background: 'var(--bg-surface)',
             }}
           >
-            <span style={{ fontSize: '1.5rem' }}>🔮</span>
             <div>
               <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '2px' }}>
-                Personalised learning feed — coming soon
+                Personalised Learning Feed and Mentorship (Sprint III)
               </div>
               <p style={{ fontSize: '0.85rem', margin: 0 }}>
-                Micro-content and mentor recommendations tailored to your skill gaps will appear here.
+                Micro-content recommendations and mentor matching tailored to your skill gaps will be integrated in Sprint III.
               </p>
             </div>
           </div>

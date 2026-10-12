@@ -42,7 +42,7 @@ function CareerSearch({ onCareerFound, onLogoutRequest }) {
         What's your <span className="gradient-text">target career?</span>
       </h2>
       <p style={{ marginBottom: '28px', fontSize: '0.95rem' }}>
-        Type anything — we'll match it to a recognised career path using AI.
+        Enter your target career to view required technical skills.
       </p>
 
       <form onSubmit={handleSearch} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -51,7 +51,7 @@ function CareerSearch({ onCareerFound, onLogoutRequest }) {
           <input
             id="career-input"
             type="text"
-            placeholder="e.g. AI Web App Developer, UX Designer…"
+            placeholder="e.g. Frontend Developer, Data Scientist..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
@@ -68,9 +68,9 @@ function CareerSearch({ onCareerFound, onLogoutRequest }) {
           {loading ? (
             <>
               <span className="spinner" />
-              Analysing…
+              Searching...
             </>
-          ) : 'Find My Path →'}
+          ) : 'Find Career Pathway'}
         </button>
       </form>
 
@@ -136,7 +136,7 @@ function SkillAssessment({ career, skills, userId, onComplete, onBack }) {
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>{career.title}</h2>
-          <span className="badge badge--accent">Matched ✓</span>
+          <span className="badge badge--accent">Matched</span>
         </div>
         {career.description && (
           <p style={{ fontSize: '0.9rem' }}>{career.description}</p>
@@ -205,15 +205,15 @@ function SkillAssessment({ career, skills, userId, onComplete, onBack }) {
         {loading ? (
           <>
             <span className="spinner" />
-            Saving your graph…
+            Saving skill profile...
           </>
-        ) : 'Build My Skill Graph →'}
+        ) : 'Save & Continue'}
       </button>
     </div>
   );
 }
 
-// ─── Onboarding Orchestrator ─────────────────────────────────────────────────
+// Onboarding Orchestrator
 export default function Onboarding({ user, onComplete }) {
   const [step, setStep]         = useState(1);  // 1 = search, 2 = sliders
   const [career, setCareer]     = useState(null);
@@ -247,7 +247,7 @@ export default function Onboarding({ user, onComplete }) {
           {/* Logo */}
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '40px' }}>
             <div className="logo-mark">
-              <div className="logo-mark__icon">🧭</div>
+              <div className="logo-mark__icon">CB</div>
               Career Beacon
             </div>
           </div>
@@ -281,23 +281,22 @@ export default function Onboarding({ user, onComplete }) {
                   onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
                   onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
                 >
-                  ← Change career
+                  Change career
                 </button>
 
                 {/* Empty skills guard */}
                 {skills.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '12px' }}>⚠️</div>
                     <p style={{ marginBottom: '20px' }}>
                       No skills were returned for <strong style={{ color: 'var(--text-primary)' }}>{career.title}</strong>.
-                      This can happen if the AI response was incomplete. Please try a different search term.
+                      Please try a different career search term.
                     </p>
                     <button
                       type="button"
                       className="btn btn--ghost"
                       onClick={handleBack}
                     >
-                      ← Try again
+                      Try again
                     </button>
                   </div>
                 ) : (

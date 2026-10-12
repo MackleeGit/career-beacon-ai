@@ -33,21 +33,21 @@ export async function searchCareer(query) {
 }
 
 /**
- * Save the user's career + skill proficiency graph.
+ * Save the user's career and skill proficiency graph.
  * Handles two cases:
- *  - Matched career: pass careerId + skills with real UUIDs.
- *  - Pending (AI-generated) career: pass pendingCareer + pendingSkills + ordered proficiency list.
+ *  1. Matched career: pass careerId and skills with real UUIDs.
+ *  2. Pending (AI-generated) career: pass pendingCareer, pendingSkills, and proficiency list.
  *
  * @param {string} userId
  * @param {{ id: string|null, title: string, description: string, _pending?: boolean }} career
- * @param {{ id: string, name: string, category: string }[]} allSkills  - full skill objects
- * @param {{ [skillId: string]: number }} proficiencyMap - skillId → proficiency value
+ * @param {{ id: string, name: string, category: string }[]} allSkills - full skill objects
+ * @param {{ [skillId: string]: number }} proficiencyMap - skillId to proficiency value
  */
 export async function saveSkills(userId, career, allSkills, proficiencyMap) {
   const isPending = career._pending || !career.id;
 
   if (isPending) {
-    // Career hasn't been saved to DB yet — send everything for the backend to persist
+    // Career has not been saved to DB yet; send payload for backend persistence
     return request('/api/onboarding/save-skills', {
       method: 'POST',
       body: JSON.stringify({
@@ -55,13 +55,13 @@ export async function saveSkills(userId, career, allSkills, proficiencyMap) {
         pending_career_title: career.title,
         pending_career_description: career.description,
         pending_skills: allSkills.map((s) => ({ name: s.name, category: s.category })),
-        // Skills ordered to match pending_skills — backend uses index position
+        // Skills ordered to match pending_skills; backend uses index position
         skills: allSkills.map((s) => ({ skill_id: s.id, proficiency: proficiencyMap[s.id] ?? 20 })),
       }),
     });
   }
 
-  // Matched career — skills already have real DB UUIDs
+  // Matched career: skills already have real DB UUIDs
   return request('/api/onboarding/save-skills', {
     method: 'POST',
     body: JSON.stringify({

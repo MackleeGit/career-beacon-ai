@@ -45,7 +45,7 @@ async def search_career(request: CareerSearchRequest):
     query_vector = await embedding_service.get_embedding(query)
 
     # 2. Search Supabase for existing careers using semantic vector search
-    SIMILARITY_THRESHOLD = 0.88
+    SIMILARITY_THRESHOLD = 0.85
     try:
         response = supabase_client.rpc(
             "match_careers",
@@ -98,8 +98,7 @@ async def search_career(request: CareerSearchRequest):
             detail=f"AI career generation is currently unavailable. Please try again later."
         )
 
-    # ── Return ephemeral data — nothing is saved until the user completes the skill graph ──
-    # We attach temporary client-side IDs so the frontend can reference each skill.
+    # Return ephemeral data; nothing is saved until user completes skill graph
     import uuid
     pending_skills = [
         {"id": str(uuid.uuid4()), "name": sk["name"], "category": sk["category"]}
@@ -108,10 +107,10 @@ async def search_career(request: CareerSearchRequest):
     return {
         "status": "generated",
         "career": {
-            "id": None,  # No DB ID yet — will be assigned on save-skills
+            "id": None,
             "title": ai_data["title"],
             "description": ai_data["description"],
-            "_pending": True,  # Flag so frontend knows this isn't committed
+            "_pending": True,
         },
         "skills": pending_skills
     }
@@ -127,7 +126,7 @@ async def save_skills(request: SaveSkillsRequest):
     try:
         career_id = request.career_id
 
-        # ── Case A: AI-generated career that hasn't been persisted yet ──
+        # Case A: AI-generated career that has not been persisted yet
         if not career_id and request.pending_career_title:
             career_vector = await embedding_service.get_embedding(
                 f"{request.pending_career_title}: {request.pending_career_description or ''}"
@@ -180,7 +179,7 @@ async def save_skills(request: SaveSkillsRequest):
 
             return {"status": "success", "message": "Career and skills saved successfully"}
 
-        # ── Case B: Matched career — skills already have real DB UUIDs ──
+        # Case B: Matched career; skills already have real DB UUIDs
         supabase_client.table("profiles").update({"target_career_id": career_id}).eq("id", request.user_id).execute()
 
         inserts = [
@@ -202,17 +201,16 @@ async def get_onboarding_status(user_id: str):
     and at least one skill saved in user_skills).
     """
     try:
-        profile_res = supabase_client.table("profiles").select("target_career_id").eq("id", user_id).single().execute()
-        profile = profile_res.data
-
-        if not profile or not profile.get("target_career_id"):
+        profile_res = supabase_client.table("profiles").select("target_career_id").eq("id", user_id).execute()
+        if not profile_res.data or not profile_res.data[0].get("target_career_id"):
             return {"onboarding_complete": False, "career": None, "skills": []}
 
+        profile = profile_res.data[0]
         career_id = profile["target_career_id"]
 
         # Fetch career info
-        career_res = supabase_client.table("careers").select("id, title, description").eq("id", career_id).single().execute()
-        career = career_res.data
+        career_res = supabase_client.table("careers").select("id, title, description").eq("id", career_id).execute()
+        career = career_res.data[0] if career_res.data else None
 
         # Fetch saved user skills with full skill details
         skills_res = supabase_client.table("user_skills").select("proficiency, skills(id, name, category)").eq("user_id", user_id).execute()

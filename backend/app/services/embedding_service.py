@@ -2,7 +2,7 @@ from fastembed import TextEmbedding
 
 class EmbeddingService:
     def __init__(self):
-        # The PDF specifically mentions using the all-MiniLM-L6-v2 model 
+        # Using the all-MiniLM-L6-v2 model 
         # which natively outputs 384-dimensional dense vectors.
         # We use FastEmbed instead of sentence-transformers to avoid PyTorch OOMs on 512MB RAM tiers.
         self.model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")

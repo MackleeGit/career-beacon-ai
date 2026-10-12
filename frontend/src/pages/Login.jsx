@@ -28,7 +28,7 @@ export default function Login() {
         // in App.jsx will auto-navigate. The message below is a fallback for when
         // confirmation is ON (user won't be redirected automatically).
         if (!data.session) {
-          setMsg({ type: 'success', text: 'Account created — check your email to confirm, then sign in.' });
+          setMsg({ type: 'success', text: 'Account created. Please check your email to confirm, then sign in.' });
         }
         // If data.session exists, App.jsx picks it up and navigates automatically.
       } else {
@@ -63,7 +63,7 @@ export default function Login() {
           <div style={{ textAlign: 'center', marginBottom: '40px' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
               <div className="logo-mark">
-                <div className="logo-mark__icon">🧭</div>
+                <div className="logo-mark__icon">CB</div>
                 Career Beacon
               </div>
             </div>

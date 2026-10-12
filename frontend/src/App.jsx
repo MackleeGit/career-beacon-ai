@@ -13,7 +13,7 @@ export default function App() {
   const [career, setCareer]     = useState(null);
   const [skills, setSkills]     = useState([]);
 
-  // ── Bootstrapper: runs when auth state changes ──────────────────────────────
+  // Session bootstrapper: runs when auth state changes
   useEffect(() => {
     const bootstrap = async (session) => {
       if (!session?.user) {
@@ -53,14 +53,14 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── Called by Onboarding when skills are saved ──────────────────────────────
+  // Called by Onboarding when skills are saved
   const handleOnboardingComplete = ({ career: c, skills: s }) => {
     setCareer(c);
     setSkills(s);
     setAppState('dashboard');
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // Render view based on app state
   if (appState === 'loading') {
     return (
       <div
@@ -75,7 +75,7 @@ export default function App() {
         }}
       >
         <div className="spinner spinner--lg" />
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Loading Career Beacon…</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Loading Career Beacon...</p>
       </div>
     );
   }
