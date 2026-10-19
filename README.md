@@ -82,11 +82,10 @@ career-mentor/
 │   ├── CHAPTER_4_SYSTEM_ANALYSIS_AND_DESIGN.md
 │   ├── CHAPTER_5_IMPLEMENTATION_AND_TESTING.md
 │   ├── SPRINT_I_AND_II_PRESENTATION_GUIDE.md
+│   ├── database queries/   # Supabase initial schema DDL & SQL migrations
 │   ├── diagrams/           # Use cases, ERD, sequence diagrams, wireframes
 │   ├── goal.txt            # System technical specifications
 │   └── task.txt            # Sprint task breakdown linked to thesis objectives
-├── dbinit.sql              # Supabase initial schema DDL
-├── patch_db.sql            # Vector(384) migration & match_careers RPC function
 ├── netlify.toml            # Frontend deployment configuration
 └── render.yaml             # Backend deployment configuration
 ```

@@ -79,3 +79,30 @@ export async function saveSkills(userId, career, allSkills, proficiencyMap) {
 export async function getOnboardingStatus(userId) {
   return request(`/api/onboarding/status/${userId}`);
 }
+
+/**
+ * Fetch personalized micro-learning recommendations (Two-Stage Hybrid).
+ * @param {string} userId
+ * @param {number} limit
+ */
+export async function getRecommendations(userId, limit = 5) {
+  return request(`/api/recommendations/${userId}?limit=${limit}`);
+}
+
+/**
+ * Submit quiz answers and update skill graph proficiency.
+ * @param {string} userId
+ * @param {string} lessonId
+ * @param {{ [questionIdx: number|string]: string }} answers
+ */
+export async function submitQuiz(userId, lessonId, answers) {
+  return request('/api/recommendations/submit-quiz', {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+      lesson_id: lessonId,
+      answers,
+    }),
+  });
+}
+

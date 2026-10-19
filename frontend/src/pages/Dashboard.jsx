@@ -1,7 +1,7 @@
-// src/pages/Dashboard.jsx
 import { useState } from 'react';
 import { supabase } from '../lib/SupabaseClient';
 import Toast from '../components/Toast';
+import Recommendations from './Recommendations';
 
 const LEVEL_LABEL = { 20: 'Novice', 50: 'Intermediate', 80: 'Advanced', 100: 'Mastered' };
 
@@ -43,7 +43,8 @@ function SkillCard({ skill }) {
   );
 }
 
-export default function Dashboard({ user, career, skills }) {
+export default function Dashboard({ user, career, skills, onSkillUpdated }) {
+  const [activeTab, setActiveTab]             = useState('graph'); // 'graph' | 'feed'
   const [signingOut, setSigningOut]           = useState(false);
   const [showLogoutToast, setShowLogoutToast] = useState(false);
 
@@ -104,85 +105,141 @@ export default function Dashboard({ user, career, skills }) {
 
         {/* Main content */}
         <main className="container--wide">
-          {/* Welcome + career banner */}
-          <div className="card" style={{ marginBottom: '24px', textAlign: 'left' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'flex-start',
-                flexWrap: 'wrap',
-                gap: '16px',
-                marginBottom: '24px',
-              }}
+          {/* Navigation Bar (Skill Graph vs Learning Feed) */}
+          <nav
+            style={{
+              display: 'flex',
+              gap: '8px',
+              marginBottom: '24px',
+              borderBottom: '1px solid var(--border)',
+              paddingBottom: '12px',
+            }}
+          >
+            <button
+              id="tab-skill-graph"
+              type="button"
+              className={`btn btn--sm ${activeTab === 'graph' ? 'btn--primary' : 'btn--ghost'}`}
+              onClick={() => setActiveTab('graph')}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
-              <div>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '4px', fontWeight: 500 }}>
-                  WELCOME BACK
-                </p>
-                <h2 style={{ marginBottom: '4px' }}>
-                  Hello, <span className="gradient-text">{displayName}</span>
-                </h2>
-                <p style={{ fontSize: '0.9rem' }}>
-                  Your target career:{' '}
-                  <strong style={{ color: 'var(--text-primary)' }}>{career?.title ?? 'Not specified'}</strong>
-                </p>
-              </div>
+              Skill Graph
+            </button>
+            <button
+              id="tab-learning-feed"
+              type="button"
+              className={`btn btn--sm ${activeTab === 'feed' ? 'btn--primary' : 'btn--ghost'}`}
+              onClick={() => setActiveTab('feed')}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              Learning Feed &amp; Quizzes
+            </button>
+          </nav>
 
-              <div
-                style={{
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--r-md)',
-                  padding: '16px 20px',
-                  minWidth: '160px',
-                  textAlign: 'center',
-                }}
-              >
-                <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-light)', lineHeight: 1 }}>
-                  {avgProgress}%
+          {activeTab === 'feed' ? (
+            <Recommendations
+              user={user}
+              career={career}
+              skills={skills}
+              onSkillUpdated={onSkillUpdated}
+              onNavigateToGraph={() => setActiveTab('graph')}
+            />
+          ) : (
+            <>
+              {/* Welcome + career banner */}
+              <div className="card" style={{ marginBottom: '24px', textAlign: 'left' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start',
+                    flexWrap: 'wrap',
+                    gap: '16px',
+                    marginBottom: '20px',
+                  }}
+                >
+                  <div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '4px', fontWeight: 500 }}>
+                      WELCOME BACK
+                    </p>
+                    <h2 style={{ marginBottom: '4px' }}>
+                      Hello, <span className="gradient-text">{displayName}</span>
+                    </h2>
+                    <p style={{ fontSize: '0.9rem' }}>
+                      Your target career:{' '}
+                      <strong style={{ color: 'var(--text-primary)' }}>{career?.title ?? 'Not specified'}</strong>
+                    </p>
+                  </div>
+
+                  <div
+                    style={{
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--r-md)',
+                      padding: '16px 20px',
+                      minWidth: '160px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-light)', lineHeight: 1 }}>
+                      {avgProgress}%
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Avg. proficiency
+                    </div>
+                  </div>
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                  Avg. proficiency
+
+                {/* Overall progress bar */}
+                <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  <span>Overall career readiness</span>
+                  <span>{masteredCount} / {skills.length} mastered</span>
+                </div>
+                <div className="progress-bar" style={{ height: '8px', marginBottom: '18px' }}>
+                  <div className="progress-bar__fill" style={{ width: `${avgProgress}%` }} />
+                </div>
+
+                {/* CTA to Learning Feed */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    Ready to close skill gaps and level up your proficiency?
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn--primary btn--sm"
+                    onClick={() => setActiveTab('feed')}
+                  >
+                    Start Micro-Learning Lessons &rarr;
+                  </button>
                 </div>
               </div>
-            </div>
 
-            {/* Overall progress bar */}
-            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              <span>Overall progress</span>
-              <span>{masteredCount} / {skills.length} mastered</span>
-            </div>
-            <div className="progress-bar" style={{ height: '8px' }}>
-              <div className="progress-bar__fill" style={{ width: `${avgProgress}%` }} />
-            </div>
-          </div>
+              {/* Skill Graph */}
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '8px' }}>
+                  <h3>Your Skill Graph</h3>
+                  <span className="badge badge--accent">{skills.length} skills tracked</span>
+                </div>
 
-          {/* Skill Graph */}
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '8px' }}>
-              <h3>Your Skill Graph</h3>
-              <span className="badge badge--accent">{skills.length} skills tracked</span>
-            </div>
-
-            {skills.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '32px 0' }}>
-                No skills found. Please try refreshing.
-              </p>
-            ) : (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                  gap: '12px',
-                }}
-              >
-                {skills.map((skill) => (
-                  <SkillCard key={skill.id} skill={skill} />
-                ))}
+                {skills.length === 0 ? (
+                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '32px 0' }}>
+                    No skills found. Please try refreshing.
+                  </p>
+                ) : (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                      gap: '12px',
+                    }}
+                  >
+                    {skills.map((skill) => (
+                      <SkillCard key={skill.id} skill={skill} />
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
 
 
         </main>

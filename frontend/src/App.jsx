@@ -60,6 +60,13 @@ export default function App() {
     setAppState('dashboard');
   };
 
+  // Called when a micro-learning quiz is passed
+  const handleSkillUpdated = ({ skillId, newProficiency }) => {
+    setSkills((prev) =>
+      prev.map((s) => (s.id === skillId ? { ...s, proficiency: newProficiency } : s))
+    );
+  };
+
   // Render view based on app state
   if (appState === 'loading') {
     return (
@@ -86,5 +93,12 @@ export default function App() {
     return <Onboarding user={user} onComplete={handleOnboardingComplete} />;
   }
 
-  return <Dashboard user={user} career={career} skills={skills} />;
+  return (
+    <Dashboard
+      user={user}
+      career={career}
+      skills={skills}
+      onSkillUpdated={handleSkillUpdated}
+    />
+  );
 }

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     supabase_service_key: str
     gemini_api_key: str = "your_gemini_api_key_here"
     groq_api_key: str = "your_groq_api_key_here"  # Get free key at console.groq.com
+    youtube_api_key: str = ""
 
     model_config = SettingsConfigDict(
         # Load from .env or backend/.env depending on cwd context
