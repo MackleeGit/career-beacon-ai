@@ -1,13 +1,26 @@
+from typing import Optional, List
 from fastembed import TextEmbedding
+
+# Module-level shared singleton to ensure only ONE ONNX model instance is loaded in RAM
+_shared_model: Optional[TextEmbedding] = None
+
+def _get_model() -> TextEmbedding:
+    global _shared_model
+    if _shared_model is None:
+        # Lazy-load all-MiniLM-L6-v2 on first inference request to keep boot RAM minimal (<100MB)
+        _shared_model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return _shared_model
 
 class EmbeddingService:
     def __init__(self):
-        # Using the all-MiniLM-L6-v2 model 
-        # which natively outputs 384-dimensional dense vectors.
-        # We use FastEmbed instead of sentence-transformers to avoid PyTorch OOMs on 512MB RAM tiers.
-        self.model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        # Lightweight wrapper; model is loaded on-demand via singleton
+        pass
 
-    async def get_embedding(self, text: str) -> list[float]:
+    @property
+    def model(self) -> TextEmbedding:
+        return _get_model()
+
+    async def get_embedding(self, text: str) -> List[float]:
         """
         Generates a 384-dimensional vector embedding for the input text.
         """
