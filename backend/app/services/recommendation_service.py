@@ -137,16 +137,21 @@ class RecommendationService:
                 skills_needing_content = [s for s in user_skills if s["id"] not in skills_with_content][:needed_count]
 
             if skills_needing_content:
-                tasks = [
-                    self.content_service.generate_dynamic_lesson_for_skill(
-                        skill_id=s["id"],
-                        skill_name=s["name"],
-                        category=s.get("category", "Core"),
-                        career_title=career_title,
-                        target_proficiency=s["proficiency"],
-                    )
-                    for s in skills_needing_content[:needed_count]
-                ]
+                sem = asyncio.Semaphore(2)
+
+                async def _paced_gen(s):
+                    async with sem:
+                        res = await self.content_service.generate_dynamic_lesson_for_skill(
+                            skill_id=s["id"],
+                            skill_name=s["name"],
+                            category=s.get("category", "Core"),
+                            career_title=career_title,
+                            target_proficiency=s["proficiency"],
+                        )
+                        await asyncio.sleep(0.2)
+                        return res
+
+                tasks = [_paced_gen(s) for s in skills_needing_content[:needed_count]]
                 try:
                     new_lessons = await asyncio.gather(*tasks, return_exceptions=True)
                     for lesson in new_lessons:

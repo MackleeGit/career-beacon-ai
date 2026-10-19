@@ -64,7 +64,7 @@ async def _call_gemini(prompt: str, system_instruction: str, client: httpx.Async
         payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
     response = await client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
         f"?key={settings.gemini_api_key}",
         json=payload,
         timeout=30.0,
