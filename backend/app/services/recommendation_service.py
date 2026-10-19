@@ -16,10 +16,12 @@ Architecture:
     - Sorts and delivers final Top 5 micro-learning feed.
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 from app.core.database import supabase_client
 from app.services.embedding_service import EmbeddingService
+from app.services.content_service import ContentService
 
 logger = logging.getLogger("career_beacon.recommendation_service")
 
@@ -27,6 +29,7 @@ logger = logging.getLogger("career_beacon.recommendation_service")
 class RecommendationService:
     def __init__(self):
         self.embedding_service = EmbeddingService()
+        self.content_service = ContentService()
 
     async def get_recommendations_for_user(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
@@ -110,6 +113,51 @@ class RecommendationService:
                 return []
 
         if not candidates:
+            candidates = []
+
+        # 4B. JUST-IN-TIME DYNAMIC CURRICULUM POPULATION
+        # Verify how many candidate lessons actually match the learner's enrolled career skills
+        user_skill_ids = set(s["id"] for s in user_skills)
+        relevant_candidates = [
+            c for c in candidates
+            if c.get("associated_skill_id") in user_skill_ids or float(c.get("similarity") or 0) >= 0.55
+        ]
+
+        # If database lacks sufficient domain content for this career (< limit relevant lessons):
+        if len(relevant_candidates) < limit:
+            needed_count = limit - len(relevant_candidates)
+            logger.info(
+                f"Learner {user_id} ({career_title}) has {len(relevant_candidates)}/{limit} relevant lessons in DB. "
+                f"Triggering Just-In-Time dynamic curriculum generation for {needed_count} skills..."
+            )
+            skills_with_content = set(c.get("associated_skill_id") for c in relevant_candidates if c.get("associated_skill_id"))
+            skills_needing_content = [s for s in priority_skills if s["id"] not in skills_with_content]
+
+            if not skills_needing_content:
+                skills_needing_content = [s for s in user_skills if s["id"] not in skills_with_content][:needed_count]
+
+            if skills_needing_content:
+                tasks = [
+                    self.content_service.generate_dynamic_lesson_for_skill(
+                        skill_id=s["id"],
+                        skill_name=s["name"],
+                        category=s.get("category", "Core"),
+                        career_title=career_title,
+                        target_proficiency=s["proficiency"],
+                    )
+                    for s in skills_needing_content[:needed_count]
+                ]
+                try:
+                    new_lessons = await asyncio.gather(*tasks, return_exceptions=True)
+                    for lesson in new_lessons:
+                        if isinstance(lesson, dict) and lesson.get("id"):
+                            lesson["similarity"] = 0.98
+                            candidates.insert(0, lesson)
+                            logger.info(f"Just-In-Time delivered tailored lesson: '{lesson.get('title')}'")
+                except Exception as e:
+                    logger.error(f"Error during Just-In-Time dynamic lesson generation: {e}")
+
+        if not candidates:
             return []
 
         # Build skill details lookup for all skills in DB
@@ -149,16 +197,46 @@ class RecommendationService:
             trust_score = float(item.get("source_trust_score") or 0.85)
             trust_multiplier = max(0.2, min(1.0, trust_score))
 
+            # D. Enrolled Career Skill Alignment Boost
+            # If lesson belongs to user's enrolled career skills, award a relevance boost
+            career_boost = 1.35 if assoc_skill_id in user_skill_ids else 0.75
+
+            # E. Negative Filtering for Mismatched Career Titles
+            # If item title explicitly names a different career (e.g. "for Professional Soccer Player"), penalize
+            title_lower = (item.get("title") or "").lower()
+            career_lower = career_title.lower() if career_title else ""
+            if " for " in title_lower and career_lower:
+                target_in_title = title_lower.split(" for ")[-1].strip()
+                if target_in_title and target_in_title not in career_lower and career_lower not in target_in_title:
+                    career_boost *= 0.10  # 90% penalty for conflicting career lessons
+
             # Composite Re-Rank Score
-            final_score = base_sim * diff_multiplier * breadth_multiplier * trust_multiplier
+            final_score = base_sim * diff_multiplier * breadth_multiplier * trust_multiplier * career_boost
 
             # Enrich item for frontend presentation
             skill_info = all_skills_map.get(assoc_skill_id, {})
             skill_name = skill_info.get("name") or "Core Skill"
             skill_category = skill_info.get("category") or "Technical"
 
-            # Parse quizzes safely if stored as JSON string
+            # Parse quizzes and summary bullets safely
             quizzes_data = item.get("quizzes")
+            summary_bullets = item.get("summary_bullets") or item.get("summary") or ""
+            
+            # Check content JSON if fields are missing
+            if (not quizzes_data or not summary_bullets) and item.get("content"):
+                import json
+                try:
+                    c_data = item.get("content")
+                    if isinstance(c_data, str):
+                        c_data = json.loads(c_data)
+                    if isinstance(c_data, dict):
+                        if not quizzes_data:
+                            quizzes_data = c_data.get("quizzes")
+                        if not summary_bullets:
+                            summary_bullets = c_data.get("summary_bullets") or c_data.get("summary") or ""
+                except Exception:
+                    pass
+
             if isinstance(quizzes_data, str):
                 import json
                 try:
@@ -170,7 +248,7 @@ class RecommendationService:
                 "id": item["id"],
                 "title": item["title"],
                 "source_url": item.get("source_url", ""),
-                "summary_bullets": item.get("summary_bullets", ""),
+                "summary_bullets": summary_bullets,
                 "difficulty_level": item_diff,
                 "source_trust_score": trust_score,
                 "quizzes": quizzes_data or [],
@@ -181,8 +259,8 @@ class RecommendationService:
                 "relevance_score": round(final_score, 4),
             })
 
-        # Sort descending by re-ranked score
-        ranked_items.sort(key=lambda x: x["relevance_score"], reverse=True)
+        # Sort descending by enrolled skill alignment first, then composite re-ranked score
+        ranked_items.sort(key=lambda x: (x["associated_skill_id"] in user_skill_ids, x["relevance_score"]), reverse=True)
 
         return ranked_items[:limit]
 

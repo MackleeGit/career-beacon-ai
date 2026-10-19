@@ -217,3 +217,160 @@ Rules:
 
         return None
 
+    async def generate_dynamic_lesson_for_skill(
+        self,
+        skill_id: str,
+        skill_name: str,
+        category: str = "Core",
+        career_title: str = "General Career",
+        target_proficiency: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Dynamically synthesizes an authoritative micro-learning lesson and 5-question MCQ
+        tailored specifically to a target career's skill gap, embeds it, and commits to Supabase.
+        """
+        title = f"{skill_name} Fundamentals for {career_title}"
+        safe_career = career_title.lower().replace(" ", "-").replace("/", "-")
+        safe_skill = skill_name.lower().replace(" ", "-").replace("/", "-")
+        source_url = f"https://careerbeacon.ai/curriculum/{safe_career}/{safe_skill}"
+
+        prompt = f"""
+Target Career: {career_title}
+Skill Target: {skill_name} ({category})
+Learner Baseline Proficiency: {target_proficiency}%
+
+Task:
+Design an authoritative, professional micro-learning lesson for a learner training to become a {career_title}.
+Focus specifically on how {skill_name} is practically applied in the day-to-day role of a {career_title}.
+
+Produce:
+1. summary_bullets: Exactly 3 technical, high-yield bullet points highlighting practical principles, operational rules, or essential techniques. Under 120 words total. Each bullet MUST start with '• '.
+2. difficulty_level: Appropriate difficulty integer from 1 to 5 (typically 2 for beginner/intermediate baseline).
+3. quizzes: An array of EXACTLY 5 practical multiple-choice questions testing application and conceptual understanding of this lesson for a {career_title}.
+"""
+
+        system_instruction = """
+You are an expert industry trainer and psychometric test creator for Career Beacon.
+You must return a valid JSON object matching this schema:
+{
+  "summary_bullets": "• First practical principle...\\n• Second key rule...\\n• Third operational technique...",
+  "difficulty_level": 2,
+  "quizzes": [
+    {
+      "question": "Realistic scenario or technical question string",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "answer": "Option A",
+      "explanation": "Clear explanation of why this answer is correct in practice."
+    }
+  ]
+}
+Rules:
+- The 'quizzes' array MUST contain EXACTLY 5 distinct questions.
+- Each question MUST have exactly 4 choices in 'options'.
+- 'answer' MUST be character-for-character identical to one of the 4 items in 'options'.
+- 'summary_bullets' MUST contain 3 distinct bullet points.
+"""
+
+        try:
+            ai_data = await self.ai_service.generate_json(prompt, system_instruction=system_instruction)
+        except Exception as e:
+            logger.error(f"Failed dynamic lesson generation for '{skill_name}' ({career_title}): {e}")
+            return None
+
+        summary_bullets = ai_data.get("summary_bullets", "").strip()
+        difficulty_level = int(ai_data.get("difficulty_level", 2))
+        difficulty_level = max(1, min(5, difficulty_level))
+        quizzes = ai_data.get("quizzes", [])
+
+        valid_quizzes = []
+        for q in (quizzes if isinstance(quizzes, list) else []):
+            q_text = q.get("question", "").strip()
+            opts = q.get("options", [])
+            ans = q.get("answer", "").strip()
+            if q_text and len(opts) == 4 and ans in opts:
+                valid_quizzes.append({
+                    "question": q_text,
+                    "options": opts,
+                    "answer": ans,
+                    "explanation": q.get("explanation", ""),
+                })
+
+        if len(valid_quizzes) < 3:
+            logger.warning(f"Generated quiz failed validation for '{skill_name}', aborting dynamic save.")
+            return None
+
+        text_to_embed = f"{title}. Skill: {skill_name} ({category}). Career: {career_title}. Summary: {summary_bullets}"
+        try:
+            content_vector = await self.embedding_service.get_embedding(text_to_embed)
+        except Exception as e:
+            logger.error(f"Failed to embed dynamic lesson for '{skill_name}': {e}")
+            return None
+
+        # Check if already exists by source_url
+        try:
+            existing = supabase_client.table("micro_content").select("id").eq("source_url", source_url).execute()
+            existing_id = existing.data[0]["id"] if (existing and existing.data) else None
+        except Exception:
+            existing_id = None
+
+        record_full = {
+            "title": title,
+            "source_url": source_url,
+            "summary": summary_bullets,
+            "summary_bullets": summary_bullets,
+            "content": json.dumps({
+                "quizzes": valid_quizzes,
+                "difficulty_level": difficulty_level,
+                "source_trust_score": 0.98,
+                "skill_name": skill_name,
+                "category": category,
+                "career_title": career_title,
+            }),
+            "associated_skill_id": skill_id,
+            "difficulty_level": difficulty_level,
+            "source_trust_score": 0.98,
+            "quizzes": valid_quizzes,
+            "embedding": content_vector,
+        }
+
+        record_compat = {
+            "title": title,
+            "source_url": source_url,
+            "summary": summary_bullets,
+            "content": json.dumps({
+                "summary_bullets": summary_bullets,
+                "quizzes": valid_quizzes,
+                "difficulty_level": difficulty_level,
+                "source_trust_score": 0.98,
+                "associated_skill_id": skill_id,
+                "skill_name": skill_name,
+                "category": category,
+                "career_title": career_title,
+            }),
+            "embedding": content_vector,
+        }
+
+        for record_attempt in [record_full, record_compat]:
+            try:
+                if existing_id:
+                    db_res = supabase_client.table("micro_content").update(record_attempt).eq("id", existing_id).execute()
+                else:
+                    db_res = supabase_client.table("micro_content").insert(record_attempt).execute()
+
+                if db_res.data:
+                    saved_row = db_res.data[0]
+                    if "quizzes" not in saved_row or not saved_row["quizzes"]:
+                        saved_row["quizzes"] = valid_quizzes
+                    if "difficulty_level" not in saved_row:
+                        saved_row["difficulty_level"] = difficulty_level
+                    logger.info(f"Just-In-Time generated micro-content lesson for '{career_title}': '{title}'")
+                    return saved_row
+            except Exception as e:
+                err_str = str(e)
+                if "column" in err_str and record_attempt == record_full:
+                    continue
+                logger.error(f"Database save error for dynamic lesson '{title}': {e}")
+                return None
+
+        return None
+
