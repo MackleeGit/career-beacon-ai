@@ -1,21 +1,43 @@
 // src/App.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from './lib/SupabaseClient';
 import { getOnboardingStatus } from './lib/api';
 import Login from './pages/Login';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 
-// App-level state machine: 'loading' | 'unauthenticated' | 'onboarding' | 'dashboard'
+function checkIsRecoveryUrl() {
+  const hash = window.location.hash || '';
+  const search = window.location.search || '';
+  return hash.includes('type=recovery') || search.includes('type=recovery');
+}
+
+// App-level state machine: 'loading' | 'unauthenticated' | 'recovery' | 'onboarding' | 'dashboard'
 export default function App() {
   const [appState, setAppState] = useState('loading');
   const [user, setUser]         = useState(null);
   const [career, setCareer]     = useState(null);
   const [skills, setSkills]     = useState([]);
+  
+  // Track recovery mode in ref to immediately block any async bootstrap race condition
+  const isRecoveryRef = useRef(checkIsRecoveryUrl());
+  const [isRecovery, setIsRecovery] = useState(checkIsRecoveryUrl());
 
-  // Session bootstrapper: runs when auth state changes
   useEffect(() => {
+    // If the page was loaded with a recovery URL, immediately force recovery state
+    if (checkIsRecoveryUrl()) {
+      isRecoveryRef.current = true;
+      setIsRecovery(true);
+      setAppState('recovery');
+    }
+
     const bootstrap = async (session) => {
+      // Guard: Never bootstrap into onboarding or dashboard if actively in recovery mode!
+      if (isRecoveryRef.current || checkIsRecoveryUrl()) {
+        setAppState('recovery');
+        return;
+      }
+
       if (!session?.user) {
         setUser(null);
         setCareer(null);
@@ -28,6 +50,12 @@ export default function App() {
 
       try {
         const status = await getOnboardingStatus(session.user.id);
+        // Double-check guard before setting state in case recovery event fired while fetching
+        if (isRecoveryRef.current || checkIsRecoveryUrl()) {
+          setAppState('recovery');
+          return;
+        }
+
         if (status.onboarding_complete) {
           setCareer(status.career);
           setSkills(status.skills);
@@ -36,19 +64,41 @@ export default function App() {
           setAppState('onboarding');
         }
       } catch (err) {
-        // If the backend is offline, still show onboarding rather than a blank screen
+        if (isRecoveryRef.current || checkIsRecoveryUrl()) {
+          setAppState('recovery');
+          return;
+        }
         console.error('Failed to fetch onboarding status:', err);
         setAppState('onboarding');
       }
     };
 
-    // Subscribe to auth changes (handles login, logout, token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Subscribe to auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        isRecoveryRef.current = true;
+        setIsRecovery(true);
+        setAppState('recovery');
+        return;
+      }
+
+      // If in recovery mode, ignore general SIGNED_IN events so we don't jump to Onboarding
+      if (isRecoveryRef.current || checkIsRecoveryUrl()) {
+        setAppState('recovery');
+        return;
+      }
+
       bootstrap(session);
     });
 
     // Hydrate from current session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => bootstrap(session));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (isRecoveryRef.current || checkIsRecoveryUrl()) {
+        setAppState('recovery');
+        return;
+      }
+      bootstrap(session);
+    });
 
     return () => subscription.unsubscribe();
   }, []);
@@ -65,6 +115,13 @@ export default function App() {
     setSkills((prev) =>
       prev.map((s) => (s.id === skillId ? { ...s, proficiency: newProficiency } : s))
     );
+  };
+
+  const handleRecoveryComplete = () => {
+    isRecoveryRef.current = false;
+    setIsRecovery(false);
+    setUser(null);
+    setAppState('unauthenticated');
   };
 
   // Render view based on app state
@@ -87,7 +144,19 @@ export default function App() {
     );
   }
 
-  if (appState === 'unauthenticated') return <Login />;
+  // Password recovery always takes precedence over onboarding/dashboard
+  if (appState === 'recovery' || isRecovery) {
+    return (
+      <Login
+        initialMode="recovery"
+        onRecoveryComplete={handleRecoveryComplete}
+      />
+    );
+  }
+
+  if (appState === 'unauthenticated') {
+    return <Login onRecoveryComplete={handleRecoveryComplete} />;
+  }
 
   if (appState === 'onboarding') {
     return <Onboarding user={user} onComplete={handleOnboardingComplete} />;

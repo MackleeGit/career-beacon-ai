@@ -341,10 +341,14 @@ class RecommendationService:
 
                 skill_mastered = (new_proficiency >= 100)
 
-                # Update DB
-                supabase_client.table("user_skills").update({
-                    "proficiency": new_proficiency,
-                }).eq("user_id", user_id).eq("skill_id", skill_id).execute()
+                # Update DB with evidence provenance (Workstream 5)
+                update_payload = {"proficiency": new_proficiency}
+                if passed:
+                    update_payload["evidence_source"] = "quiz_verified"
+
+                supabase_client.table("user_skills").update(update_payload).eq(
+                    "user_id", user_id
+                ).eq("skill_id", skill_id).execute()
 
         # Repeated failure guidance ("Ask MENTOR" trigger)
         ask_mentor_suggested = not passed

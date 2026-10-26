@@ -2,6 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import test, onboarding, recommendations
+from app.middleware.auth_middleware import JWTAuthMiddleware
 
 app = FastAPI(
     title="Career Beacon AI Engine",
@@ -26,6 +27,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# JWT authentication middleware – validates Supabase tokens on /api/* routes
+app.add_middleware(JWTAuthMiddleware)
 
 # Include routers
 app.include_router(test.router)

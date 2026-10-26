@@ -1,11 +1,24 @@
 // src/lib/api.js
 // Thin wrapper around fetch for the FastAPI AI Engine backend.
+// Automatically injects the Supabase JWT as a Bearer token.
+
+import { supabase } from './SupabaseClient';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 async function request(path, options = {}) {
+  // Retrieve current session token (if user is logged in)
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers,
     ...options,
   });
 
@@ -44,30 +57,26 @@ export async function searchCareer(query) {
  * @param {{ [skillId: string]: number }} proficiencyMap - skillId to proficiency value
  */
 export async function saveSkills(userId, career, allSkills, proficiencyMap) {
-  const isPending = career._pending || !career.id;
+  const isPending = Boolean(career._pending || !career.id);
 
-  if (isPending) {
-    // Career has not been saved to DB yet; send payload for backend persistence
-    return request('/api/onboarding/save-skills', {
-      method: 'POST',
-      body: JSON.stringify({
-        user_id: userId,
-        pending_career_title: career.title,
-        pending_career_description: career.description,
-        pending_skills: allSkills.map((s) => ({ name: s.name, category: s.category })),
-        // Skills ordered to match pending_skills; backend uses index position
-        skills: allSkills.map((s) => ({ skill_id: s.id, proficiency: proficiencyMap[s.id] ?? 20 })),
-      }),
-    });
-  }
+  // Unified atomic contract: every skill carries its own name, category, and proficiency
+  const unifiedSkills = allSkills.map((s) => ({
+    skill_id: s.id && !s.id.startsWith('temp-') && s.id.length === 36 ? s.id : null,
+    name: s.name.trim(),
+    category: s.category || 'General',
+    proficiency: proficiencyMap[s.id] ?? 20,
+    importance: s.importance || null,
+  }));
 
-  // Matched career: skills already have real DB UUIDs
   return request('/api/onboarding/save-skills', {
     method: 'POST',
     body: JSON.stringify({
       user_id: userId,
-      career_id: career.id,
-      skills: allSkills.map((s) => ({ skill_id: s.id, proficiency: proficiencyMap[s.id] ?? 20 })),
+      career_id: career.id || null,
+      career_title: career.title,
+      career_description: career.description || '',
+      is_custom: isPending,
+      skills: unifiedSkills,
     }),
   });
 }
