@@ -115,3 +115,11 @@ export async function submitQuiz(userId, lessonId, answers) {
   });
 }
 
+
+/** Record that the learner opened a recommended source. */
+export async function recordContentOpen(userId, contentId) {
+  return request('/api/recommendations/activity/open', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, content_id: contentId }),
+  });
+}

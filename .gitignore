@@ -35,3 +35,9 @@ backend/.env
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Local learner history and exported project bundles
+/backend/data/
+/backend_clean.zip
+/codebase_clean.zip
+/frontend_clean.zip

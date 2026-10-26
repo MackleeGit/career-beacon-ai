@@ -146,7 +146,7 @@ function CareerSearch({ onCareerFound, onLogoutRequest }) {
           <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '8px', color: 'var(--accent-light)' }}>
             Multiple paths found. Choose your exact specialization:
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {disambiguation.map((cand) => (
               <button
                 key={cand.id}
@@ -154,19 +154,45 @@ function CareerSearch({ onCareerFound, onLogoutRequest }) {
                 onClick={() => handleSearch(null, cand.title)}
                 className="btn btn--ghost"
                 style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
                   justifyContent: 'space-between',
                   textAlign: 'left',
                   width: '100%',
-                  padding: '10px 14px',
+                  padding: '12px 16px',
+                  whiteSpace: 'normal',
+                  gap: '16px',
+                  borderRadius: 'var(--r-md)',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-surface)',
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer',
+                  boxSizing: 'border-box',
                 }}
               >
-                <div>
-                  <div style={{ fontWeight: 600 }}>{cand.title}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    {cand.title}
+                  </div>
                   {cand.description && (
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{cand.description}</div>
+                    <div
+                      style={{
+                        fontSize: '0.8rem',
+                        lineHeight: '1.45',
+                        color: 'var(--text-secondary)',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {cand.description}
+                    </div>
                   )}
                 </div>
-                <span className="badge badge--accent">{Math.round(cand.similarity * 100)}% Match</span>
+                <span
+                  className="badge badge--accent"
+                  style={{ flexShrink: 0, alignSelf: 'flex-start', marginTop: '2px', whiteSpace: 'nowrap' }}
+                >
+                  {Math.round(cand.similarity * 100)}% Match
+                </span>
               </button>
             ))}
           </div>
@@ -203,7 +229,7 @@ function CareerSearch({ onCareerFound, onLogoutRequest }) {
 }
 
 // ─── Step 2: Skill Assessment by Domain Category ────────────────────────────────
-function SkillAssessment({ career, skills: initialSkills, source, userId, onComplete, onBack }) {
+function SkillAssessment({ career, skills: initialSkills, source, userId, onComplete }) {
   const [skills, setSkills] = useState(initialSkills);
   const [proficiency, setProficiency] = useState(() =>
     Object.fromEntries(initialSkills.map((s) => [s.id, 20]))
@@ -381,15 +407,15 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    gap: '12px',
-                    padding: '10px 14px',
+                    gap: '14px',
+                    padding: '12px 16px',
                     background: 'var(--bg-surface)',
                     border: '1px solid var(--border)',
                     borderRadius: 'var(--r-md)',
                     flexWrap: 'wrap',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: '1 1 280px' }}>
                     <button
                       type="button"
                       onClick={() => handleDeleteSkill(skill.id)}
@@ -399,20 +425,21 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
                         border: 'none',
                         color: 'var(--text-muted)',
                         cursor: 'pointer',
-                        padding: '2px 6px',
+                        padding: '4px 6px',
                         fontSize: '0.85rem',
                         borderRadius: '4px',
+                        flexShrink: 0,
                       }}
                       onMouseEnter={(e) => (e.currentTarget.style.color = 'hsl(0, 70%, 60%)')}
                       onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
                     >
                       ✕
                     </button>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-primary)', wordBreak: 'break-word' }}>
                         {skill.name}
                       </div>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' }}>
                         {/* Importance badge — only shown when source-backed */}
                         {skill.importance && IMPORTANCE_BADGE[skill.importance] && (() => {
                           const imp = IMPORTANCE_BADGE[skill.importance];
@@ -425,6 +452,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
                                 background: imp.bg, color: imp.color,
                                 border: `1px solid ${imp.border}`,
                                 cursor: 'help',
+                                whiteSpace: 'nowrap',
                               }}
                             >
                               {imp.label}
@@ -440,6 +468,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
                               padding: '1px 6px',
                               borderRadius: '10px',
                               letterSpacing: '0.02em',
+                              whiteSpace: 'nowrap',
                               background: skill.provenance_label.includes('AI') || skill.provenance_label === 'Your addition'
                                 ? 'hsla(38, 92%, 50%, 0.15)'
                                 : 'hsla(174, 72%, 56%, 0.12)',
@@ -461,7 +490,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
                   </div>
 
                   {/* Behavioral Toggle Group */}
-                  <div className="skill-toggle">
+                  <div className="skill-toggle" style={{ flexShrink: 0, marginLeft: 'auto' }}>
                     {BEHAVIORAL_LEVELS.map(({ label, value, tooltip }) => (
                       <button
                         key={value}
@@ -605,8 +634,8 @@ export default function Onboarding({ user, onComplete }) {
       <div className="bg-orb bg-orb--1" />
       <div className="bg-orb bg-orb--2" />
 
-      <div className="page-center">
-        <div className="container" style={{ maxWidth: '580px', width: '100%' }}>
+      <div className="page-center" style={{ minHeight: '100svh', padding: '40px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div className="container" style={{ maxWidth: step === 2 ? '840px' : '620px', width: '100%', transition: 'max-width 0.25s ease' }}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px' }}>
             <div className="logo-mark">
               <div className="logo-mark__icon">CB</div>
@@ -614,7 +643,7 @@ export default function Onboarding({ user, onComplete }) {
             </div>
           </div>
 
-          <div className="card" style={{ padding: '32px 28px' }}>
+          <div className="card" style={{ padding: step === 2 ? '36px 32px' : '32px 28px' }}>
             {step === 1 && (
               <CareerSearch
                 onCareerFound={handleCareerFound}
@@ -648,7 +677,6 @@ export default function Onboarding({ user, onComplete }) {
                   source={source}
                   userId={user.id}
                   onComplete={onComplete}
-                  onBack={handleBack}
                 />
               </>
             )}

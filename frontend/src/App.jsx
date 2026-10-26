@@ -14,7 +14,7 @@ function checkIsRecoveryUrl() {
 
 // App-level state machine: 'loading' | 'unauthenticated' | 'recovery' | 'onboarding' | 'dashboard'
 export default function App() {
-  const [appState, setAppState] = useState('loading');
+  const [appState, setAppState] = useState(() => checkIsRecoveryUrl() ? 'recovery' : 'loading');
   const [user, setUser]         = useState(null);
   const [career, setCareer]     = useState(null);
   const [skills, setSkills]     = useState([]);
@@ -25,12 +25,6 @@ export default function App() {
 
   useEffect(() => {
     // If the page was loaded with a recovery URL, immediately force recovery state
-    if (checkIsRecoveryUrl()) {
-      isRecoveryRef.current = true;
-      setIsRecovery(true);
-      setAppState('recovery');
-    }
-
     const bootstrap = async (session) => {
       // Guard: Never bootstrap into onboarding or dashboard if actively in recovery mode!
       if (isRecoveryRef.current || checkIsRecoveryUrl()) {

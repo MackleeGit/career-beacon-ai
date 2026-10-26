@@ -1,8 +1,8 @@
 // src/pages/Recommendations.jsx
 import { useState, useEffect } from 'react';
-import { getRecommendations, submitQuiz } from '../lib/api';
+import { getRecommendations, recordContentOpen, submitQuiz } from '../lib/api';
 
-export default function Recommendations({ user, career, skills, onSkillUpdated, onNavigateToGraph }) {
+export default function Recommendations({ user, career, onSkillUpdated, onNavigateToGraph }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [recommendations, setRecommendations] = useState([]);
@@ -66,13 +66,15 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
       if (res.passed) {
         setPassedLessons((prev) => new Set([...prev, activeQuizLesson.id]));
         // Inform parent App state to update skill graph
-        if (onSkillUpdated && activeQuizLesson.associated_skill_id && res.new_proficiency) {
+        if (onSkillUpdated && activeQuizLesson.associated_skill_id && res.new_proficiency != null) {
           onSkillUpdated({
             skillId: activeQuizLesson.associated_skill_id,
             newProficiency: res.new_proficiency,
             skillMastered: res.skill_mastered,
           });
         }
+        const refreshed = await getRecommendations(user.id, 5);
+        setRecommendations(refreshed.recommendations || []);
       }
     } catch (err) {
       alert(`Quiz submission error: ${err.message}`);
@@ -189,7 +191,6 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
           {recommendations.map((lesson, idx) => {
             const diffMeta = getDifficultyMeta(lesson.difficulty_level);
             const isPassed = passedLessons.has(lesson.id);
-            const trustPercent = Math.round((lesson.source_trust_score || 0.85) * 100);
 
             // Split bullets for clean rendering
             const bulletList = (lesson.summary_bullets || '')
@@ -236,18 +237,6 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span
-                      style={{
-                        fontSize: '0.75rem',
-                        color: 'var(--text-muted)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
-                      title="Source Trust Score based on community reputation"
-                    >
-                      Trust: {trustPercent}%
-                    </span>
                     {isPassed && (
                       <span
                         style={{
@@ -259,7 +248,7 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                           borderRadius: 'var(--r-full)',
                         }}
                       >
-                        ✓ Mastered (+10% XP)
+                        ✓ Lesson passed
                       </span>
                     )}
                   </div>
@@ -285,7 +274,7 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                   </p>
                   <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {bulletList.map((bullet, bIdx) => {
-                      const cleanBullet = bullet.replace(/^[•\-\*]\s*/, '');
+                      const cleanBullet = bullet.replace(/^[•*-]\s*/, '');
                       return (
                         <li key={bIdx} style={{ fontSize: '0.88rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: 1.45 }}>
                           <span style={{ color: 'var(--teal)', fontWeight: 700, lineHeight: 1.2 }}>•</span>
@@ -303,6 +292,7 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                       href={lesson.source_url}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={() => { recordContentOpen(user.id, lesson.id).catch((err) => console.error('Could not record lesson open:', err)); }}
                       style={{ fontSize: '0.82rem', color: 'var(--accent-light)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                     >
                       Read full source material ↗
@@ -315,7 +305,7 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                     onClick={() => handleStartQuiz(lesson)}
                     style={{ minWidth: '140px' }}
                   >
-                    {isPassed ? 'Retake Quiz (5 MCQs)' : 'Take Quiz (+10% XP)'}
+                    {isPassed ? `Retake Quiz (${lesson.quizzes?.length || 0} questions)` : `Take Quiz (${lesson.quizzes?.length || 0} questions)`}
                   </button>
                 </div>
               </article>
@@ -365,7 +355,7 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                 </span>
                 <h3 style={{ fontSize: '1.25rem', lineHeight: 1.3 }}>{activeQuizLesson.title}</h3>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                  Answer all 5 questions. Achieve ≥60% to level up your skill proficiency by +10%.
+                  Answer all {activeQuizLesson.quizzes?.length || 0} questions. A passing score of 60% increases the skill proficiency estimate by 10 points on the first pass.
                 </p>
               </div>
 
@@ -489,7 +479,7 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                 <p style={{ fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: '8px' }}>
                   You scored <strong>{quizResult.score} / {quizResult.total}</strong> ({quizResult.percentage}%).
                   {quizResult.passed ? (
-                    <span> <strong>+10% Proficiency XP</strong> awarded to your <strong>{activeQuizLesson.skill_name}</strong> node!</span>
+                    <span> <strong>+{quizResult.proficiency_increment} proficiency points</strong> applied to your <strong>{activeQuizLesson.skill_name}</strong> estimate.</span>
                   ) : (
                     <span> Passing score is 60%. Review the explanations above and try again.</span>
                   )}
@@ -498,7 +488,7 @@ export default function Recommendations({ user, career, skills, onSkillUpdated, 
                 {quizResult.new_proficiency && (
                   <p style={{ fontSize: '0.85rem', color: 'var(--accent-light)' }}>
                     New {activeQuizLesson.skill_name} proficiency: <strong>{quizResult.new_proficiency}%</strong>
-                    {quizResult.skill_mastered && ' (Skill Mastered!)'}
+                    {quizResult.skill_mastered && ' (Estimate reached 100%)'}
                   </p>
                 )}
 

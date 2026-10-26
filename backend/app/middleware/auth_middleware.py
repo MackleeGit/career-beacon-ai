@@ -22,7 +22,9 @@ import httpx
 #   6. Attaches the decoded payload to request.state.user.
 # ---------------------------------------------------------------------------
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+from app.core.config import settings
+
+SUPABASE_URL = settings.supabase_url or os.getenv("SUPABASE_URL", "")
 
 # In-memory JWKS cache (refreshed every hour)
 _jwks_cache: Optional[dict] = None
@@ -30,6 +32,18 @@ _jwks_fetched_at: float = 0
 _JWKS_TTL = 3600  # seconds
 
 EXCLUDED_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+
+
+def get_verified_user_id(request: Request) -> str:
+    """Extracts and validates caller identity from JWT middleware state."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.get("sub"):
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Missing or invalid Bearer token.",
+        )
+    return str(user["sub"])
+
 
 
 def _needs_refresh() -> bool:
@@ -40,7 +54,8 @@ async def _fetch_jwks() -> dict:
     global _jwks_cache, _jwks_fetched_at
     if not _needs_refresh():
         return _jwks_cache
-    url = f"{SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+    supabase_url = settings.supabase_url or os.getenv("SUPABASE_URL", "")
+    url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, timeout=8)
         resp.raise_for_status()
@@ -66,6 +81,10 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        # Allow CORS preflight requests through without authentication
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # Skip public endpoints
         if request.url.path in EXCLUDED_PATHS:
             return await call_next(request)
@@ -94,16 +113,16 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             jwks = await _fetch_jwks()
             key_dict = _find_key(kid, jwks)
 
-            # Build RSA public key from JWK
-            from jwt.algorithms import RSAAlgorithm
-            public_key = RSAAlgorithm.from_jwk(json.dumps(key_dict))
+            # Build public key from JWK (supports both EC/ES256 and RSA/RS256)
+            public_key = pyjwt.PyJWK.from_dict(key_dict).key
 
             # Verify token
             payload = pyjwt.decode(
                 token,
                 public_key,
-                algorithms=["RS256"],
+                algorithms=["ES256", "RS256"],
                 audience="authenticated",
+                issuer=f"{SUPABASE_URL.rstrip('/')}/auth/v1",
             )
 
             # Attach to request for downstream handlers
@@ -111,7 +130,11 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 
         except pyjwt.ExpiredSignatureError:
             return JSONResponse(status_code=401, content={"detail": "Token expired"})
+        except pyjwt.PyJWTError as jwt_err:
+            return JSONResponse(status_code=401, content={"detail": f"Invalid authentication token: {jwt_err}"})
         except Exception as exc:
-            return JSONResponse(status_code=401, content={"detail": f"Invalid token: {exc}"})
+            import logging
+            logging.getLogger("uvicorn.error").error(f"Internal auth error: {exc}", exc_info=True)
+            return JSONResponse(status_code=500, content={"detail": "Internal error verifying authentication"})
 
         return await call_next(request)

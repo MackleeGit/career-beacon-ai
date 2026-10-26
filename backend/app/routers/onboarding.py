@@ -14,17 +14,8 @@ embedding_service = EmbeddingService()
 ai_service = AIService()
 
 
-# ---------------------------------------------------------------------------
-# Helper: Extract verified caller identity from JWT middleware
-# ---------------------------------------------------------------------------
-def get_verified_user_id(request: Request) -> str:
-    user = getattr(request.state, "user", None)
-    if not user or not user.get("sub"):
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required. Missing or invalid Bearer token.",
-        )
-    return user["sub"]
+from app.middleware.auth_middleware import get_verified_user_id
+
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +352,23 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request):
                 "promoted_career_id": career_id
             }).eq("id", pending_res.data[0]["id"]).execute()
 
+        # Determine if the target career is an unreviewed AI proposal.
+        # Strict Rule: Canonical careers (onet, esco, dual_sourced, curated_list)
+        # must NEVER be mutated by learner additions. Custom learner skills are
+        # scoped exclusively to user_skills.
+        is_ai_career = False
+        if not request.career_id:
+            is_ai_career = True
+        else:
+            c_check = (
+                supabase_client.table("careers")
+                .select("source_origin")
+                .eq("id", career_id)
+                .execute()
+            )
+            if c_check.data and c_check.data[0].get("source_origin") == "llm":
+                is_ai_career = True
+
         # Atomic resolution of all skills
         user_skills_to_insert = []
         for sk in request.skills:
@@ -383,21 +391,19 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request):
                     )
                     real_skill_id = new_skill_res.data[0]["id"]
 
-            # 2. Bind skill to career_skills junction.
-            # For AI-generated careers only — curated careers already have
-            # their career_skills from the seed script with source_origin='onet'/'esco'.
-            # We never overwrite source-backed records with llm origin.
-            try:
-                supabase_client.table("career_skills").upsert({
-                    "career_id":     career_id,
-                    "skill_id":      real_skill_id,
-                    "source_origin": "llm",
-                    "review_status": "unreviewed",
-                    "importance":    sk.importance,  # None is acceptable
-                    # rank preserved as-is if already set; no tier*2 fabrication
-                }, on_conflict="career_id,skill_id", ignore_duplicates=True).execute()
-            except Exception as junction_err:
-                print(f"[save-skills] career_skills non-fatal warning: {junction_err}")
+            # 2. Bind skill to career_skills junction ONLY if career is an unreviewed AI proposal.
+            # Canonical careers already have authoritative taxonomy relations from O*NET/ESCO.
+            if is_ai_career:
+                try:
+                    supabase_client.table("career_skills").upsert({
+                        "career_id":     career_id,
+                        "skill_id":      real_skill_id,
+                        "source_origin": "llm",
+                        "review_status": "unreviewed",
+                        "importance":    sk.importance,
+                    }, on_conflict="career_id,skill_id", ignore_duplicates=True).execute()
+                except Exception as junction_err:
+                    print(f"[save-skills] career_skills non-fatal warning: {junction_err}")
 
             # 3. Prepare user_skill record with evidence provenance.
             user_skill_record = {
@@ -462,6 +468,16 @@ async def get_onboarding_status(user_id: str, http_req: Request):
         )
         career = career_res.data[0] if career_res.data else None
 
+        # Join career_skills to attach importance weights for career readiness calculation
+        career_skills_res = (
+            supabase_client.table("career_skills")
+            .select("skill_id, importance, importance_score")
+            .eq("career_id", career_id)
+            .execute()
+        )
+        cs_map = {row["skill_id"]: row for row in (career_skills_res.data or [])}
+
+        # Fetch user's rated skills
         skills_res = (
             supabase_client.table("user_skills")
             .select("proficiency, skills(id, name, category)")
@@ -469,11 +485,17 @@ async def get_onboarding_status(user_id: str, http_req: Request):
             .execute()
         )
 
-        skills = [
-            {**row["skills"], "proficiency": row["proficiency"]}
-            for row in skills_res.data
-            if row.get("skills")
-        ]
+        skills = []
+        for row in skills_res.data:
+            sk = row.get("skills")
+            if sk:
+                cs_info = cs_map.get(sk["id"], {})
+                skills.append({
+                    **sk,
+                    "proficiency": row["proficiency"],
+                    "importance": cs_info.get("importance"),
+                    "importance_score": cs_info.get("importance_score"),
+                })
 
         return {
             "onboarding_complete": len(skills) > 0,

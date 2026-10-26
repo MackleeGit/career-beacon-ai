@@ -1,4 +1,9 @@
 import os
+from dotenv import load_dotenv
+
+# Load .env file for local development
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import test, onboarding, recommendations
@@ -10,25 +15,22 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS
-IS_DEV = os.getenv("ENVIRONMENT", "development") == "development"
+# 1. JWT authentication middleware – validates Supabase tokens on protected /api/* routes
+app.add_middleware(JWTAuthMiddleware)
 
+# 2. Configure CORS as the outermost layer so all responses (including OPTIONS preflights) carry CORS headers
 app.add_middleware(
     CORSMiddleware,
-    # In dev: allow all origins so any LAN IP / network works automatically.
-    # In production: restrict to the explicit whitelist only.
-    allow_origins=["*"] if IS_DEV else [
-        "https://careerbeacon.netlify.app",  # Production (Netlify)
-        "http://localhost:5173",             # Local development
-        "http://127.0.0.1:5173",             # Local development (alternative)
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "https://careerbeacon.netlify.app",
     ],
-    allow_credentials=not IS_DEV,  # credentials can't be used with wildcard origin
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# JWT authentication middleware – validates Supabase tokens on /api/* routes
-app.add_middleware(JWTAuthMiddleware)
 
 # Include routers
 app.include_router(test.router)

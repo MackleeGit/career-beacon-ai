@@ -3,10 +3,9 @@ import { supabase } from '../lib/SupabaseClient';
 import Toast from '../components/Toast';
 import Recommendations from './Recommendations';
 
-const LEVEL_LABEL = { 20: 'Novice', 50: 'Intermediate', 80: 'Advanced', 100: 'Mastered' };
 
 function getLevel(score) {
-  if (score >= 100) return { label: 'Mastered',     color: 'var(--teal)' };
+  if (score >= 100) return { label: '100% estimate',     color: 'var(--teal)' };
   if (score >= 80)  return { label: 'Advanced',     color: 'var(--accent-light)' };
   if (score >= 50)  return { label: 'Intermediate', color: 'hsl(38,90%,60%)' };
   return             { label: 'Novice',             color: 'var(--text-muted)' };
@@ -56,9 +55,20 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
 
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Learner';
 
-  // Compute aggregate progress
-  const avgProgress = skills.length
-    ? Math.round(skills.reduce((sum, s) => sum + s.proficiency, 0) / skills.length)
+  // Compute an importance-weighted estimate from the learner's current skill ratings:
+  // Skills with higher O*NET importance score or ESCO 'essential' classification carry more weight.
+  const totalWeight = skills.reduce((sum, s) => {
+    const w = s.importance_score ?? (s.importance === 'essential' ? 1.0 : s.importance === 'optional' ? 0.5 : 0.75);
+    return sum + Math.max(0.2, w);
+  }, 0);
+
+  const weightedSum = skills.reduce((sum, s) => {
+    const w = s.importance_score ?? (s.importance === 'essential' ? 1.0 : s.importance === 'optional' ? 0.5 : 0.75);
+    return sum + (s.proficiency * Math.max(0.2, w));
+  }, 0);
+
+  const avgProgress = skills.length && totalWeight > 0
+    ? Math.round(weightedSum / totalWeight)
     : 0;
 
   const masteredCount = skills.filter((s) => s.proficiency >= 100).length;
@@ -184,15 +194,15 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
                       {avgProgress}%
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                      Avg. proficiency
+                      Avg. estimated proficiency
                     </div>
                   </div>
                 </div>
 
                 {/* Overall progress bar */}
                 <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  <span>Overall career readiness</span>
-                  <span>{masteredCount} / {skills.length} mastered</span>
+                  <span>Estimated career skill profile</span>
+                  <span>{masteredCount} / {skills.length} at 100% estimate</span>
                 </div>
                 <div className="progress-bar" style={{ height: '8px', marginBottom: '18px' }}>
                   <div className="progress-bar__fill" style={{ width: `${avgProgress}%` }} />
@@ -201,7 +211,7 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
                 {/* CTA to Learning Feed */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Ready to close skill gaps and level up your proficiency?
+                    Review skill estimates and explore relevant lessons.
                   </span>
                   <button
                     type="button"

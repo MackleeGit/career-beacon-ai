@@ -16,6 +16,7 @@ from starlette.requests import Request
 from unittest.mock import MagicMock
 
 @pytest.mark.asyncio
+@pytest.mark.live_supabase
 async def test_end_to_end_onboarding_and_regression():
     # 1. Setup a real auth test user via Supabase admin API
     unique_suffix = uuid.uuid4().hex[:8]

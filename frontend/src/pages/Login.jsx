@@ -42,30 +42,27 @@ function mapAuthError(err) {
 }
 
 export default function Login({ initialMode = 'signin', onRecoveryComplete }) {
-  const [mode, setMode]                 = useState(initialMode); // 'signin' | 'signup' | 'recovery'
+  const [mode, setMode]                 = useState(() => {
+    const recoveryUrl = (window.location.hash || '').includes('type=recovery') || (window.location.search || '').includes('type=recovery');
+    return initialMode === 'recovery' || recoveryUrl ? 'recovery' : initialMode;
+  }); // 'signin' | 'signup' | 'recovery'
   const [email, setEmail]               = useState('');
   const [password, setPassword]         = useState('');
   const [newPassword, setNewPassword]   = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
-  const [msg, setMsg]                   = useState(null);   // { type: 'error'|'success', text }
+  const [msg, setMsg]                   = useState(() => {
+    const recoveryUrl = (window.location.hash || '').includes('type=recovery') || (window.location.search || '').includes('type=recovery');
+    return initialMode === 'recovery' || recoveryUrl
+      ? { type: 'info', text: 'Please enter your new password to complete account recovery.' }
+      : null;
+  });   // { type: 'error'|'success', text }
   const [loading, setLoading]           = useState(false);
   const [activeModal, setActiveModal]   = useState(null); // null | 'terms' | 'privacy'
 
   // Detect recovery mode from URL hash or Supabase auth event on mount
   useEffect(() => {
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      setMsg({ type: 'error', text: 'Supabase environment variables not set. Check .env file.' });
-    }
-
-    const hash = window.location.hash || '';
-    const search = window.location.search || '';
-    if (initialMode === 'recovery' || hash.includes('type=recovery') || search.includes('type=recovery')) {
-      setMode('recovery');
-      setMsg({ type: 'info', text: 'Please enter your new password to complete account recovery.' });
-    }
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') {
         setMode('recovery');
@@ -81,7 +78,7 @@ export default function Login({ initialMode = 'signin', onRecoveryComplete }) {
     setLoading(true);
     setMsg(null);
     try {
-      const { data, error } = await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
           redirectTo: `${window.location.origin}/`,
@@ -144,7 +141,7 @@ export default function Login({ initialMode = 'signin', onRecoveryComplete }) {
       }
 
       // 2. Perform password update
-      const { data, error } = await supabase.auth.updateUser({ password: newPassword });
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
 
       // 3. Clear temporary recovery session for maximum security so user logs in cleanly
@@ -223,6 +220,7 @@ export default function Login({ initialMode = 'signin', onRecoveryComplete }) {
   };
 
   const isSignUp = mode === 'signup';
+  const hasSupabaseConfig = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
   const isRecovery = mode === 'recovery';
 
   return (
@@ -416,6 +414,11 @@ export default function Login({ initialMode = 'signin', onRecoveryComplete }) {
             )}
 
             {/* Alert Message Box */}
+            {!hasSupabaseConfig && !msg && (
+              <div className="alert alert--error" style={{ marginTop: '16px', fontSize: '0.86rem' }}>
+                Supabase environment variables not set. Check .env file.
+              </div>
+            )}
             {msg && (
               <div
                 className={`alert alert--${msg.type === 'info' ? 'success' : msg.type}`}

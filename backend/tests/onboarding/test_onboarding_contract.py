@@ -95,6 +95,7 @@ async def test_save_skills_contract_validations():
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_supabase
 async def test_ai_career_proposal_quarantine_contract():
     """Verify that an AI-generated career proposal is strictly quarantined in pending_careers,
 
