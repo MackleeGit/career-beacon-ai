@@ -11,8 +11,8 @@ Architecture:
 
   STAGE 2: PYTHON RE-RANKING ENGINE (FastAPI / Graph Weights)
     - Priority in Difficulty: Penalizes high-difficulty content for low-proficiency nodes.
-    - Growth in Breadth vs. Weight: Boosts neglected peripheral skills in the career graph.
-    - Source Trust Scoring: Multiplies by organic source trust modifier (0.00 - 1.00).
+    - Career Context: Carries occupation and O*NET/ESCO skill metadata into retrieval.
+    - Source Diversity: Retrieves additional validated sources when a skill has only one domain.
     - Sorts and delivers final Top 5 micro-learning feed.
 """
 
@@ -81,12 +81,15 @@ class RecommendationService:
             return []
 
         career_id = profile_res.data[0]["target_career_id"]
-        career_res = supabase_client.table("careers").select("id, title, description").eq("id", career_id).execute()
-        career_title = career_res.data[0]["title"] if career_res.data else "General Tech"
+        career_res = supabase_client.table("careers").select(
+            "id, title, description, source_origin, review_status, onet_soc_code, esco_occupation_uri"
+        ).eq("id", career_id).execute()
+        career = career_res.data[0] if career_res.data else {}
+        career_title = career.get("title", "General Career")
 
         # 2. Fetch user's enrolled skills and current proficiencies (Skill Graph Coordinates)
         user_skills_res = supabase_client.table("user_skills").select(
-            "skill_id, proficiency, skills(id, name, category)"
+            "skill_id, proficiency, skills(id, name, category, onet_element_id, esco_skill_uri)"
         ).eq("user_id", user_id).execute()
 
         user_skills = []
@@ -102,6 +105,8 @@ class RecommendationService:
                     "id": s_id,
                     "name": sk["name"],
                     "category": sk.get("category", ""),
+                    "onet_element_id": sk.get("onet_element_id"),
+                    "esco_skill_uri": sk.get("esco_skill_uri"),
                     "proficiency": prof,
                 })
                 skill_proficiency_map[s_id] = prof
@@ -116,7 +121,7 @@ class RecommendationService:
         career_skills_map: Dict[str, Dict[str, Any]] = {}
         try:
             cs_res = supabase_client.table("career_skills").select(
-                "skill_id, importance, importance_score, tier, rank"
+                "skill_id, importance, importance_score, tier, rank, expected_proficiency, career_level, source_origin, review_status"
             ).eq("career_id", career_id).execute()
             for row in (cs_res.data or []):
                 career_skills_map[row["skill_id"]] = row
@@ -144,14 +149,40 @@ class RecommendationService:
         except Exception as e:
             logger.warning(f"Failed to fetch skill dependencies: {e}")
 
-        # 3. Construct Skill-Gap Frontier Query
-        # Sort skills by proficiency ascending (biggest gap first)
-        sorted_by_gap = sorted(user_skills, key=lambda s: s["proficiency"])
-        priority_skills = sorted_by_gap[:4]
-        gap_skill_names = ", ".join(s["name"] for s in priority_skills)
+        # 3. Carry onboarding's O*NET/ESCO occupation, skill categories,
+        # importance, proficiency targets, and evidence into semantic retrieval.
+        def career_priority(skill):
+            meta = career_skills_map.get(skill["id"], {})
+            try:
+                importance_score = float(meta.get("importance_score") or 0)
+            except (TypeError, ValueError):
+                importance_score = 0.0
+            try:
+                target = int(meta.get("expected_proficiency") or 100)
+            except (TypeError, ValueError):
+                target = 100
+            gap_to_target = max(0, target - skill["proficiency"])
+            essential = meta.get("importance") == "essential"
+            tier = meta.get("tier") or 3
+            rank = meta.get("rank") or 9999
+            return (not essential, tier, -importance_score, -gap_to_target, rank, skill["proficiency"])
+
+        priority_skills = sorted(user_skills, key=career_priority)[:4]
+        career_tags = [
+            f"{s['name']} [category: {s['category'] or 'General'}; "
+            f"career importance: {career_skills_map.get(s['id'], {}).get('importance') or 'unclassified'}; "
+            f"tier: {career_skills_map.get(s['id'], {}).get('tier') or 'unspecified'}; "
+            f"importance score: {career_skills_map.get(s['id'], {}).get('importance_score') or 'unspecified'}; "
+            f"learner estimate: {s['proficiency']}%; "
+            f"target: {career_skills_map.get(s['id'], {}).get('expected_proficiency') or 'unspecified'}%]"
+            for s in priority_skills
+        ]
         frontier_query_text = (
-            f"Target Career: {career_title}. "
-            f"Priority micro-learning skills to improve: {gap_skill_names}."
+            f"Target occupation: {career_title}. {career.get('description') or ''}. "
+            f"Occupation provenance: {career.get('source_origin') or 'unspecified'}; "
+            f"O*NET code: {career.get('onet_soc_code') or 'unspecified'}; "
+            f"ESCO URI: {career.get('esco_occupation_uri') or 'unspecified'}. "
+            f"Career skill priorities: {'; '.join(career_tags)}."
         )
 
         query_embedding = await self.embedding_service.get_embedding(frontier_query_text)
@@ -201,19 +232,35 @@ class RecommendationService:
             if c.get("associated_skill_id") in user_skill_ids
         ]
 
-        # If database lacks sufficient domain content for this career (< limit relevant lessons):
-        if len(relevant_candidates) < limit:
-            needed_count = limit - len(relevant_candidates)
+        content_by_skill: Dict[str, List[Dict[str, Any]]] = {}
+        for candidate in relevant_candidates:
+            content_by_skill.setdefault(candidate.get("associated_skill_id"), []).append(candidate)
+
+        def needs_source_diversity(skill):
+            existing = content_by_skill.get(skill["id"], [])
+            if not existing:
+                return True
+            urls = [item.get("source_url") for item in existing if item.get("source_url")]
+            if not urls:
+                return False  # Unknown source metadata is not evidence of low diversity.
+            domains = {url.split("//", 1)[-1].split("/", 1)[0].lower() for url in urls}
+            # Continue on-demand retrieval while a skill's known content comes from
+            # only one source domain; exact URLs are excluded before fetching again.
+            return len(domains) < 2
+
+        skills_needing_content = [s for s in priority_skills if needs_source_diversity(s)]
+        if not skills_needing_content:
+            skills_needing_content = [s for s in user_skills if needs_source_diversity(s)]
+
+        # Refill a short feed, and proactively replace Wikipedia-only coverage with
+        # career-specific material. Limit generation to two skills per request.
+        needs_refill = len(relevant_candidates) < limit
+        if needs_refill or skills_needing_content:
+            needed_count = max(limit - len(relevant_candidates), min(2, len(skills_needing_content)))
             logger.info(
-                f"Learner {user_id} ({career_title}) has {len(relevant_candidates)}/{limit} relevant lessons in DB. "
-                f"Triggering Just-In-Time dynamic curriculum generation for {needed_count} skills..."
+                f"Learner {user_id} ({career_title}) has {len(relevant_candidates)}/{limit} relevant lessons; "
+                f"trying up to {needed_count} career-aware lessons from additional sources."
             )
-            skills_with_content = set(c.get("associated_skill_id") for c in relevant_candidates if c.get("associated_skill_id"))
-            skills_needing_content = [s for s in priority_skills if s["id"] not in skills_with_content]
-
-            if not skills_needing_content:
-                skills_needing_content = [s for s in user_skills if s["id"] not in skills_with_content][:needed_count]
-
             if skills_needing_content:
                 sem = asyncio.Semaphore(2)
 
@@ -225,11 +272,15 @@ class RecommendationService:
                             category=s.get("category", "Core"),
                             career_title=career_title,
                             target_proficiency=s["proficiency"],
+                            career_skill_context=career_skills_map.get(s["id"], {}),
                         )
                         await asyncio.sleep(0.2)
                         return res
 
-                tasks = [_paced_gen(s) for s in skills_needing_content[:needed_count]]
+                skills_to_generate = skills_needing_content[:needed_count] if skills_needing_content else [
+                    s for s in priority_skills if needs_source_diversity(s)
+                ][:needed_count]
+                tasks = [_paced_gen(s) for s in skills_to_generate]
                 try:
                     new_lessons = await asyncio.gather(*tasks, return_exceptions=True)
                     for lesson in new_lessons:

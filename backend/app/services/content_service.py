@@ -13,6 +13,7 @@ Takes raw educational content validated through the 3-gate ingestion pipeline:
 """
 
 import sys
+import asyncio
 import json
 import re
 import html
@@ -21,6 +22,7 @@ from typing import Dict, Any, List, Optional
 from app.services.ai_service import AIService
 from app.services.embedding_service import EmbeddingService
 from app.core.database import supabase_client
+from app.core.config import settings
 
 logger = logging.getLogger("career_beacon.content_service")
 
@@ -238,7 +240,9 @@ Rules:
 
         # Check if item already exists by source_url
         try:
-            existing = supabase_client.table("micro_content").select("id").eq("source_url", source_url).execute()
+            existing = supabase_client.table("micro_content").select("id").eq(
+                "source_url", source_url
+            ).eq("associated_skill_id", skill_id).execute()
             existing_id = existing.data[0]["id"] if (existing and existing.data) else None
         except Exception:
             existing_id = None
@@ -304,10 +308,17 @@ Rules:
 
         return None
 
-    async def fetch_live_source_for_skill(self, skill_name: str, category: str = "Core") -> Optional[Dict[str, Any]]:
+    async def fetch_live_source_for_skill(
+        self,
+        skill_name: str,
+        category: str = "Core",
+        career_title: str = "",
+        exclude_source_urls: Optional[set] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
-        Queries authoritative public educational endpoints (Dev.to, Wikipedia REST API,
-        StackExchange) to discover verifiable learning content.
+        Queries career-appropriate public learning sources. Prefer role authorities
+        (for example NHS Careers for dental/health careers), then tutorials/video
+        transcripts, StackExchange, and Wikipedia as a last resort.
 
         Returns a dictionary with verified 'title', 'source_url', 'raw_text', and 'trust_score'
         if substantive learning material is retrieved; otherwise returns None.
@@ -316,9 +327,13 @@ Rules:
         import httpx
         headers = {"User-Agent": "CareerBeacon/1.0 (academic research; contact@careerbeacon.ai; polite bot)"}
         cat_lower = (category or "").lower()
+        career_lower = (career_title or "").lower()
         is_tech = any(k in cat_lower for k in ["tech", "software", "program", "data", "develop", "web", "ai", "cloud"])
+        is_health = any(k in f"{cat_lower} {career_lower} {skill_name.lower()}" for k in ["health", "medical", "clinical", "dental", "nurs"])
+        excluded = {u for u in (exclude_source_urls or set()) if u}
+        wiki_candidate = None
 
-        async with httpx.AsyncClient(timeout=6.0) as client:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             # 1. Dev.to API (For software and technology skills)
             if is_tech:
                 clean_tag = re.sub(r"[^a-zA-Z0-9]", "", skill_name.lower())
@@ -356,7 +371,129 @@ Rules:
                 except Exception as e:
                     logger.debug(f"Dev.to retrieval error: {e}")
 
-            # 2. Direct Wikipedia REST API Page Summary
+            # 2. NHS Careers: role-specific source for dental/health career skills.
+            if is_health and ("dental" in career_lower or "dental" in skill_name.lower()):
+                nhs_url = "https://www.healthcareers.nhs.uk/explore-roles/dental-team/roles-dental-team/dental-nurse"
+                if nhs_url not in excluded:
+                    try:
+                        response = await client.get(nhs_url, headers=headers)
+                        if response.status_code == 200:
+                            text = strip_html_and_clean(response.text)
+                            if validate_source_content(text, skill_name):
+                                return {
+                                    "title": "Dental nurse role and practice",
+                                    "source_url": str(response.url),
+                                    "raw_text": text[:12000],
+                                    "source": "NHS Health Careers",
+                                    "trust_score": None,
+                                }
+                    except Exception as e:
+                        logger.debug(f"NHS Health Careers retrieval error: {e}")
+
+            # For a dental occupation, prefer regulator and NHS guidance over
+            # encyclopedic summaries. Each page must still pass the topic gate.
+            if "dental" in career_lower or "dental" in skill_name.lower():
+                dental_sources = [
+                    ("https://www.gdc-uk.org/standards-guidance/standards-and-guidance/scope-of-practice", "GDC Scope of Practice"),
+                    ("https://www.gdc-uk.org/standards-guidance/standards-and-guidance/standards-for-the-dental-team", "GDC Standards for the Dental Team"),
+                    ("https://www.gdc-uk.org/standards-guidance/supporting-the-dental-team/employment-and-registration", "GDC Employment and Registration"),
+                    ("https://www.england.nhs.uk/publication/decontamination-in-primary-care-dental-practices-htm-01-05/", "NHS England Dental Decontamination Guidance"),
+                ]
+                dental_candidates = [(url, title) for url, title in dental_sources if url not in excluded]
+                responses = await asyncio.gather(
+                    *(client.get(url, headers=headers) for url, _ in dental_candidates),
+                    return_exceptions=True,
+                )
+                for (source_url, source_title), response in zip(dental_candidates, responses):
+                    if isinstance(response, Exception) or response.status_code != 200:
+                        continue
+                    text = strip_html_and_clean(response.text)
+                    if validate_source_content(text, skill_name):
+                        return {
+                            "title": source_title,
+                            "source_url": str(response.url),
+                            "raw_text": text[:12000],
+                            "source": source_title,
+                            "trust_score": None,
+                        }
+
+            # 3. W3Schools tutorial pages for technical skills.
+            if is_tech:
+                slug_map = {"javascript": "js", "typescript": "typescript", "c#": "c_sharp", "c++": "cpp"}
+                slug = slug_map.get(skill_name.strip().lower(), re.sub(r"[^a-z0-9]+", "", skill_name.lower()))
+                w3_url = f"https://www.w3schools.com/{slug}/"
+                if w3_url not in excluded:
+                    try:
+                        response = await client.get(w3_url, headers=headers)
+                        if response.status_code == 200:
+                            text = strip_html_and_clean(response.text)
+                            if validate_source_content(text, skill_name):
+                                return {
+                                    "title": f"{skill_name} tutorial",
+                                    "source_url": str(response.url),
+                                    "raw_text": text[:12000],
+                                    "source": "W3Schools",
+                                    "trust_score": None,
+                                }
+                    except Exception as e:
+                        logger.debug(f"W3Schools retrieval error: {e}")
+
+            # 4. YouTube: prefer transcript text; use a substantive description only
+            # when captions are unavailable. Never invent content from a title.
+            try:
+                from urllib.parse import quote_plus
+                video_items = []
+                if settings.youtube_api_key:
+                    query = quote_plus(f"{career_title} {skill_name} lesson tutorial")
+                    response = await client.get(
+                        "https://www.googleapis.com/youtube/v3/search"
+                        f"?part=snippet&q={query}&type=video&maxResults=5&key={settings.youtube_api_key}",
+                        headers=headers,
+                    )
+                    if response.status_code == 200:
+                        for entry in response.json().get("items", []):
+                            video_id = entry.get("id", {}).get("videoId")
+                            snippet = entry.get("snippet", {})
+                            if video_id:
+                                video_items.append((video_id, snippet.get("title", ""), snippet.get("description", "")))
+                else:
+                    query = quote_plus(f"{career_title} {skill_name} educational tutorial")
+                    response = await client.get(
+                        f"https://www.youtube.com/results?search_query={query}",
+                        headers={**headers, "User-Agent": "Mozilla/5.0"},
+                    )
+                    if response.status_code == 200:
+                        ids = list(dict.fromkeys(re.findall(r'"videoId":"([A-Za-z0-9_-]{11})"', response.text)))
+                        titles = list(dict.fromkeys(re.findall(r'"title":\{"runs":\[\{"text":"(.*?)"\}', response.text)))
+                        video_items = [(vid, html.unescape(title), "") for vid, title in zip(ids[:5], titles[:5])]
+
+                for video_id, video_title, description in video_items[:2]:
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+                    if video_url in excluded or not video_title:
+                        continue
+                    transcript_text = ""
+                    try:
+                        from youtube_transcript_api import YouTubeTranscriptApi
+                        transcript = await asyncio.wait_for(
+                            asyncio.to_thread(YouTubeTranscriptApi().fetch, video_id, languages=["en"]),
+                            timeout=5.0,
+                        )
+                        transcript_text = " ".join(part.text for part in transcript.snippets)
+                    except Exception:
+                        pass
+                    raw = strip_html_and_clean(transcript_text or description or "")
+                    if validate_source_content(raw, skill_name):
+                        return {
+                            "title": html.unescape(video_title).strip(),
+                            "source_url": video_url,
+                            "raw_text": raw[:12000],
+                            "source": "YouTube transcript" if transcript_text else "YouTube description",
+                            "trust_score": None,
+                        }
+            except Exception as e:
+                logger.debug(f"YouTube retrieval error: {e}")
+
+            # 5. Direct Wikipedia REST API Page Summary (last-resort context source)
             slug = skill_name.strip().replace(" ", "_")
             try:
                 r_wiki = await client.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}", headers=headers)
@@ -365,13 +502,14 @@ Rules:
                     extract = d.get("extract", "")
                     if d.get("type") == "standard" and validate_source_content(extract, skill_name):
                         page_url = d.get("content_urls", {}).get("desktop", {}).get("page") or f"https://en.wikipedia.org/wiki/{slug}"
-                        return {
-                            "title": d.get("title", skill_name),
-                            "source_url": page_url,
-                            "raw_text": extract[:3500],
-                            "source": "wikipedia",
-                            "trust_score": 1.00,
-                        }
+                        if page_url not in excluded:
+                            wiki_candidate = {
+                                "title": d.get("title", skill_name),
+                                "source_url": page_url,
+                                "raw_text": extract[:3500],
+                                "source": "wikipedia",
+                                "trust_score": None,
+                            }
             except Exception as e:
                 logger.debug(f"Wikipedia summary error: {e}")
 
@@ -426,7 +564,7 @@ Rules:
                                 pass
 
                             full_se_text = f"{q_title}.\n\nExplanation:\n{ans_body_text}" if ans_body_text else ""
-                            if ans_url and validate_source_content(full_se_text, skill_name):
+                            if ans_url and ans_url not in excluded and validate_source_content(full_se_text, skill_name):
                                 return {
                                     "title": q_title,
                                     "source_url": ans_url,
@@ -454,18 +592,21 @@ Rules:
                             extract2 = d2.get("extract", "")
                             if d2.get("type") == "standard" and validate_source_content(extract2, skill_name):
                                 page_url = d2.get("content_urls", {}).get("desktop", {}).get("page") or f"https://en.wikipedia.org/wiki/{slug2}"
-                                return {
-                                    "title": d2.get("title", best_title),
-                                    "source_url": page_url,
-                                    "raw_text": extract2[:3500],
-                                    "source": "wikipedia",
-                                    "trust_score": 1.00,
-                                }
+                                if page_url not in excluded:
+                                    wiki_candidate = {
+                                        "title": d2.get("title", best_title),
+                                        "source_url": page_url,
+                                        "raw_text": extract2[:3500],
+                                        "source": "wikipedia",
+                                        "trust_score": None,
+                                    }
             except Exception as e:
                 logger.debug(f"Wikipedia search fallback error: {e}")
 
         # 5. Fail honestly: No fabricated fallback URLs or synthetic placeholder text
-        logger.warning(f"No suitable authoritative source content found across any provider for '{skill_name}'.")
+        if wiki_candidate:
+            return wiki_candidate
+        logger.warning(f"No suitable learning source found across available providers for '{skill_name}'.")
         return None
 
     async def generate_dynamic_lesson_for_skill(
@@ -475,6 +616,7 @@ Rules:
         category: str = "Core",
         career_title: str = "General Career",
         target_proficiency: int = 20,
+        career_skill_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Dynamically fetches authoritative reference material from public APIs,
@@ -484,7 +626,19 @@ Rules:
         If no authoritative material is found or content fails sufficiency checks,
         returns None honestly rather than manufacturing unsupported lessons.
         """
-        live_source = await self.fetch_live_source_for_skill(skill_name, category)
+        try:
+            existing_res = supabase_client.table("micro_content").select("source_url").eq(
+                "associated_skill_id", skill_id
+            ).execute()
+            excluded_urls = {row.get("source_url") for row in (existing_res.data or [])}
+        except Exception:
+            excluded_urls = set()
+        live_source = await self.fetch_live_source_for_skill(
+            skill_name,
+            category,
+            career_title=career_title,
+            exclude_source_urls=excluded_urls,
+        )
         if not live_source or not live_source.get("source_url") or not live_source.get("raw_text"):
             logger.warning(f"No verifiable source material found for '{skill_name}'. Aborting dynamic lesson generation.")
             return None
@@ -504,6 +658,8 @@ Rules:
         prompt = f"""
 Target Career: {career_title}
 Skill Target: {skill_name} ({category})
+Career taxonomy metadata (use only as prioritization context): {json.dumps(career_skill_context or {}, default=str)}
+Learner proficiency estimate: {target_proficiency}%
 Authoritative Resource: {live_source['source']} ({source_url})
 
 Source Content (Strict Ground Truth):
@@ -575,7 +731,9 @@ Rules:
             return None
 
         try:
-            existing = supabase_client.table("micro_content").select("id").eq("source_url", source_url).execute()
+            existing = supabase_client.table("micro_content").select("id").eq(
+                "source_url", source_url
+            ).eq("associated_skill_id", skill_id).execute()
             existing_id = existing.data[0]["id"] if (existing and existing.data) else None
         except Exception:
             existing_id = None

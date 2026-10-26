@@ -198,6 +198,87 @@ class TestFetchLiveSourceUrlPreservation:
             assert "Python" in result["raw_text"]
 
 
+
+
+class TestCareerSpecificSourceSelection:
+    @pytest.mark.asyncio
+    async def test_dental_career_prefers_official_guidance_to_wikipedia(self):
+        cs = ContentService()
+        nhs_url = "https://www.healthcareers.nhs.uk/explore-roles/dental-team/roles-dental-team/dental-nurse"
+        text = "Dental nurses support patient care, prepare the clinical environment, follow infection prevention procedures, and work within the dental team's scope. " * 4
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+            nhs_response = MagicMock(status_code=200, text=f"<main>{text}</main>", url=nhs_url)
+            missing = MagicMock(status_code=404, text="", url="")
+
+            async def route_get(url, **kwargs):
+                return nhs_response if "healthcareers.nhs.uk" in url else missing
+
+            mock_client.get = AsyncMock(side_effect=route_get)
+            result = await cs.fetch_live_source_for_skill(
+                "Dental Nurse", "Healthcare", career_title="Dental Nurse"
+            )
+
+        assert result["source"] == "NHS Health Careers"
+        assert result["source_url"] == nhs_url
+        assert len(result["raw_text"]) >= 200
+
+    @pytest.mark.asyncio
+    async def test_youtube_transcript_is_used_as_grounded_source_text(self):
+        import sys
+        from types import SimpleNamespace
+        cs = ContentService()
+        transcript_text = "Python functions accept arguments and return values. Parameters define inputs, and return statements send results to callers. " * 5
+
+        class FakeTranscriptApi:
+            def fetch(self, video_id, languages=None):
+                return SimpleNamespace(snippets=[SimpleNamespace(text=transcript_text)])
+
+        with patch.dict(sys.modules, {"youtube_transcript_api": SimpleNamespace(YouTubeTranscriptApi=FakeTranscriptApi)}), \
+             patch("app.services.content_service.settings.youtube_api_key", "test-key"), \
+             patch("httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+            missing = MagicMock(status_code=404, text="", url="")
+            videos = MagicMock(status_code=200)
+            videos.json.return_value = {"items": [{"id": {"videoId": "abcdefghijk"}, "snippet": {"title": "Python functions tutorial", "description": "Short description"}}]}
+
+            async def route_get(url, **kwargs):
+                return videos if "youtube/v3/search" in url else missing
+
+            mock_client.get = AsyncMock(side_effect=route_get)
+            result = await cs.fetch_live_source_for_skill("Python", "Technical Skills", career_title="Software Engineer")
+
+        assert result["source"] == "YouTube transcript"
+        assert "return statements" in result["raw_text"]
+
+    @pytest.mark.asyncio
+    async def test_w3schools_is_used_for_technical_skills(self):
+        cs = ContentService()
+        text = "Python is a programming language used to build software. This tutorial explains Python syntax, data types, and functions. " * 5
+        w3_url = "https://www.w3schools.com/python/"
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+            ok = MagicMock(status_code=200, text=f"<main>{text}</main>", url=w3_url)
+            missing = MagicMock(status_code=404, text="", url="")
+
+            async def route_get(url, **kwargs):
+                return ok if "w3schools.com/python" in url else missing
+
+            mock_client.get = AsyncMock(side_effect=route_get)
+            result = await cs.fetch_live_source_for_skill("Python", "Technical Skills")
+
+        assert result["source"] == "W3Schools"
+        assert result["source_url"] == w3_url
+
+
 # ---------------------------------------------------------------------------
 # Integration Tests: generate_dynamic_lesson_for_skill
 # ---------------------------------------------------------------------------

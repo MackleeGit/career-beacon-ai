@@ -364,6 +364,10 @@ async def test_career_importance_prioritizes_essential_over_optional(base_user_s
         assert results[1]["associated_skill_id"] == skill_y
         assert results[0]["career_importance"] == "essential"
         assert results[0]["relevance_score"] > results[1]["relevance_score"]
+        query_text = rec_service.embedding_service.get_embedding.await_args.args[0]
+        assert "category: Core" in query_text
+        assert "career importance: essential" in query_text
+        assert "tier: 1" in query_text
 
 
 @pytest.mark.asyncio
