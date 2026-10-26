@@ -52,6 +52,62 @@ def sanitize_career_query(query: str) -> str:
     return clean
 
 
+def _normalized_title_words(value: str) -> tuple[str, ...]:
+    """Normalize small grammatical differences for deterministic title lookup."""
+    words = re.findall(r"[a-z0-9]+", value.lower().replace("&", " and "))
+    normalized = []
+    for word in words:
+        # O*NET titles commonly use plural job titles (e.g. Engineers), while
+        # learners often type the singular. Keep this deliberately conservative.
+        if len(word) > 4 and word.endswith("ies"):
+            word = word[:-3] + "y"
+        elif len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        normalized.append(word)
+    return tuple(normalized)
+
+
+def _career_provenance_label(source: str, status: str) -> str:
+    if source == "dual_sourced":
+        return "Source: O*NET & ESCO · Review pending" if status == "unreviewed" else "Source: O*NET & ESCO"
+    if source == "onet":
+        return "Source: O*NET · Review pending" if status == "unreviewed" else "Source: O*NET"
+    if source == "esco":
+        return "Source: ESCO · Review pending" if status == "unreviewed" else "Source: ESCO"
+    if source == "curated_list":
+        return "Curated" if status == "curated" else "Internal Starter"
+    return "AI Suggestion"
+
+
+async def _canonical_match_result(career: dict) -> dict:
+    skills_res = (
+        supabase_client.table("career_skills")
+        .select("source_origin, review_status, importance, importance_score, skills(*)")
+        .eq("career_id", career["id"])
+        .execute()
+    )
+    skills = []
+    for row in skills_res.data or []:
+        skill = row.get("skills")
+        if not skill:
+            continue
+        source = row.get("source_origin", "llm")
+        skills.append({
+            "id": skill["id"],
+            "name": skill["name"],
+            "category": skill.get("category") or "General",
+            "importance": row.get("importance"),
+            "importance_score": row.get("importance_score"),
+            "source_origin": source,
+            "provenance_label": _career_provenance_label(source, row.get("review_status", "unreviewed")),
+        })
+
+    career["provenance_label"] = _career_provenance_label(
+        career.get("source_origin", "llm"), career.get("review_status", "unreviewed")
+    )
+    return {"status": "matched", "career": career, "skills": skills}
+
+
 # ---------------------------------------------------------------------------
 # Pydantic Schemas (Unified Atomic Contract - Workstream 1 & 3)
 # ---------------------------------------------------------------------------
@@ -90,22 +146,41 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
 
     query = sanitize_career_query(raw_query)
 
-    # 1. Embed sanitized query
-    query_vector = await embedding_service.get_embedding(query)
+    # Canonical title lookup precedes semantic search. This catches exact and
+    # simple singular/plural title matches even when query and catalogue vectors
+    # were built from different text (for example query title vs title+description).
+    CANONICAL_SOURCES = ("onet", "esco", "dual_sourced", "curated_list")
+    try:
+        escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        exact_res = (
+            supabase_client.table("careers")
+            .select("id, title, description, source_origin, review_status, onet_soc_code, esco_occupation_uri, is_curated")
+            .in_("source_origin", list(CANONICAL_SOURCES))
+            .ilike("title", f"{escaped_query}%")
+            .limit(25)
+            .execute()
+        )
+        normalized_query = _normalized_title_words(query)
+        exact_matches = [
+            row for row in (exact_res.data or [])
+            if _normalized_title_words(row.get("title", "")) == normalized_query
+        ]
+        if exact_matches:
+            # Prefer a record backed by both catalogues, then O*NET, then ESCO.
+            priority = {"dual_sourced": 0, "onet": 1, "esco": 2, "curated_list": 3}
+            exact_matches.sort(key=lambda row: priority.get(row.get("source_origin"), 9))
+            return await _canonical_match_result(exact_matches[0])
+    except Exception as e:
+        # Exact lookup is an improvement, not a dependency: retain semantic search
+        # when a database title query is unavailable.
+        print("[career-search] canonical title lookup error:", e)
 
-    # 2. Search Supabase for canonical careers
-    # Threshold Specification:
-    # - HIGH_CONFIDENCE_THRESHOLD (0.85): Direct auto-match
-    # - DISAMBIGUATION_THRESHOLD (0.72): Multi-candidate boundary
-    # - RPC_CANDIDATE_FILTER (0.70): Coarse database retrieval filter
+    # 2. Semantic search remains the path for non-exact, natural-language queries.
     HIGH_CONFIDENCE_THRESHOLD = 0.85
     DISAMBIGUATION_THRESHOLD = 0.72
     RPC_CANDIDATE_FILTER = 0.70
-
-    # Explicit allowlist of authoritative sources for canonical career search
-    CANONICAL_SOURCES = ("onet", "esco", "dual_sourced", "curated_list")
-
     try:
+        query_vector = await embedding_service.get_embedding(query)
         response = supabase_client.rpc(
             "match_careers",
             {
@@ -115,8 +190,6 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
             },
         ).execute()
 
-        # Strict Catalogue Isolation: Only careers from CANONICAL_SOURCES are admissible
-        # into search results. Unapproved LLM proposals are strictly excluded.
         raw_candidates = response.data or []
         candidates = []
         if raw_candidates:
@@ -129,72 +202,17 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
                 .execute()
             )
             canonical_dict = {row["id"]: row for row in (source_res.data or [])}
-            for c in raw_candidates:
-                if c["id"] in canonical_dict:
-                    merged = dict(c)
-                    merged.update(canonical_dict[c["id"]])
+            for candidate in raw_candidates:
+                if candidate["id"] in canonical_dict:
+                    merged = dict(candidate)
+                    merged.update(canonical_dict[candidate["id"]])
                     candidates.append(merged)
 
         if candidates:
             top_match = candidates[0]
             top_score = top_match.get("similarity", 0)
-
-            # High confidence clear match
             if top_score >= HIGH_CONFIDENCE_THRESHOLD:
-                # Fetch skills with full provenance metadata
-                skills_res = (
-                    supabase_client.table("career_skills")
-                    .select("source_origin, review_status, importance, importance_score, skills(*)")
-                    .eq("career_id", top_match["id"])
-                    .execute()
-                )
-
-                skills = []
-                for row in skills_res.data:
-                    sk = row.get("skills")
-                    if sk:
-                        source_origin = row.get("source_origin", "llm")
-                        skills.append({
-                            "id":               sk["id"],
-                            "name":             sk["name"],
-                            "category":         sk.get("category") or "General",
-                            "importance":       row.get("importance"),  # None is valid; UI handles it
-                            "importance_score": row.get("importance_score"),
-                            "source_origin":    source_origin,
-                            "provenance_label": (
-                                "Source: O*NET & ESCO · Review pending" if (source_origin == "dual_sourced" and row.get("review_status") == "unreviewed")
-                                else "Source: O*NET & ESCO" if source_origin == "dual_sourced"
-                                else "Source: O*NET · Review pending" if (source_origin == "onet" and row.get("review_status") == "unreviewed")
-                                else "Source: O*NET"   if source_origin == "onet"
-                                else "Source: ESCO · Review pending" if (source_origin == "esco" and row.get("review_status") == "unreviewed")
-                                else "Source: ESCO"    if source_origin == "esco"
-                                else "Curated"         if (source_origin == "curated_list" and row.get("review_status") == "curated")
-                                else "Internal Starter" if source_origin == "curated_list"
-                                else "AI Suggestion"
-                            ),
-                        })
-
-                # Attach provenance to the career object
-                career_source = top_match.get("source_origin", "llm")
-                career_status = top_match.get("review_status", "unreviewed")
-                top_match["provenance_label"] = (
-                    "Source: O*NET & ESCO · Review pending" if (career_source == "dual_sourced" and career_status == "unreviewed")
-                    else "Source: O*NET & ESCO" if career_source == "dual_sourced"
-                    else "Source: O*NET · Review pending" if (career_source == "onet" and career_status == "unreviewed")
-                    else "Source: O*NET"   if career_source == "onet"
-                    else "Source: ESCO · Review pending" if (career_source == "esco" and career_status == "unreviewed")
-                    else "Source: ESCO"    if career_source == "esco"
-                    else "Curated"         if career_status == "curated"
-                    else "AI Suggestion"
-                )
-
-                return {
-                    "status": "matched",
-                    "career": top_match,
-                    "skills": skills,
-                }
-
-            # Moderate confidence ([0.72, 0.85)) -> Disambiguation / candidate confirmation
+                return await _canonical_match_result(top_match)
             if top_score >= DISAMBIGUATION_THRESHOLD:
                 return {
                     "status": "disambiguation_required",
@@ -208,7 +226,6 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
                         for c in candidates[:3]
                     ],
                 }
-
     except Exception as e:
         print("[career-search] RPC search error:", e)
 

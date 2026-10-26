@@ -14,6 +14,77 @@ def test_sanitize_career_query():
     assert sanitize_career_query("career as an ML Engineer") == "ML Engineer"
     assert sanitize_career_query("Product Manager") == "Product Manager"
 
+def test_normalized_career_titles_handle_common_plural_forms():
+    from app.routers.onboarding import _normalized_title_words
+
+    assert _normalized_title_words("Petroleum Engineer") == _normalized_title_words("Petroleum Engineers")
+    assert _normalized_title_words("Data Analyst") == _normalized_title_words("Data Analysts")
+
+
+@pytest.mark.asyncio
+async def test_exact_canonical_title_precedes_low_similarity_fallback(monkeypatch):
+    from app.routers import onboarding
+    from app.routers.onboarding import search_career, CareerSearchRequest
+    from starlette.requests import Request
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    career = {
+        "id": "onet-petroleum-engineers",
+        "title": "Petroleum Engineers",
+        "description": "Devise methods to improve oil and gas extraction and production.",
+        "source_origin": "onet",
+        "review_status": "unreviewed",
+        "onet_soc_code": "17-2171.00",
+        "esco_occupation_uri": None,
+        "is_curated": True,
+    }
+    skills = [{
+        "source_origin": "onet",
+        "review_status": "unreviewed",
+        "importance": "essential",
+        "importance_score": 80,
+        "skills": {"id": "skill-1", "name": "Reading Comprehension", "category": "Skills"},
+    }]
+    observed_pattern = {}
+
+    class Query:
+        def __init__(self, table):
+            self.table = table
+
+        def select(self, *_args): return self
+        def in_(self, *_args): return self
+        def limit(self, *_args): return self
+        def eq(self, *_args): return self
+
+        def ilike(self, _column, pattern):
+            observed_pattern["value"] = pattern
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[career] if self.table == "careers" else skills)
+
+    class Database:
+        def table(self, name): return Query(name)
+
+        def rpc(self, *_args):
+            raise AssertionError("exact canonical title must not depend on vector similarity")
+
+    monkeypatch.setattr(onboarding, "supabase_client", Database())
+    monkeypatch.setattr(onboarding.embedding_service, "get_embedding", AsyncMock(side_effect=AssertionError("unexpected embedding call")))
+
+    mock_req = MagicMock(spec=Request)
+    mock_req.state.user = {"sub": "verified-test-user-uuid"}
+    result = await search_career(CareerSearchRequest(career_query="Petroleum Engineer"), mock_req)
+
+    assert observed_pattern["value"] == "Petroleum Engineer%"
+    assert result["status"] == "matched"
+    assert result["career"]["title"] == "Petroleum Engineers"
+    assert result["career"]["source_origin"] == "onet"
+    assert result["career"]["provenance_label"] == "Source: O*NET · Review pending"
+    assert result["skills"][0]["source_origin"] == "onet"
+
+
 def test_unauthenticated_requests_rejected():
     """Verify JWT middleware strictly guards onboarding endpoints."""
     res_search = client.post("/api/onboarding/career-search", json={"career_query": "Software Developer"})
