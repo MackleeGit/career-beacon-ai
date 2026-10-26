@@ -203,8 +203,8 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
                     "skills": skills,
                 }
 
-            # Moderate confidence with multiple close candidates -> Disambiguation Wheel
-            if len(candidates) >= 2 and top_score >= DISAMBIGUATION_THRESHOLD:
+            # Moderate confidence ([0.72, 0.85)) -> Disambiguation / candidate confirmation
+            if top_score >= DISAMBIGUATION_THRESHOLD:
                 return {
                     "status": "disambiguation_required",
                     "candidates": [
