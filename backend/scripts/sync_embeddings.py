@@ -1,3 +1,9 @@
+"""
+[LEGACY / SUPERSEDED by backfill_dual_career_vectors.py]
+Synchronized single legacy career_vector without skills embedding.
+Superseded by dual vector architecture: title_vector + skills_vector.
+Preserved for reference.
+"""
 import sys, asyncio
 sys.path.append('backend')
 from app.services.embedding_service import EmbeddingService

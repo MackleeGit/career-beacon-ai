@@ -1,0 +1,29 @@
+[
+  {
+    "user_id": "user-diversity",
+    "content_id": "py-1",
+    "first_seen_at": "2026-10-26T10:34:37.491675+00:00",
+    "last_seen_at": "2026-10-26T10:34:37.491675+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "user-diversity",
+    "content_id": "sql-1",
+    "first_seen_at": "2026-10-26T10:34:37.491675+00:00",
+    "last_seen_at": "2026-10-26T10:34:37.491675+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "user-diversity",
+    "content_id": "py-2",
+    "first_seen_at": "2026-10-26T10:34:37.491675+00:00",
+    "last_seen_at": "2026-10-26T10:34:37.491675+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  }
+]

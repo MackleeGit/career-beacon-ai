@@ -20,7 +20,13 @@ class ContentActivityRequest(BaseModel):
 
 
 @router.get("/{user_id}")
-async def get_user_recommendations(user_id: str, request: Request, limit: int = 5, offset: int = 0):
+async def get_user_recommendations(
+    user_id: str,
+    request: Request,
+    limit: int = 10,
+    offset: int = 0,
+    exclude_ids: Optional[List[str]] = None,
+):
     """
     Two-Stage Hybrid Recommendation Endpoint:
     1. Cryptographically verifies authenticated caller session.
@@ -39,13 +45,22 @@ async def get_user_recommendations(user_id: str, request: Request, limit: int = 
         )
 
     try:
-        recommendations = await recommendation_service.get_recommendations_for_user(target_id, limit=limit, offset=offset)
+        raw_recommendations = await recommendation_service.get_recommendations_for_user(
+            target_id, limit=limit + 5, offset=offset, exclude_ids=exclude_ids or []
+        )
+        completed_library = await recommendation_service.get_completed_library_for_user(target_id)
+        completed_ids = {c.get("id") for c in completed_library if c.get("id")}
+        recommendations = [
+            r for r in raw_recommendations
+            if not r.get("has_passed") and r.get("id") not in completed_ids
+        ][:limit]
         return {
             "status": "success",
             "count": len(recommendations),
             "offset": offset,
             "limit": limit,
             "recommendations": recommendations,
+            "completed_library": completed_library,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate recommendations: {str(e)}")
@@ -58,7 +73,7 @@ async def record_content_open(request: ContentActivityRequest, http_req: Request
     if request.user_id and request.user_id != caller_id:
         raise HTTPException(status_code=403, detail="Forbidden: Cannot record activity for another user.")
     recommendation_service.history_service.record_content_open(caller_id, request.content_id)
-    return {"status": "success", "message": "Content open recorded"}
+    return {"status": "success", "learning_status": "in_progress", "message": "Content open recorded"}
 
 
 @router.post("/activity/complete")

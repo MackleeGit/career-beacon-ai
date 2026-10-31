@@ -1,0 +1,11 @@
+[
+  {
+    "user_id": "learner-bob",
+    "content_id": "lesson-python-oop",
+    "first_seen_at": "2026-10-26T10:32:52.055003+00:00",
+    "last_seen_at": "2026-10-26T10:32:52.270141+00:00",
+    "opened_at": "2026-10-26T10:32:52.055003+00:00",
+    "completed_at": "2026-10-26T10:32:52.270141+00:00",
+    "times_recommended": 1
+  }
+]

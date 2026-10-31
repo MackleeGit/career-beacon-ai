@@ -1,0 +1,38 @@
+[
+  {
+    "user_id": "user-pager",
+    "content_id": "lesson-0",
+    "first_seen_at": "2026-10-26T10:10:23.097256+00:00",
+    "last_seen_at": "2026-10-26T10:10:23.097256+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "user-pager",
+    "content_id": "lesson-1",
+    "first_seen_at": "2026-10-26T10:10:23.097256+00:00",
+    "last_seen_at": "2026-10-26T10:10:23.097256+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "user-pager",
+    "content_id": "lesson-2",
+    "first_seen_at": "2026-10-26T10:10:27.170764+00:00",
+    "last_seen_at": "2026-10-26T10:10:27.170764+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "user-pager",
+    "content_id": "lesson-3",
+    "first_seen_at": "2026-10-26T10:10:27.170764+00:00",
+    "last_seen_at": "2026-10-26T10:10:27.170764+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  }
+]

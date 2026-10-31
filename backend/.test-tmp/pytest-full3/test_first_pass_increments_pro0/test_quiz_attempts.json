@@ -1,0 +1,20 @@
+[
+  {
+    "user_id": "user-1",
+    "lesson_id": "lesson-py-101",
+    "skill_id": "skill-python",
+    "attempt_number": 1,
+    "answers": {
+      "0": "A programming language",
+      "1": "Mutable sequence",
+      "2": "def",
+      "3": "Length of object",
+      "4": "Wrong answer"
+    },
+    "score": 4,
+    "total": 5,
+    "percentage": 80.0,
+    "passed": true,
+    "created_at": "2026-10-26T10:30:48.303454+00:00"
+  }
+]

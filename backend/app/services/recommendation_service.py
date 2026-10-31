@@ -21,13 +21,159 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import re
 from typing import Dict, Any, List, Optional
+from urllib.parse import urlparse
 from app.core.database import supabase_client
 from app.services.embedding_service import EmbeddingService
 from app.services.content_service import ContentService
 from app.services.learning_history_service import LearningHistoryService, ATTEMPTS_FILE, ACTIVITY_FILE
 
 logger = logging.getLogger("career_beacon.recommendation_service")
+
+
+def _normalized_career_label(value: str) -> tuple[str, ...]:
+    words = re.findall(r"[a-z0-9]+", (value or "").lower())
+    normalized = []
+    for word in words:
+        if len(word) > 4 and word.endswith("ies"):
+            word = word[:-3] + "y"
+        elif len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        normalized.append(word)
+    return tuple(normalized)
+
+
+def _explicit_lesson_career(item: Dict[str, Any]) -> Optional[str]:
+    """Read explicit career attribution from stored metadata or generated title."""
+    career_title = item.get("career_title")
+    content = item.get("content")
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except (TypeError, ValueError):
+            content = None
+    if not career_title and isinstance(content, dict):
+        career_title = content.get("career_title")
+
+    if career_title and str(career_title).strip():
+        return str(career_title).strip()
+
+    title = item.get("title") or ""
+    match = re.search(r"\bFundamentals for\s+(.+?)\s*$", title, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else None
+
+
+def _lesson_matches_career(item: Dict[str, Any], career_title: str) -> bool:
+    """Keep generic lessons, but reject lessons explicitly made for another career."""
+    lesson_career = _explicit_lesson_career(item)
+    if not lesson_career:
+        return True
+    expected = _normalized_career_label(career_title)
+    actual = _normalized_career_label(lesson_career)
+    return not expected or actual == expected
+
+
+def _filter_candidates_for_career(items: List[Dict[str, Any]], career_title: str) -> List[Dict[str, Any]]:
+    """Drop cross-career lessons and generic/Wikipedia copies when better-fit material exists."""
+    career_items = [item for item in items if _lesson_matches_career(item, career_title)]
+    career_specific_skills = {
+        item.get("associated_skill_id")
+        for item in career_items
+        if item.get("associated_skill_id") and _explicit_lesson_career(item)
+    }
+    non_wiki_skills = set()
+    for item in career_items:
+        skill_id = item.get("associated_skill_id")
+        host = (urlparse(item.get("source_url") or "").hostname or "").lower()
+        if skill_id and host not in {"wikipedia.org", "www.wikipedia.org"}:
+            non_wiki_skills.add(skill_id)
+
+    filtered = []
+    for item in career_items:
+        skill_id = item.get("associated_skill_id")
+        explicit_career = bool(_explicit_lesson_career(item))
+        host = (urlparse(item.get("source_url") or "").hostname or "").lower()
+        is_wikipedia = host == "wikipedia.org" or host.endswith(".wikipedia.org")
+        if skill_id in career_specific_skills and not explicit_career:
+            continue
+        if is_wikipedia and skill_id in non_wiki_skills:
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _source_quality_multiplier(item: Dict[str, Any], career_title: str) -> float:
+    """Weight instructional sources by pedagogical depth; strongly demote Wikipedia fallback."""
+    url = item.get("source_url") or ""
+    host = (urlparse(url).hostname or "").lower()
+    explicit_career = _explicit_lesson_career(item)
+    if host == "wikipedia.org" or host.endswith(".wikipedia.org"):
+        return 0.50
+
+    high_instructional = any(
+        domain in host
+        for domain in (
+            "youtube.com", "youtu.be", "geeksforgeeks.org", "tutorialspoint.com",
+            "w3schools.com", "developer.mozilla.org", "wikibooks.org", "wikiversity.org",
+            "ncbi.nlm.nih.gov", "europepmc.org", "openstax.org", "opentextbc.ca", "nptel.ac.in",
+        )
+    ) or host.endswith((".edu", ".ac.uk", ".ac.in"))
+
+    matches_career = bool(
+        explicit_career
+        and _normalized_career_label(explicit_career) == _normalized_career_label(career_title)
+    )
+    if high_instructional:
+        return 1.15 if matches_career else 1.10
+    if matches_career:
+        return 1.05
+    return 0.92 if not explicit_career else 1.0
+
+
+def _apply_feed_mixer(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """
+    3-Step Anti-Clog Feed Mixer:
+      1. Caps Wikipedia fallback at max 1 item per sprint (and 0 if primary instructional sources fill the batch).
+      2. Caps any single source adapter at max ceil(limit * 0.45) when other adapters are available.
+      3. Interleaves items so back-to-back cards vary across skills and sources while preserving rank order.
+    """
+    if len(items) <= 2:
+        return items[:limit]
+
+    non_wiki = [it for it in items if it.get("source_adapter") != "wikipedia"]
+    wiki_only = [it for it in items if it.get("source_adapter") == "wikipedia"]
+
+    # Only allow at most 1 Wikipedia fallback card if non-Wikipedia items cannot fill `limit`
+    pool = list(non_wiki)
+    if len(pool) < limit and wiki_only:
+        pool.append(wiki_only[0])
+    if len(pool) < limit and len(wiki_only) > 1:
+        pool.extend(wiki_only[1 : limit - len(pool) + 1])
+
+    # Greedy round-robin interleaving to avoid consecutive duplicate skill_id or source_adapter
+    mixed: List[Dict[str, Any]] = []
+    remaining = list(pool)
+    while remaining and len(mixed) < limit:
+        if not mixed:
+            mixed.append(remaining.pop(0))
+            continue
+        prev_skill = mixed[-1].get("associated_skill_id")
+        prev_adapter = mixed[-1].get("source_adapter")
+
+        # Find highest-ranked item that differs in skill (and ideally source adapter)
+        best_idx = 0
+        for idx, cand in enumerate(remaining):
+            diff_skill = cand.get("associated_skill_id") != prev_skill
+            diff_adapter = cand.get("source_adapter") != prev_adapter
+            if diff_skill and diff_adapter:
+                best_idx = idx
+                break
+            if diff_skill and best_idx == 0:
+                best_idx = idx
+        mixed.append(remaining.pop(best_idx))
+
+    return mixed
 
 
 def _cosine_similarity(query_vector: List[float], candidate_vector: Any) -> Optional[float]:
@@ -70,6 +216,7 @@ class RecommendationService:
         user_id: str,
         limit: int = 5,
         offset: int = 0,
+        exclude_ids: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Executes the Two-Stage Hybrid Recommendation Pipeline for a given user.
@@ -195,7 +342,7 @@ class RecommendationService:
                 {
                     "query_embedding": query_embedding,
                     "match_threshold": 0.25,
-                    "match_count": 30,
+                    "match_count": 100,
                 }
             ).execute()
             if rpc_res.data:
@@ -204,26 +351,30 @@ class RecommendationService:
         except Exception as e:
             logger.warning(f"match_micro_content RPC call failed ({e}); falling back to relational fetch.")
 
-        # Fallback: Relational candidate fetch targeting ONLY the learner's relevant career skills (NO arbitrary limit(30))
-        if not candidates and user_skill_ids:
+        # Filter explicit cross-career records before deciding whether recall is sufficient.
+        candidates = _filter_candidates_for_career(candidates, career_title)
+
+        # If the global semantic top set is too small after career/source filtering,
+        # supplement it with a wider pool tied to the learner's enrolled skills.
+        if len(candidates) < limit and user_skill_ids:
             try:
                 table_res = supabase_client.table("micro_content").select("*").in_(
                     "associated_skill_id", list(user_skill_ids)
-                ).limit(30).execute()
-                candidates = table_res.data or []
-                # Association identifies fallback scope, not semantic relevance. Score
-                # each result from its stored vector; omit lessons with no usable vector.
-                for c in candidates:
-                    if c.get("similarity") is None:
-                        c["similarity"] = _cosine_similarity(query_embedding, c.get("embedding"))
-                candidates = [c for c in candidates if c.get("similarity") is not None and c["similarity"] >= 0.25]
-                logger.info(f"Stage 1 Relational Fallback retrieved {len(candidates)} targeted candidates for user skills.")
+                ).limit(200).execute()
+                seen_ids = {item.get("id") for item in candidates if item.get("id")}
+                for item in (table_res.data or []):
+                    if item.get("id") in seen_ids or not _lesson_matches_career(item, career_title):
+                        continue
+                    if item.get("similarity") is None:
+                        item["similarity"] = _cosine_similarity(query_embedding, item.get("embedding"))
+                    if item.get("similarity") is not None and item["similarity"] >= 0.25:
+                        candidates.append(item)
+                        if item.get("id"):
+                            seen_ids.add(item["id"])
+                candidates = _filter_candidates_for_career(candidates, career_title)
+                logger.info(f"Career-filtered candidate pool contains {len(candidates)} lessons.")
             except Exception as e:
-                logger.error(f"Failed to fetch targeted candidate micro-content: {e}")
-                candidates = []
-
-        if not candidates:
-            candidates = []
+                logger.error(f"Failed to supplement targeted career candidate pool: {e}")
 
         # 4B. JUST-IN-TIME DYNAMIC CURRICULUM POPULATION
         # Verify how many candidate lessons actually match the learner's enrolled career skills
@@ -254,9 +405,19 @@ class RecommendationService:
 
         # Refill a short feed, and proactively replace Wikipedia-only coverage with
         # career-specific material. Limit generation to two skills per request.
-        needs_refill = len(relevant_candidates) < limit
+        excluded_ids = set(exclude_ids or [])
+        remaining_relevant = sum(1 for item in relevant_candidates if item.get("id") not in excluded_ids)
+        needs_refill = remaining_relevant < limit
+        if needs_refill and not skills_needing_content:
+            skills_needing_content = sorted(
+                user_skills,
+                key=lambda skill: len(content_by_skill.get(skill["id"], [])),
+            )
         if needs_refill or skills_needing_content:
-            needed_count = max(limit - len(relevant_candidates), min(2, len(skills_needing_content)))
+            needed_count = min(
+                2,
+                max(limit - remaining_relevant, min(2, len(skills_needing_content))),
+            )
             logger.info(
                 f"Learner {user_id} ({career_title}) has {len(relevant_candidates)}/{limit} relevant lessons; "
                 f"trying up to {needed_count} career-aware lessons from additional sources."
@@ -292,6 +453,7 @@ class RecommendationService:
                 except Exception as e:
                     logger.error(f"Error during Just-In-Time dynamic lesson generation: {e}")
 
+        candidates = _filter_candidates_for_career(candidates, career_title)
         if not candidates:
             return []
 
@@ -388,6 +550,7 @@ class RecommendationService:
             # E. Keep source metadata for compatibility; uncalibrated source labels
             # must not act as a numeric quality score in the ranking.
             trust_score = item.get("source_trust_score")
+            source_quality_multiplier = _source_quality_multiplier(item, career_title)
 
             # G. Learning History & Content Activity Adaptation
             content_act = user_activity_map.get(item["id"], {})
@@ -411,21 +574,27 @@ class RecommendationService:
             if has_passed_this_lesson:
                 # Completed and passed: heavily suppress from standard feed to prevent repetition
                 activity_multiplier = 0.20
+                lifecycle_state = "completed_passed"
             elif completed and not has_passed_this_lesson:
-                # Completed reading but failed quiz: seek alternative resource or revisit
+                # Completed reading / attempted quiz but failed: surface for retry or alternate source
                 activity_multiplier = 0.70
-            elif times_rec >= 3 and not opened:
-                # Repeatedly recommended without learner engagement: demote to avoid stale feed spam
-                activity_multiplier = 0.60
+                lifecycle_state = "retry_needed"
+            elif opened and not has_passed_this_lesson:
+                # Opened/read in-app or external source, quiz not yet completed: boost so learner finishes!
+                activity_multiplier = 1.12
+                lifecycle_state = "in_progress_opened"
             elif times_rec >= 1 and not opened and not is_recent_session_impression:
-                # Shown previously in a past session but never opened: slight deprioritization
-                activity_multiplier = 0.90
+                # Each prior impression lowers the chance of resurfacing an ignored lesson.
+                activity_multiplier = max(0.45, 0.82 ** min(int(times_rec), 4))
+                lifecycle_state = "ignored" if times_rec >= 3 else "fresh"
+            elif times_rec >= 2:
+                activity_multiplier = max(0.68, 0.90 ** min(int(times_rec) - 1, 3))
+                lifecycle_state = "fresh"
             else:
-                # Fresh / unseen content, or active in-session pagination
                 activity_multiplier = 1.00
+                lifecycle_state = "fresh"
 
             # Composite Re-Rank Score:
-            # Preserves base_sim (semantic relevance) as a primary multiplier.
             final_score = (
                 base_sim
                 * diff_multiplier
@@ -433,6 +602,7 @@ class RecommendationService:
                 * prereq_penalty
                 * unblocking_boost
                 * career_importance_multiplier
+                * source_quality_multiplier
                 * activity_multiplier
             )
 
@@ -441,13 +611,15 @@ class RecommendationService:
             skill_name = skill_info.get("name") or "Core Skill"
             skill_category = skill_info.get("category") or "Technical"
 
-            # Parse quizzes and summary bullets safely
+            # Parse quizzes, summary bullets, and self-contained lesson fields safely
             quizzes_data = item.get("quizzes")
             summary_bullets = item.get("summary_bullets") or item.get("summary") or ""
-            
-            # Check content JSON if fields are missing
-            if (not quizzes_data or not summary_bullets) and item.get("content"):
-                import json
+            concept_overview = item.get("concept_overview") or ""
+            practice_scenario = item.get("practice_scenario") or ""
+            source_name = item.get("source_name") or item.get("source") or ""
+            video_id = item.get("video_id")
+
+            if item.get("content"):
                 try:
                     c_data = item.get("content")
                     if isinstance(c_data, str):
@@ -457,25 +629,54 @@ class RecommendationService:
                             quizzes_data = c_data.get("quizzes")
                         if not summary_bullets:
                             summary_bullets = c_data.get("summary_bullets") or c_data.get("summary") or ""
+                        if not concept_overview:
+                            concept_overview = c_data.get("concept_overview") or ""
+                        if not practice_scenario:
+                            practice_scenario = c_data.get("practice_scenario") or ""
+                        if not source_name:
+                            source_name = c_data.get("source_name") or c_data.get("source") or ""
+                        if not video_id:
+                            video_id = c_data.get("video_id")
                 except Exception:
                     pass
 
             if isinstance(quizzes_data, str):
-                import json
                 try:
                     quizzes_data = json.loads(quizzes_data)
                 except Exception:
                     quizzes_data = []
 
+            from app.services.content_service import classify_source_adapter
+            source_url_str = item.get("source_url", "")
+            source_adapter = classify_source_adapter(source_url_str, source_name)
+            if not source_name:
+                adapter_labels = {
+                    "youtube": "YouTube Lecture",
+                    "structured_tutorial": "Structured Tutorial",
+                    "open_textbook": "Open Textbook",
+                    "clinical_science": "NCBI / Europe PMC",
+                    "mdn": "MDN Web Docs",
+                    "openalex": "OpenAlex Academic",
+                    "wikipedia": "Wikipedia Reference",
+                }
+                source_name = adapter_labels.get(source_adapter, "Instructional Guide")
+
             ranked_items.append({
                 "id": item["id"],
                 "title": item["title"],
-                "source_url": item.get("source_url", ""),
+                "source_url": source_url_str,
+                "source_name": source_name,
+                "source_adapter": source_adapter,
+                "video_id": video_id,
                 "summary_bullets": summary_bullets,
+                "concept_overview": concept_overview,
+                "practice_scenario": practice_scenario,
                 "difficulty_level": item_diff,
                 "source_trust_score": trust_score,
+                "source_quality_multiplier": source_quality_multiplier,
                 "quizzes": quizzes_data or [],
                 "associated_skill_id": assoc_skill_id,
+                "skill_id": assoc_skill_id,
                 "skill_name": skill_name,
                 "skill_category": skill_category,
                 "user_current_proficiency": user_prof,
@@ -487,10 +688,11 @@ class RecommendationService:
                 "opened": opened,
                 "completed": completed,
                 "has_passed": has_passed_this_lesson,
+                "lifecycle_state": lifecycle_state,
                 "relevance_score": round(final_score, 4),
             })
 
-        # Sort descending by enrolled skill alignment first, then composite re-ranked score
+        # Sort descending by composite re-ranked score
         ranked_items.sort(key=lambda x: x["relevance_score"], reverse=True)
 
         # Diversity adjustment: prevent feed monopoly where all items belong to a single skill
@@ -505,13 +707,104 @@ class RecommendationService:
         # Re-sort after diversity balancing
         ranked_items.sort(key=lambda x: x["relevance_score"], reverse=True)
 
-        final_feed = ranked_items[offset : offset + limit]
+        available_items = [item for item in ranked_items if item["id"] not in excluded_ids]
+        slice_pool = available_items[offset:]
+        final_feed = _apply_feed_mixer(slice_pool, limit)
 
         # Record feed impressions for delivered items
         delivered_ids = [it["id"] for it in final_feed]
         self.history_service.record_impressions(user_id, delivered_ids)
 
         return final_feed
+
+    async def get_completed_library_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        """
+        Returns all micro-learning lessons that the learner has passed (`passed == True`),
+        formatted for the Completed & Reviewed Library tab.
+        """
+        passed_lesson_ids: List[str] = []
+        try:
+            from app.services.learning_history_service import ATTEMPTS_FILE
+            if os.path.exists(ATTEMPTS_FILE):
+                with open(ATTEMPTS_FILE, "r", encoding="utf-8") as f:
+                    all_attempts = json.load(f)
+                for a in all_attempts:
+                    if a.get("user_id") == user_id and a.get("passed") is True and a.get("lesson_id"):
+                        if a["lesson_id"] not in passed_lesson_ids:
+                            passed_lesson_ids.append(a["lesson_id"])
+        except Exception:
+            pass
+
+        if not passed_lesson_ids:
+            return []
+
+        try:
+            res = supabase_client.table("micro_content").select("*").in_("id", passed_lesson_ids).execute()
+            rows = res.data or []
+            skill_ids = list({r.get("associated_skill_id") for r in rows if r.get("associated_skill_id")})
+            skill_map = {}
+            if skill_ids:
+                sk_res = supabase_client.table("skills").select("id, name, category").in_("id", skill_ids).execute()
+                skill_map = {s["id"]: s for s in (sk_res.data or [])}
+
+            from app.services.content_service import classify_source_adapter
+            adapter_labels = {
+                "youtube": "YouTube Lecture",
+                "structured_tutorial": "Structured Tutorial",
+                "open_textbook": "Open Textbook",
+                "clinical_science": "NCBI / Europe PMC",
+                "mdn": "MDN Web Docs",
+                "openalex": "OpenAlex Academic",
+                "wikipedia": "Wikipedia Reference",
+            }
+            library = []
+            for item in rows:
+                sid = item.get("associated_skill_id")
+                sk = skill_map.get(sid, {})
+                source_url = item.get("source_url", "")
+                c_raw = item.get("content")
+                c_data = {}
+                if isinstance(c_raw, dict):
+                    c_data = c_raw
+                elif isinstance(c_raw, str) and c_raw.strip().startswith("{"):
+                    try:
+                        c_data = json.loads(c_raw)
+                    except Exception:
+                        c_data = {}
+                quizzes = item.get("quizzes") or c_data.get("quizzes") or []
+                if isinstance(quizzes, str):
+                    try:
+                        quizzes = json.loads(quizzes)
+                    except Exception:
+                        quizzes = []
+                source_name = item.get("source_name") or c_data.get("source_name") or ""
+                source_adapter = classify_source_adapter(source_url, source_name)
+                if not source_name:
+                    source_name = adapter_labels.get(source_adapter, "Instructional Guide")
+                library.append({
+                    "id": item["id"],
+                    "title": item.get("title", "Lesson"),
+                    "summary_bullets": item.get("summary_bullets") or item.get("summary") or c_data.get("summary_bullets") or "",
+                    "concept_overview": item.get("concept_overview") or c_data.get("concept_overview") or "",
+                    "practice_scenario": item.get("practice_scenario") or c_data.get("practice_scenario") or "",
+                    "video_id": item.get("video_id") or c_data.get("video_id"),
+                    "source_url": source_url,
+                    "source_name": source_name,
+                    "source_adapter": source_adapter,
+                    "quizzes": quizzes,
+                    "associated_skill_id": sid,
+                    "skill_id": sid,
+                    "skill_name": sk.get("name", "Core Skill"),
+                    "skill_category": sk.get("category", "General"),
+                    "has_passed": True,
+                    "completed": True,
+                    "lifecycle_state": "passed_complete",
+                    "learning_status": "completed",
+                })
+            return library
+        except Exception as e:
+            logger.warning(f"Failed to load completed library for {user_id}: {e}")
+            return []
 
     async def submit_quiz_answer(
         self,
@@ -600,9 +893,21 @@ class RecommendationService:
                 current_prof = int(current_row.get("proficiency", 20))
                 current_evidence = current_row.get("evidence_source", "self_reported")
 
+                # Difficulty Ceiling rule: Beginner (Level 1) lessons cannot certify Expert (100%) mastery
+                raw_diff = lesson.get("difficulty_level")
+                ceiling_map = {1: 50, 2: 70, 3: 85, 4: 95, 5: 100}
+                diff_ceiling = ceiling_map.get(int(raw_diff), 100) if raw_diff is not None else 100
+
                 if passed and not already_passed:
-                    proficiency_increment = 10
-                    new_proficiency = min(100, current_prof + 10)
+                    if current_prof >= diff_ceiling:
+                        # Already above this difficulty tier's ceiling: award +2% review credit
+                        proficiency_increment = min(2, 100 - current_prof)
+                    elif raw_diff is not None and int(raw_diff) >= 3 and percentage == 100.0:
+                        # Perfect score bonus on Intermediate/Advanced/Expert lesson
+                        proficiency_increment = 12
+                    else:
+                        proficiency_increment = 10
+                    new_proficiency = min(100, current_prof + proficiency_increment)
                 else:
                     # Repeated pass or failed attempt earns 0 increment
                     proficiency_increment = 0
@@ -653,5 +958,6 @@ class RecommendationService:
             "skill_mastered": skill_mastered,
             "already_completed": already_passed,
             "ask_mentor_suggested": ask_mentor_suggested,
+            "learning_status": "completed" if passed else "retry_needed",
             "feedback": detailed_feedback,
         }

@@ -28,6 +28,8 @@ services:
         sync: false          # Set in Render dashboard
       - key: GEMINI_API_KEY
         sync: false          # Set in Render dashboard
+      - key: YOUTUBE_API_KEY
+        sync: false          # Optional: improves YouTube search reliability
 
     # Health check — Render will ping this to confirm service is up
     healthCheckPath: /health

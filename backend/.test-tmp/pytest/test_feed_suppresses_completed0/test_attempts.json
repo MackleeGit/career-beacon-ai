@@ -1,0 +1,14 @@
+[
+  {
+    "user_id": "user-continuous",
+    "lesson_id": "lesson-py-passed",
+    "skill_id": "skill-py",
+    "attempt_number": 1,
+    "answers": {},
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-10-26T10:04:59.337356+00:00"
+  }
+]

@@ -16,7 +16,41 @@ from app.services.content_service import (
     validate_quiz_structure,
     strip_html_and_clean,
     ContentService,
+    classify_source_adapter,
+    get_source_trust_score,
 )
+from app.services.recommendation_service import _apply_feed_mixer
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests: Modular Instructional Adapters & Anti-Clog Feed Mixer
+# ---------------------------------------------------------------------------
+
+def test_classify_source_adapter_and_trust_scores():
+    assert classify_source_adapter("https://www.youtube.com/watch?v=abc12345678") == "youtube"
+    assert classify_source_adapter("https://www.geeksforgeeks.org/binary-search/") == "structured_tutorial"
+    assert classify_source_adapter("https://en.wikibooks.org/wiki/Accounting") == "open_textbook"
+    assert classify_source_adapter("https://europepmc.org/article/MED/12345") == "clinical_science"
+    assert classify_source_adapter("https://developer.mozilla.org/en-US/docs/Web/JavaScript") == "mdn"
+    assert classify_source_adapter("https://en.wikipedia.org/wiki/Python") == "wikipedia"
+    assert get_source_trust_score("YouTube transcript") > get_source_trust_score("wikipedia")
+
+
+def test_feed_mixer_suppresses_wikipedia_when_instructional_sources_exist():
+    items = [
+        {"id": f"wiki-{i}", "associated_skill_id": f"s-{i}", "source_adapter": "wikipedia", "relevance_score": 0.9 - i * 0.01}
+        for i in range(5)
+    ] + [
+        {"id": f"yt-{i}", "associated_skill_id": f"s-{i}", "source_adapter": "youtube", "relevance_score": 0.85 - i * 0.01}
+        for i in range(4)
+    ] + [
+        {"id": f"gfg-{i}", "associated_skill_id": f"s-{i+4}", "source_adapter": "structured_tutorial", "relevance_score": 0.80 - i * 0.01}
+        for i in range(4)
+    ]
+    mixed = _apply_feed_mixer(items, limit=6)
+    assert len(mixed) == 6
+    # Because 8 non-Wikipedia instructional items exist, 0 Wikipedia items should clog the 6-item sprint!
+    assert all(it["source_adapter"] != "wikipedia" for it in mixed)
 
 
 # ---------------------------------------------------------------------------
@@ -202,28 +236,39 @@ class TestFetchLiveSourceUrlPreservation:
 
 class TestCareerSpecificSourceSelection:
     @pytest.mark.asyncio
-    async def test_dental_career_prefers_official_guidance_to_wikipedia(self):
+    async def test_healthcare_career_uses_clinical_science_adapter_over_wikipedia(self):
         cs = ContentService()
-        nhs_url = "https://www.healthcareers.nhs.uk/explore-roles/dental-team/roles-dental-team/dental-nurse"
-        text = "Dental nurses support patient care, prepare the clinical environment, follow infection prevention procedures, and work within the dental team's scope. " * 4
+        abstract_text = "Dental infection control and instrument decontamination procedures require strict sterilization protocols and clinical patient care standards. " * 4
 
         with patch("httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
-            nhs_response = MagicMock(status_code=200, text=f"<main>{text}</main>", url=nhs_url)
+            epmc_response = MagicMock(status_code=200)
+            epmc_response.json.return_value = {
+                "resultList": {
+                    "result": [
+                        {
+                            "pmid": "99887766",
+                            "title": "Dental Infection Control Standards",
+                            "abstractText": abstract_text,
+                        }
+                    ]
+                }
+            }
             missing = MagicMock(status_code=404, text="", url="")
 
             async def route_get(url, **kwargs):
-                return nhs_response if "healthcareers.nhs.uk" in url else missing
+                return epmc_response if "europepmc" in url else missing
 
             mock_client.get = AsyncMock(side_effect=route_get)
             result = await cs.fetch_live_source_for_skill(
-                "Dental Nurse", "Healthcare", career_title="Dental Nurse"
+                "Dental Infection Control", "Healthcare", career_title="Dental Nurse"
             )
 
-        assert result["source"] == "NHS Health Careers"
-        assert result["source_url"] == nhs_url
+        assert result is not None
+        assert result["source_adapter"] == "clinical_science"
+        assert "99887766" in result["source_url"]
         assert len(result["raw_text"]) >= 200
 
     @pytest.mark.asyncio

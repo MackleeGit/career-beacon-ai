@@ -1,0 +1,20 @@
+[
+  {
+    "user_id": "user-continuous",
+    "content_id": "lesson-py-fresh",
+    "first_seen_at": "2026-10-26T10:07:47.671544+00:00",
+    "last_seen_at": "2026-10-26T10:07:47.671544+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "user-continuous",
+    "content_id": "lesson-py-passed",
+    "first_seen_at": "2026-10-26T10:07:47.671544+00:00",
+    "last_seen_at": "2026-10-26T10:07:47.671544+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  }
+]

@@ -13,7 +13,63 @@ Covers:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.services.recommendation_service import RecommendationService
+from app.services.recommendation_service import (
+    RecommendationService,
+    _lesson_matches_career,
+    _filter_candidates_for_career,
+)
+
+
+def test_career_specific_content_replaces_cross_career_and_wikipedia_duplicates():
+    items = [
+        {
+            "id": "wrong-career",
+            "title": "Reading comprehension Fundamentals for Software Developer",
+            "associated_skill_id": "reading",
+            "source_url": "https://dev.to/example",
+            "content": {"career_title": "Software Developer"},
+        },
+        {
+            "id": "wiki-generic",
+            "title": "Reading comprehension Fundamentals for Petroleum Engineers",
+            "associated_skill_id": "reading",
+            "source_url": "https://en.wikipedia.org/wiki/Reading_comprehension",
+        },
+        {
+            "id": "career-specific",
+            "title": "Formation Evaluation Fundamentals for Petroleum Engineers",
+            "associated_skill_id": "reading",
+            "source_url": "https://nptel.ac.in/courses/103105223",
+            "content": {"career_title": "Petroleum Engineer"},
+        },
+        {
+            "id": "generic-unique-skill",
+            "title": "General mathematics guide",
+            "associated_skill_id": "math",
+            "source_url": "https://openstax.org/books/algebra-and-trigonometry",
+        },
+    ]
+    filtered = _filter_candidates_for_career(items, "Petroleum Engineers")
+    assert [item["id"] for item in filtered] == ["career-specific", "generic-unique-skill"]
+
+
+def test_explicit_other_career_lessons_are_rejected_but_generic_content_remains():
+    petroleum = "Petroleum Engineers"
+    assert not _lesson_matches_career({
+        "title": "Reading comprehension Fundamentals for Software Developer",
+        "content": {"career_title": "Software Developer"},
+    }, petroleum)
+    assert not _lesson_matches_career({
+        "title": "Critical thinking Fundamentals for Software Developer",
+    }, petroleum)
+    assert _lesson_matches_career({
+        "title": "Petroleum Engineer Skills Fundamentals",
+        "content": {"career_title": "Petroleum Engineer"},
+    }, petroleum)
+    assert _lesson_matches_career({
+        "title": "General reading comprehension guide",
+        "content": {"skill_name": "Reading Comprehension"},
+    }, petroleum)
 
 
 @pytest.fixture

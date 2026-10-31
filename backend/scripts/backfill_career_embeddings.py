@@ -1,4 +1,9 @@
-"""Backfill missing vectors for authoritative careers only.
+"""[LEGACY / SUPERSEDED by backfill_dual_career_vectors.py]
+This script generated single-vector legacy career_vector.
+SUPERSEDED BY: backend/scripts/backfill_dual_career_vectors.py
+Preserved for historical auditability.
+
+Backfill missing vectors for authoritative careers only.
 
 Usage: python backend/scripts/backfill_career_embeddings.py --apply
 Without --apply, the script only reports how many records would be updated.

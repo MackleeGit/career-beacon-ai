@@ -1,0 +1,20 @@
+[
+  {
+    "user_id": "learner-sarah-journey",
+    "content_id": "lesson-py-fundamentals",
+    "first_seen_at": "2026-10-26T11:00:03.114022+00:00",
+    "last_seen_at": "2026-10-26T11:00:03.206114+00:00",
+    "opened_at": "2026-10-26T11:00:03.115138+00:00",
+    "completed_at": "2026-10-26T11:00:03.206114+00:00",
+    "times_recommended": 2
+  },
+  {
+    "user_id": "learner-sarah-journey",
+    "content_id": "lesson-sql-fundamentals",
+    "first_seen_at": "2026-10-26T11:00:03.114022+00:00",
+    "last_seen_at": "2026-10-26T11:00:03.198439+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  }
+]

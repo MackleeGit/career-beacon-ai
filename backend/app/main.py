@@ -6,7 +6,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import test, onboarding, recommendations
+from app.routers import test, learner_onboarding, recommendations, mentor
 from app.middleware.auth_middleware import JWTAuthMiddleware
 
 app = FastAPI(
@@ -34,8 +34,9 @@ app.add_middleware(
 
 # Include routers
 app.include_router(test.router)
-app.include_router(onboarding.router)
+app.include_router(learner_onboarding.router)
 app.include_router(recommendations.router)
+app.include_router(mentor.router)
 
 @app.get("/")
 def read_root():

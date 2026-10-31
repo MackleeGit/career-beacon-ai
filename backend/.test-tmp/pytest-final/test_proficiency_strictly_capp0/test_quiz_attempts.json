@@ -1,0 +1,18 @@
+[
+  {
+    "user_id": "user-near-mastery",
+    "lesson_id": "lesson-py-101",
+    "skill_id": "skill-python",
+    "attempt_number": 1,
+    "answers": {
+      "0": "A programming language",
+      "1": "Mutable sequence",
+      "2": "def"
+    },
+    "score": 3,
+    "total": 5,
+    "percentage": 60.0,
+    "passed": true,
+    "created_at": "2026-10-26T10:07:28.695331+00:00"
+  }
+]

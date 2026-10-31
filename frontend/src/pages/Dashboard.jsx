@@ -1,24 +1,30 @@
+// src/pages/Dashboard.jsx
 import { useState } from 'react';
 import { supabase } from '../lib/SupabaseClient';
 import Toast from '../components/Toast';
 import Recommendations from './Recommendations';
-
+import LearnerMentorship from './LearnerMentorship';
 
 function getLevel(score) {
-  if (score >= 100) return { label: '100% estimate',     color: 'var(--teal)' };
-  if (score >= 80)  return { label: 'Advanced',     color: 'var(--accent-light)' };
-  if (score >= 50)  return { label: 'Intermediate', color: 'hsl(38,90%,60%)' };
-  return             { label: 'Novice',             color: 'var(--text-muted)' };
+  if (score >= 100) return { label: '100% estimate', color: 'var(--teal)' };
+  if (score >= 80) return { label: 'Advanced', color: 'var(--accent-light)' };
+  if (score >= 50) return { label: 'Intermediate', color: 'hsl(38,90%,60%)' };
+  return { label: 'Novice', color: 'var(--text-muted)' };
 }
 
 function SkillCard({ skill }) {
   const { label, color } = getLevel(skill.proficiency);
+  const isMentorVerified =
+    skill.evidence_source === 'mentor_verified' ||
+    skill.evidence_source === 'diagnostic_assessment';
+
   return (
     <div
       style={{
         padding: '14px 16px',
         background: 'var(--bg-elevated)',
-        border: '1px solid var(--border)',
+        border: '1px solid',
+        borderColor: isMentorVerified ? 'hsla(174, 72%, 56%, 0.45)' : 'var(--border)',
         borderRadius: 'var(--r-md)',
         display: 'flex',
         flexDirection: 'column',
@@ -27,7 +33,23 @@ function SkillCard({ skill }) {
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
         <div>
-          <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{skill.name}</div>
+          <div style={{ fontWeight: 600, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            {skill.name}
+            {isMentorVerified && (
+              <span
+                style={{
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  padding: '2px 7px',
+                  borderRadius: '999px',
+                  background: 'hsla(174, 72%, 56%, 0.18)',
+                  color: 'var(--teal)',
+                }}
+              >
+                ✓ Mentor Verified
+              </span>
+            )}
+          </div>
           {skill.category && (
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>{skill.category}</div>
           )}
@@ -43,9 +65,10 @@ function SkillCard({ skill }) {
 }
 
 export default function Dashboard({ user, career, skills, onSkillUpdated }) {
-  const [activeTab, setActiveTab]             = useState('graph'); // 'graph' | 'feed'
-  const [signingOut, setSigningOut]           = useState(false);
+  const [activeTab, setActiveTab] = useState('graph'); // 'graph' | 'feed' | 'mentorship'
+  const [signingOut, setSigningOut] = useState(false);
   const [showLogoutToast, setShowLogoutToast] = useState(false);
+  const [prefillMentorQuestion, setPrefillMentorQuestion] = useState(null);
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -53,10 +76,14 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
     await supabase.auth.signOut();
   };
 
+  const handleAskMentorAboutLesson = (questionPayload) => {
+    setPrefillMentorQuestion(questionPayload);
+    setActiveTab('mentorship');
+  };
+
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Learner';
 
   // Compute an importance-weighted estimate from the learner's current skill ratings:
-  // Skills with higher O*NET importance score or ESCO 'essential' classification carry more weight.
   const totalWeight = skills.reduce((sum, s) => {
     const w = s.importance_score ?? (s.importance === 'essential' ? 1.0 : s.importance === 'optional' ? 0.5 : 0.75);
     return sum + Math.max(0.2, w);
@@ -64,13 +91,10 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
 
   const weightedSum = skills.reduce((sum, s) => {
     const w = s.importance_score ?? (s.importance === 'essential' ? 1.0 : s.importance === 'optional' ? 0.5 : 0.75);
-    return sum + (s.proficiency * Math.max(0.2, w));
+    return sum + s.proficiency * Math.max(0.2, w);
   }, 0);
 
-  const avgProgress = skills.length && totalWeight > 0
-    ? Math.round(weightedSum / totalWeight)
-    : 0;
-
+  const avgProgress = skills.length && totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 0;
   const masteredCount = skills.filter((s) => s.proficiency >= 100).length;
 
   return (
@@ -86,8 +110,8 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            maxWidth: '860px',
-            margin: '0 auto 40px',
+            maxWidth: '960px',
+            margin: '0 auto 32px',
             flexWrap: 'wrap',
             gap: '12px',
           }}
@@ -114,8 +138,8 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
         </header>
 
         {/* Main content */}
-        <main className="container--wide">
-          {/* Navigation Bar (Skill Graph vs Learning Feed) */}
+        <main className="container--wide" style={{ maxWidth: '960px' }}>
+          {/* Navigation Bar (Skill Graph vs Learning Feed vs Mentorship Ecosystem) */}
           <nav
             style={{
               display: 'flex',
@@ -123,6 +147,7 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
               marginBottom: '24px',
               borderBottom: '1px solid var(--border)',
               paddingBottom: '12px',
+              flexWrap: 'wrap',
             }}
           >
             <button
@@ -132,7 +157,7 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
               onClick={() => setActiveTab('graph')}
               style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
-              Skill Graph
+              📊 Skill Graph
             </button>
             <button
               id="tab-learning-feed"
@@ -141,7 +166,16 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
               onClick={() => setActiveTab('feed')}
               style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             >
-              Learning Feed &amp; Quizzes
+              📚 Learning Feed &amp; Quizzes
+            </button>
+            <button
+              id="tab-mentorship-hub"
+              type="button"
+              className={`btn btn--sm ${activeTab === 'mentorship' ? 'btn--primary' : 'btn--ghost'}`}
+              onClick={() => setActiveTab('mentorship')}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              🎓 Mentorship, Q&amp;A &amp; Pulse
             </button>
           </nav>
 
@@ -152,6 +186,15 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
               skills={skills}
               onSkillUpdated={onSkillUpdated}
               onNavigateToGraph={() => setActiveTab('graph')}
+              onAskMentorAboutLesson={handleAskMentorAboutLesson}
+            />
+          ) : activeTab === 'mentorship' ? (
+            <LearnerMentorship
+              user={user}
+              career={career}
+              skills={skills}
+              prefillQuestion={prefillMentorQuestion}
+              onClearPrefillQuestion={() => setPrefillMentorQuestion(null)}
             />
           ) : (
             <>
@@ -208,18 +251,28 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
                   <div className="progress-bar__fill" style={{ width: `${avgProgress}%` }} />
                 </div>
 
-                {/* CTA to Learning Feed */}
+                {/* Dual-Engine CTAs */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Review skill estimates and explore relevant lessons.
+                    Close skill gaps with AI micro-learning sprints or 1-on-1 verified industry mentors.
                   </span>
-                  <button
-                    type="button"
-                    className="btn btn--primary btn--sm"
-                    onClick={() => setActiveTab('feed')}
-                  >
-                    Start Micro-Learning Lessons &rarr;
-                  </button>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      style={{ borderColor: 'var(--teal)', color: 'var(--teal)' }}
+                      onClick={() => setActiveTab('mentorship')}
+                    >
+                      🎓 Match with a Mentor &rarr;
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--sm"
+                      onClick={() => setActiveTab('feed')}
+                    >
+                      Start Micro-Learning Sprint &rarr;
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -250,8 +303,6 @@ export default function Dashboard({ user, career, skills, onSkillUpdated }) {
               </div>
             </>
           )}
-
-
         </main>
       </div>
 

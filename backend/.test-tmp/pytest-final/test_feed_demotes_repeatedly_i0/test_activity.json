@@ -1,0 +1,20 @@
+[
+  {
+    "user_id": "user-engaged",
+    "content_id": "lesson-ignored",
+    "first_seen_at": "2026-10-26T10:07:48.258025+00:00",
+    "last_seen_at": "2026-10-26T10:07:50.503094+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 4
+  },
+  {
+    "user_id": "user-engaged",
+    "content_id": "lesson-new",
+    "first_seen_at": "2026-10-26T10:07:50.503094+00:00",
+    "last_seen_at": "2026-10-26T10:07:50.503094+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  }
+]
