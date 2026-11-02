@@ -10,7 +10,7 @@ load_dotenv(env_path)
 
 sys.path.append(str(Path(__file__).resolve().parent.parent / 'backend'))
 from app.core.database import supabase_client
-from app.routers.onboarding import search_career, save_skills, get_onboarding_status, CareerSearchRequest, SaveSkillsRequest, UnifiedSkillInput
+from app.routers.learner_onboarding import search_career, save_skills, get_onboarding_status, CareerSearchRequest, SaveSkillsRequest, UnifiedSkillInput
 from app.services.recommendation_service import RecommendationService
 from starlette.requests import Request
 from unittest.mock import MagicMock

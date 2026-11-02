@@ -29,7 +29,7 @@ Endpoints:
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, Query
 from pydantic import BaseModel, Field
 
 from app.core.database import supabase_client
@@ -111,7 +111,8 @@ class QuestionAnswerPayload(BaseModel):
 
 
 class SessionBookPayload(BaseModel):
-    mentor_id: str = Field(..., min_length=1)
+    mentor_id: str = Field(default="", max_length=100)
+    learner_id: Optional[str] = None
     slot_start_iso: str = Field(..., min_length=10)
     topic: str = Field(default="1-on-1 Career & Skill Mentorship Session", max_length=200)
     focus_skill: Optional[str] = None
@@ -212,7 +213,7 @@ async def mentor_onboarding(request: MentorOnboardingRequest, http_req: Request)
     # 4. Sync profile table (`bio`) & fetch mentor's full name
     full_name = "Industry Mentor"
     try:
-        supabase_client.table("profiles").update({"bio": request.bio.strip()}).eq("id", user_id).execute()
+        supabase_client.table("profiles").update({"bio": request.bio.strip(), "role": "mentor"}).eq("id", user_id).execute()
         prof_res = supabase_client.table("profiles").select("full_name").eq("id", user_id).limit(1).execute()
         if prof_res.data and prof_res.data[0].get("full_name"):
             full_name = prof_res.data[0]["full_name"]
@@ -239,6 +240,80 @@ async def mentor_onboarding(request: MentorOnboardingRequest, http_req: Request)
         "mentor_id": user_id,
         "primary_domain": request.primary_domain,
         "skills_count": len(resolved_skill_ids),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/mentor/career-search?q=<query>
+# ---------------------------------------------------------------------------
+
+@router.get("/career-search")
+async def search_mentor_careers(
+    q: Optional[str] = None,
+    http_req: Request = None,
+):
+    """
+    Search career catalog for mentor occupational onboarding.
+    Returns direct keyword matches and pgvector semantic vector matches.
+    """
+    clean_q = (q or "").strip()
+    if not clean_q or len(clean_q) < 2:
+        return {"direct_matches": [], "vector_matches": []}
+
+    direct_matches = []
+    vector_matches = []
+
+    # 1. Direct Keyword Matches via ilike
+    try:
+        escaped_q = clean_q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        res = (
+            supabase_client.table("careers")
+            .select("id, title, description, source_origin, review_status")
+            .neq("review_status", "rejected")
+            .ilike("title", f"%{escaped_q}%")
+            .limit(20)
+            .execute()
+        )
+        raw_direct = res.data or []
+        if "other" not in clean_q.lower():
+            direct_matches = [c for c in raw_direct if ", all other" not in (c.get("title") or "").lower()][:10]
+        else:
+            direct_matches = raw_direct[:10]
+    except Exception as e:
+        print("[mentor.career-search] direct lookup error:", e)
+
+    direct_ids = {c["id"] for c in direct_matches if "id" in c}
+
+    # 2. Semantic Vector Matches (pgvector via embedding service)
+    try:
+        query_vector = await embedding_service.get_embedding(clean_q)
+        rpc_res = supabase_client.rpc(
+            "match_careers",
+            {
+                "query_embedding": query_vector,
+                "match_threshold": 0.45,
+                "match_count": 8,
+            },
+        ).execute()
+
+        raw_vector = rpc_res.data or []
+        for r in raw_vector:
+            t = r.get("title", "")
+            if "other" not in clean_q.lower() and ", all other" in t.lower():
+                continue
+            if r.get("id") and r["id"] not in direct_ids:
+                vector_matches.append({
+                    "id": r["id"],
+                    "title": r.get("title", ""),
+                    "description": r.get("description", ""),
+                    "similarity": round(float(r.get("similarity", 0.8)), 3),
+                })
+    except Exception as e:
+        print("[mentor.career-search] vector search error:", e)
+
+    return {
+        "direct_matches": direct_matches,
+        "vector_matches": vector_matches,
     }
 
 
@@ -536,10 +611,19 @@ async def get_mentor_available_slots(mentor_id: str, days_ahead: int = 10, http_
 @router.post("/sessions/book")
 async def book_mentorship_session(payload: SessionBookPayload, http_req: Request):
     user_id = get_verified_user_id(http_req)
+    if payload.learner_id and (user_id == payload.mentor_id or not payload.mentor_id):
+        effective_learner = payload.learner_id
+        effective_mentor = user_id
+    elif payload.learner_id:
+        effective_learner = payload.learner_id
+        effective_mentor = payload.mentor_id
+    else:
+        effective_learner = user_id
+        effective_mentor = payload.mentor_id
     try:
         session = await mentorship_service.book_session(
-            learner_id=user_id,
-            mentor_id=payload.mentor_id,
+            learner_id=effective_learner,
+            mentor_id=effective_mentor,
             slot_start_iso=payload.slot_start_iso,
             topic=payload.topic,
             focus_skill=payload.focus_skill,
@@ -605,3 +689,34 @@ async def download_session_ics(session_id: str):
         )
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
+
+
+# ---------------------------------------------------------------------------
+# POST /api/mentor/reset (Account Space - Restart Onboarding)
+# ---------------------------------------------------------------------------
+
+@router.post("/reset")
+async def reset_mentor_account(http_req: Request):
+    """
+    Completely wipes a mentor's profile, expertise declaration, active mentee connections,
+    and scheduled sessions so they can restart mentor onboarding afresh.
+    """
+    user_id = get_verified_user_id(http_req)
+    try:
+        # 1. Remove from Supabase mentors table
+        supabase_client.table("mentors").delete().eq("profile_id", user_id).execute()
+        # 2. Clear bio in profiles table
+        supabase_client.table("profiles").update({"bio": ""}).eq("id", user_id).execute()
+        # 3. Clean up active mentorship service memory/records
+        mentorship_service.mentors = [m for m in mentorship_service.mentors if m.get("mentor_id") != user_id]
+        mentorship_service.connections = [c for c in mentorship_service.connections if c.get("mentor_id") != user_id]
+        mentorship_service.sessions = [s for s in mentorship_service.sessions if s.get("mentor_id") != user_id]
+        mentorship_service.pulse_posts = [p for p in mentorship_service.pulse_posts if p.get("mentor_id") != user_id]
+
+        return {
+            "status": "success",
+            "message": "Mentor profile and progress have been completely reset.",
+        }
+    except Exception as err:
+        print(f"[mentor-reset] Error resetting mentor {user_id}: {err}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset mentor account: {err}")

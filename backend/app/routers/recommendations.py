@@ -1,11 +1,15 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
+import uuid
+from datetime import datetime, timezone
 from app.services.recommendation_service import RecommendationService
 from app.middleware.auth_middleware import get_verified_user_id
 
 router = APIRouter(prefix="/api/recommendations", tags=["Recommendations"])
 recommendation_service = RecommendationService()
+from app.services.daily_drop_service import DailyDropService
+daily_drop_service = DailyDropService()
 
 
 class QuizSubmissionRequest(BaseModel):
@@ -17,6 +21,65 @@ class QuizSubmissionRequest(BaseModel):
 class ContentActivityRequest(BaseModel):
     user_id: Optional[str] = None
     content_id: str
+
+
+class RecommendationFeedbackPayload(BaseModel):
+    lesson_id: str
+    feedback: str  # 'like' | 'dislike' | 'irrelevant'
+    lesson_title: Optional[str] = None
+    reason: Optional[str] = None
+
+
+@router.post("/feedback")
+async def submit_lesson_feedback(payload: RecommendationFeedbackPayload, http_req: Request):
+    user_id = get_verified_user_id(http_req)
+
+    # If flagged as irrelevant or disliked with a reason, route directly to Admin Moderation Desk
+    if payload.feedback == "irrelevant" or (payload.feedback == "dislike" and payload.reason):
+        try:
+            from app.routers.admin import _FLAGGED_ITEMS
+            _FLAGGED_ITEMS.insert(0, {
+                "id": f"flag-recom-{uuid.uuid4().hex[:8]}",
+                "item_type": "recommendation",
+                "sender_name": f"Learner ({user_id[:8]}...)",
+                "target_context": f"Learning Sprint ({payload.lesson_title or payload.lesson_id})",
+                "content_snippet": f"Lesson: {payload.lesson_title or payload.lesson_id}",
+                "reason": payload.reason or "Learner reported this recommendation as irrelevant to their career roadmap.",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "status": "pending_review",
+            })
+        except Exception as e:
+            print(f"[recommendation-feedback] Moderation queue forward notice: {e}")
+
+    return {
+        "status": "success",
+        "lesson_id": payload.lesson_id,
+        "feedback": payload.feedback,
+        "message": "Feedback recorded. Thank you for tuning the recommendation engine.",
+    }
+
+
+
+@router.get("/daily-drop/current")
+async def get_current_daily_drop(http_req: Request):
+    caller_id = get_verified_user_id(http_req)
+    try:
+        drop = await daily_drop_service.get_or_create_daily_drop(caller_id)
+        return {"status": "success", "drop": drop}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load daily drop: {str(e)}")
+
+
+@router.post("/daily-drop/reroll")
+async def reroll_daily_drop(http_req: Request):
+    caller_id = get_verified_user_id(http_req)
+    try:
+        drop = await daily_drop_service.reroll_daily_drop(caller_id)
+        return {"status": "success", "drop": drop, "message": "Daily drop shuffled to secondary deficit."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reroll daily drop: {str(e)}")
 
 
 @router.get("/{user_id}")
@@ -125,6 +188,12 @@ async def submit_quiz(request: QuizSubmissionRequest, http_req: Request):
 
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
+
+        if result.get("passed"):
+            try:
+                await daily_drop_service.record_lesson_passed(caller_id, request.lesson_id.strip())
+            except Exception as ex:
+                print(f"[daily-drop] Progress update notice: {ex}")
 
         return {
             "status": "success",

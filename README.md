@@ -11,26 +11,32 @@
 
 ## 1. Project Overview & Architecture
 
-**Career Beacon** is an AI-driven career onboarding, micro-learning recommendation, and mentorship marketplace. It addresses information overload and skill misalignment in emerging markets by unifying a **Dual Semantic Recommendation Framework** driven by a shared learner skill profile.
+**Career Beacon** is a career-learning and mentorship platform with separate learner, mentor, and administrator workflows. Learners select a career, assess their skills, and receive a career-aware learning feed and a daily three-lesson focus sprint. The system tracks lesson and quiz activity, updates skill progress, and connects learners to mentors. Administrators review career proposals, verify mentors, and handle reported content.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        REACT.JS CLIENT (Vite SPA)                      │
-│   • Semantic Career Search UI           • Proficiency Sliders (20/50/80) │
-│   • Skill Graph Visualisation           • Auth & Session State Machine │
-└──────────────────┬─────────────────────────────────┬───────────────────┘
-                   │ HTTPS REST                      │ Supabase Realtime
-                   ▼                                 ▼
-┌────────────────────────────────────┐ ┌─────────────────────────────────┐
-│     FASTAPI AI ENGINE (Python)     │ │   SUPABASE (PostgreSQL + pgvector)│
-│ • FastEmbed (all-MiniLM-L6-v2)     │ │ • Relational Schema & Profiles  │
-│   384-dimensional dense vectors    │ │ • pgvector Cosine Search (<=>)  │
-│ • Multi-Provider LLM Fallback:     │ │ • HNSW Vector Indexes           │
-│   1. Groq (gpt-oss-120b)           │ │ • Row-Level Security & Auth     │
-│   2. Google Gemini (2.5-flash)     │ │ • match_careers() Stored Proc   │
-│ • Exponential Backoff Retries      │ │                                 │
-└────────────────────────────────────┘ └─────────────────────────────────┘
+│                  REACT CLIENT (Vite single-page app)                   │
+│ Learner dashboard/feed • Mentor workspace • Admin command center       │
+│ Authentication • Career onboarding • Skill graph • Daily Focus Drop   │
+└───────────────────────────────┬───────────────────────────────────────┘
+                                │ HTTPS REST + Supabase Auth SDK
+                                ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                    FASTAPI APPLICATION (Python)                       │
+│ Career/skill onboarding • Recommendation and quiz services             │
+│ Daily Focus Drop • Mentorship • Administration and moderation          │
+│ FastEmbed semantic retrieval • External source adapters • AI services  │
+└───────────────────────────────┬────────────────────────────────────────┘
+                                │ Supabase client / authenticated requests
+                                ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                  SUPABASE AUTH + POSTGRESQL / pgvector                 │
+│ Profiles • Careers and skills • Micro-content • Mentor records         │
+│ Quiz/activity data • Career and content vector search                  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
+
+The recommendation feed combines semantic retrieval with career-skill priorities, proficiency gaps, prerequisite relationships, lesson difficulty, content-source type, and learner activity. It requests more lessons as the learner continues through the feed and keeps completed lessons in a separate library. A distinct Daily Focus Drop provides three lessons for a daily target skill, with one optional same-skill shuffle and streak tracking.
 
 ---
 
@@ -60,32 +66,33 @@
 career-mentor/
 ├── backend/
 │   ├── app/
-│   │   ├── core/           # Config & Supabase database client
-│   │   ├── models/         # Pydantic request/response schemas
-│   │   ├── routers/        # API route handlers (onboarding, test endpoints)
-│   │   ├── services/       # FastEmbed EmbeddingService & Multi-provider AIService
-│   │   └── main.py         # FastAPI application entrypoint & CORS setup
-│   ├── scripts/
-│   │   └── sync_embeddings.py # Repeatable DB vector synchronization script
-│   ├── requirements.txt    # Frozen Python dependencies
-│   └── .env.example        # Environment variable template
+│   │   ├── core/           # Runtime settings and Supabase client
+│   │   ├── middleware/     # JWT authentication and request checks
+│   │   ├── routers/        # Onboarding, recommendations, mentor, admin, diagnostics
+│   │   ├── services/       # Retrieval, content, learning history, daily drop, mentorship
+│   │   ├── workers/        # Background/operational worker modules
+│   │   └── main.py         # FastAPI entry point, middleware, and router registration
+│   ├── scripts/            # Content ingestion, sync, audit, and maintenance tools
+│   ├── tests/              # Backend unit, integration, security, and workflow tests
+│   └── requirements.txt
 ├── frontend/
+│   ├── public/             # PWA manifest, service worker, and app icons
 │   ├── src/
-│   │   ├── components/     # UI components (Toast, ErrorBoundary)
-│   │   ├── lib/            # SupabaseClient and API client
-│   │   ├── pages/          # Login, Onboarding, Dashboard views
-│   │   ├── App.jsx         # Top-level auth state machine
-│   │   └── index.css       # Design system tokens and styles
-│   ├── package.json
-│   └── vite.config.js
+│   │   ├── components/     # Shared controls, notifications, and status UI
+│   │   ├── context/        # Shared client state
+│   │   ├── lib/            # Supabase and backend API clients
+│   │   ├── pages/          # Learner, mentor, admin, and recommendation views
+│   │   ├── App.jsx         # Authentication and role-based view selection
+│   │   └── index.css       # Design system and responsive styles
+│   └── package.json
 ├── management/
 │   ├── CHAPTER_4_SYSTEM_ANALYSIS_AND_DESIGN.md
-│   ├── CHAPTER_5_IMPLEMENTATION_AND_TESTING.md
-│   ├── SPRINT_I_AND_II_PRESENTATION_GUIDE.md
-│   ├── database queries/   # Supabase initial schema DDL & SQL migrations
-│   ├── diagrams/           # Use cases, ERD, sequence diagrams, wireframes
-│   ├── goal.txt            # System technical specifications
-│   └── task.txt            # Sprint task breakdown linked to thesis objectives
+│   ├── CHAPTER_5_SYSTEM_IMPLEMENTATION_AND_TESTING.md
+│   ├── CHAPTER_5_SECTION_5_4.md
+│   ├── ADMIN_GOVERNANCE_AND_LIFECYCLE_SPEC.md
+│   ├── VECTOR_ARCHITECTURE_SPEC.md
+│   ├── database queries/   # Schema snapshots and migrations
+│   └── diagrams/           # Architecture and workflow diagrams
 ├── netlify.toml            # Frontend deployment configuration
 └── render.yaml             # Backend deployment configuration
 ```
@@ -118,6 +125,7 @@ pip install -r requirements.txt
 # SUPABASE_SERVICE_KEY=<your-service-role-key>
 # GROQ_API_KEY=<your-groq-key>
 # GEMINI_API_KEY=<your-gemini-key>
+# YOUTUBE_API_KEY=<optional-youtube-data-api-key>
 # ENVIRONMENT=development
 
 # 5. Run vector sync (first-time setup)
@@ -155,9 +163,20 @@ Client will be live at: `http://localhost:5173`
 |---|---|---|
 | `GET` | `/` | Service health & metadata |
 | `GET` | `/health` | Uptime healthcheck ping |
-| `POST` | `/api/onboarding/career-search` | Semantic career match ($Cosine \ge 0.85$) or AI dynamic fallback |
-| `POST` | `/api/onboarding/save-skills` | Persists user profile, career mapping, and skill graph weights |
-| `GET` | `/api/onboarding/status/{user_id}` | Fetches user onboarding completion state and skill graph |
-| `POST` | `/api/test/minilm-embedding` | Diagnostic test for FastEmbed 384-dimensional vector output |
-| `POST` | `/api/test/ai-generate` | Diagnostic test for Groq/Gemini JSON generation |
-| `GET` | `/api/test/supabase` | Diagnostic test for Supabase PostgreSQL connectivity |
+| `POST` | `/api/onboarding/career-search` | Search for a career and return matched or generated career/skill data |
+| `GET` | `/api/onboarding/career/{career_id}` | Retrieve career and associated skill details |
+| `POST` | `/api/onboarding/save-skills` | Save the learner's selected career and skill baselines |
+| `GET` | `/api/onboarding/status/{user_id}` | Read onboarding completion and learner skill state |
+| `POST` | `/api/onboarding/reset` | Reset learner onboarding state |
+| `GET` | `/api/recommendations/{user_id}` | Career-aware paginated feed; accepts `limit`, `offset`, and repeated `exclude_ids`; includes completed-library data |
+| `GET` | `/api/recommendations/daily-drop/current` | Get or create today's Daily Focus Drop and streak state |
+| `POST` | `/api/recommendations/daily-drop/reroll` | Use the once-per-day same-focus-skill shuffle when available |
+| `POST` | `/api/recommendations/submit-quiz` | Evaluate a lesson quiz and record learning progress |
+| `POST` | `/api/recommendations/activity/open` | Record a lesson open |
+| `POST` | `/api/recommendations/activity/complete` | Record a lesson completion |
+| `POST` | `/api/recommendations/feedback` | Record feedback and route relevant reports for moderation |
+| `/api/mentor/*` | Various | Mentor onboarding, matching, connections, messaging, community Q&A, and session scheduling |
+| `/api/admin/*` | Various | Administration metrics, career review, mentor verification, and moderation actions |
+| `/api/test/*` | Various | Embedding, AI, and database diagnostics |
+
+Protected `/api` routes validate Supabase JWTs. See the generated FastAPI documentation at `http://localhost:8000/docs` for request schemas and the complete route list.

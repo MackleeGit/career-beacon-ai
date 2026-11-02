@@ -1,4 +1,6 @@
+// src/components/ErrorBoundary.jsx
 import React from 'react';
+import { AlertTriangle, RotateCcw } from './Icons';
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -7,34 +9,49 @@ export default class ErrorBoundary extends React.Component {
   }
 
   static getDerivedStateFromError(error) {
-    // Update state so the next render shows the fallback UI
     return { hasError: true, error };
   }
 
   componentDidCatch(error, errorInfo) {
-    // You could log to an external service here
     console.error('ErrorBoundary caught an error', error, errorInfo);
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{
-          padding: '2rem',
-          background: '#ffebee',
-          color: '#b71c1c',
-          borderRadius: '8px',
-          textAlign: 'center',
-        }}>
-          <h2>Something went wrong.</h2>
-          <p>{this.state.error?.message || 'Unexpected error'}</p>
-          <button onClick={() => this.setState({ hasError: false, error: null })}>
-            Try again
-          </button>
+        <div className="page-center">
+          <div className="card" style={{ maxWidth: '480px', width: '100%', textAlign: 'center', padding: '36px 28px' }}>
+            <div
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: 'var(--r-md)',
+                background: 'var(--status-danger-bg)',
+                color: 'var(--status-danger)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: '16px',
+              }}
+            >
+              <AlertTriangle size={22} />
+            </div>
+            <h2 style={{ marginBottom: '8px', fontSize: '1.25rem' }}>Something went wrong</h2>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+              {this.state.error?.message || 'An unexpected interface error occurred.'}
+            </p>
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => this.setState({ hasError: false, error: null })}
+            >
+              <RotateCcw size={15} />
+              Try again
+            </button>
+          </div>
         </div>
       );
     }
-    // Render children when no error
     return this.props.children;
   }
 }

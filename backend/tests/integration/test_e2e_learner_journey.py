@@ -3,7 +3,7 @@
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.routers.onboarding import SaveSkillsRequest, UnifiedSkillInput, get_onboarding_status, save_skills
+from app.routers.learner_onboarding import SaveSkillsRequest, UnifiedSkillInput, get_onboarding_status, save_skills
 from app.services.recommendation_service import RecommendationService
 
 
@@ -69,8 +69,8 @@ async def test_complete_learner_journey_and_feed_adaptation(isolated_journey_env
 
     with patch("app.services.recommendation_service.supabase_client") as rec_db, \
          patch("app.services.learning_history_service.supabase_client") as history_db, \
-         patch("app.routers.onboarding.supabase_client") as onboarding_db, \
-         patch("app.routers.onboarding.get_verified_user_id", return_value=user_id):
+         patch("app.routers.learner_onboarding.supabase_client") as onboarding_db, \
+         patch("app.routers.learner_onboarding.get_verified_user_id", return_value=user_id):
         # Keep history reads/writes on the isolated JSON stores, never a connected DB.
         history_db.table.side_effect = RuntimeError("Supabase disabled for isolated journey test")
 

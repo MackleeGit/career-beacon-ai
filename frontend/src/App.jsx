@@ -8,6 +8,8 @@ import LearnerOnboarding from './pages/LearnerOnboarding';
 import MentorOnboarding from './pages/MentorOnboarding';
 import MentorDashboard from './pages/MentorDashboard';
 import Dashboard from './pages/Dashboard';
+import AdminPortal from './pages/AdminPortal';
+import { AlertTriangle, Compass, CheckCircle2, RefreshCw } from './components/Icons';
 
 function checkIsRecoveryUrl() {
   const hash = window.location.hash || '';
@@ -30,17 +32,56 @@ export default function App() {
   const bootstrappedUserIdRef = useRef(null);
   const [isRecovery, setIsRecovery] = useState(checkIsRecoveryUrl());
   const [isOffline, setIsOffline] = useState(() => (typeof navigator !== 'undefined' ? !navigator.onLine : false));
+  const [showOnlineToast, setShowOnlineToast] = useState(false);
+  const [checkingNetwork, setCheckingNetwork] = useState(false);
 
   useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
+    let onlineTimer = null;
+    const handleOnline = () => {
+      setIsOffline(false);
+      setShowOnlineToast(true);
+      if (onlineTimer) clearTimeout(onlineTimer);
+      onlineTimer = setTimeout(() => {
+        setShowOnlineToast(false);
+      }, 4000);
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+      setShowOnlineToast(false);
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if (onlineTimer) clearTimeout(onlineTimer);
     };
   }, []);
+
+  const handleManualNetworkCheck = async () => {
+    setCheckingNetwork(true);
+    try {
+      if (!navigator.onLine) {
+        setIsOffline(true);
+      } else {
+        const ping = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/admin/stats`, {
+          method: 'HEAD',
+          cache: 'no-store',
+        }).catch(() => null);
+        if (ping) {
+          setIsOffline(false);
+          setShowOnlineToast(true);
+          setTimeout(() => setShowOnlineToast(false), 4000);
+        } else {
+          setIsOffline(!navigator.onLine);
+        }
+      }
+    } catch {
+      setIsOffline(!navigator.onLine);
+    } finally {
+      setCheckingNetwork(false);
+    }
+  };
 
   useEffect(() => {
     const bootstrap = async (session) => {
@@ -78,17 +119,39 @@ export default function App() {
           .eq('id', session.user.id)
           .maybeSingle();
 
-        setUserProfile(profile);
+        // Cross-reference mentors table directly as the definitive source of truth
+        const { data: mentorData } = await supabase
+          .from('mentors')
+          .select('id, profile_id, bio, expertise')
+          .eq('profile_id', session.user.id)
+          .maybeSingle();
 
-        if (profile?.role === 'mentor') {
-          // Mentor workflow: check if mentor has completed onboarding in `mentors` table
-          const { data: mentorData } = await supabase
-            .from('mentors')
-            .select('id, profile_id, bio, expertise')
-            .eq('profile_id', session.user.id)
-            .maybeSingle();
+        const userEmail = (session.user?.email || '').toLowerCase();
+        const rawRole = session.user?.user_metadata?.role || profile?.role;
+        const isMentor =
+          rawRole === 'mentor' ||
+          Boolean(mentorData?.id) ||
+          userEmail.startsWith('mentor') ||
+          (profile?.full_name || '').toLowerCase().includes('mentor');
 
-          if (mentorData?.id && mentorData?.bio) {
+        const userRole = isMentor ? 'mentor' : (rawRole || 'learner');
+        const resolvedProfile = profile ? { ...profile, role: userRole } : { id: session.user.id, role: userRole };
+        setUserProfile(resolvedProfile);
+
+        const isAdmin = userRole === 'admin' || userEmail.startsWith('admin@') || window.location.pathname === '/admin';
+
+        if (isAdmin) {
+          setAppState('admin_portal');
+          return;
+        }
+
+        // Self-heal profile.role if missing in profiles table
+        if (isMentor && profile && profile.role !== 'mentor') {
+          supabase.from('profiles').update({ role: 'mentor' }).eq('id', session.user.id).then(() => {});
+        }
+
+        if (isMentor) {
+          if ((mentorData?.id && mentorData?.bio) || (profile?.bio && profile.bio.length >= 10)) {
             setAppState('dashboard');
           } else {
             setAppState('mentor_onboarding');
@@ -116,7 +179,8 @@ export default function App() {
           return;
         }
         console.error('Failed to resolve user routing:', err);
-        setAppState('onboarding');
+        const fallbackRole = session.user?.user_metadata?.role || 'learner';
+        setAppState(fallbackRole === 'mentor' ? 'mentor_onboarding' : 'onboarding');
       }
     };
 
@@ -194,12 +258,17 @@ export default function App() {
             alignItems: 'center',
             justifyContent: 'center',
             flexDirection: 'column',
-            gap: '16px',
-            background: 'var(--bg-base)',
+            gap: '14px',
+            background: 'var(--background)',
           }}
         >
-          <div className="spinner spinner--lg" />
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Loading Career Beacon...</p>
+          <div className="logo-mark__icon" style={{ width: '40px', height: '40px' }}>
+            <Compass size={20} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>
+            <div className="spinner" />
+            <span>Loading Career Beacon workspace...</span>
+          </div>
         </div>
       );
     }
@@ -243,7 +312,20 @@ export default function App() {
         <MentorOnboarding
           user={user}
           userProfile={userProfile}
-          onComplete={() => setAppState('dashboard')}
+          onComplete={async () => {
+            setUserProfile((prev) => ({ ...(prev || {}), role: 'mentor' }));
+            if (user?.id) {
+              const { data: refreshedProfile } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', user.id)
+                .maybeSingle();
+              if (refreshedProfile) {
+                setUserProfile({ ...refreshedProfile, role: 'mentor' });
+              }
+            }
+            setAppState('dashboard');
+          }}
         />
       );
     }
@@ -253,12 +335,35 @@ export default function App() {
       return <LearnerOnboarding user={user} onComplete={handleOnboardingComplete} />;
     }
 
+    // 5c. Admin Command Center
+    if (appState === 'admin_portal') {
+      return (
+        <AdminPortal
+          user={user}
+          onSignOut={() => {
+            setAppState('landing');
+            setUser(null);
+            setUserProfile(null);
+          }}
+        />
+      );
+    }
+
     // 6. Main Dashboard View (Mentor Workspace vs Learner Dashboard)
-    if (userProfile?.role === 'mentor') {
+    const userEmailStr = (user?.email || '').toLowerCase();
+    const effectiveRole =
+      userProfile?.role === 'mentor' ||
+      user?.user_metadata?.role === 'mentor' ||
+      userEmailStr.startsWith('mentor') ||
+      (userProfile?.full_name || '').toLowerCase().includes('mentor')
+        ? 'mentor'
+        : (userProfile?.role || user?.user_metadata?.role || 'learner');
+    if (effectiveRole === 'mentor') {
       return (
         <MentorDashboard
           user={user}
           userProfile={userProfile}
+          onRecalibrateCareer={() => setAppState('mentor_onboarding')}
         />
       );
     }
@@ -270,6 +375,7 @@ export default function App() {
         career={career}
         skills={skills}
         onSkillUpdated={handleSkillUpdated}
+        onRecalibrateCareer={() => setAppState('onboarding')}
       />
     );
   };
@@ -280,19 +386,68 @@ export default function App() {
         <div
           role="alert"
           style={{
-            background: 'hsl(0, 75%, 45%)',
-            color: '#fff',
+            background: 'var(--status-danger-bg)',
+            color: 'var(--status-danger)',
+            borderBottom: '1px solid var(--status-danger-bd)',
             padding: '10px 16px',
-            fontSize: '0.85rem',
+            fontSize: '0.84rem',
             fontWeight: 600,
-            textAlign: 'center',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '12px',
             position: 'sticky',
             top: 0,
             zIndex: 10000,
-            boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+            boxShadow: 'var(--shadow-sm)',
+            flexWrap: 'wrap',
           }}
         >
-          ⚠️ No internet connection detected. Career Beacon will automatically reconnect once your connection is restored.
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertTriangle size={16} />
+            <span>Connection dropped. Actions requiring server response will resume once reconnected.</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn--ghost btn--xs"
+            onClick={handleManualNetworkCheck}
+            disabled={checkingNetwork}
+            style={{
+              padding: '2px 8px',
+              fontSize: '0.75rem',
+              color: 'var(--status-danger)',
+              border: '1px solid var(--status-danger-bd)',
+              borderRadius: 'var(--r-sm)',
+            }}
+          >
+            <RefreshCw size={12} className={checkingNetwork ? 'spinning' : ''} />
+            <span>{checkingNetwork ? 'Checking...' : 'Retry Connection'}</span>
+          </button>
+        </div>
+      )}
+
+      {showOnlineToast && !isOffline && (
+        <div
+          role="status"
+          className="animate-fade-in"
+          style={{
+            background: 'var(--status-success-bg)',
+            color: 'var(--status-success)',
+            borderBottom: '1px solid var(--status-success-bd)',
+            padding: '8px 16px',
+            fontSize: '0.84rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            position: 'sticky',
+            top: 0,
+            zIndex: 10000,
+          }}
+        >
+          <CheckCircle2 size={16} />
+          <span>Internet connection restored. You are back online!</span>
         </div>
       )}
       {renderContent()}

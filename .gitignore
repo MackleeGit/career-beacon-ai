@@ -1,5 +1,7 @@
 # Project Management
 management/
+!management/Chapter_5_Implementation_and_Testing.docx
+!management/DEMO_PRESENTATION_SCRIPT.md
 pdf-forge-exports/
 
 # Frontend (Node.js / React / Vite)
@@ -41,3 +43,9 @@ Thumbs.db
 /backend_clean.zip
 /codebase_clean.zip
 /frontend_clean.zip
+
+# Preview & Diagnostic scratch files
+frontend/__preview.html
+frontend/src/__preview.jsx
+backend/.test-tmp/
+management/log.txt

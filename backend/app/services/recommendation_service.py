@@ -74,9 +74,97 @@ def _lesson_matches_career(item: Dict[str, Any], career_title: str) -> bool:
     return not expected or actual == expected
 
 
+SOC_MAJOR_GROUP_DOMAINS: Dict[str, str] = {
+    "11": "business_admin",     # Management Occupations
+    "13": "business_finance",   # Business and Financial Operations
+    "15": "tech",               # Computer and Mathematical
+    "17": "engineering",        # Architecture and Engineering
+    "19": "science",            # Life, Physical, and Social Science
+    "21": "social_services",    # Community and Social Service
+    "23": "legal",              # Legal Occupations
+    "25": "education",          # Educational Instruction and Library
+    "27": "creative_media",     # Arts, Design, Entertainment, Sports, and Media
+    "29": "healthcare",         # Healthcare Practitioners and Technical
+    "31": "healthcare",         # Healthcare Support
+    "33": "protective_service", # Protective Service Occupations
+    "35": "hospitality_food",   # Food Preparation and Serving
+    "37": "facility_maintenance", # Building and Grounds Cleaning/Maintenance
+    "39": "personal_care",      # Personal Care and Service
+    "41": "business_finance",   # Sales and Related
+    "43": "business_admin",     # Office and Administrative Support
+    "45": "trades_industrial",  # Farming, Fishing, and Forestry
+    "47": "trades_industrial",  # Construction and Extraction
+    "49": "trades_industrial",  # Installation, Maintenance, and Repair
+    "51": "trades_industrial",  # Production Occupations
+    "53": "transportation",     # Transportation and Material Moving
+    "55": "military",           # Military Specific Occupations
+}
+
+RESTRICTED_ADAPTER_DOMAINS: Dict[str, set] = {
+    "clinical_science": {"healthcare", "science"},
+    "mdn": {"tech"},
+    "owasp": {"tech", "protective_service"},
+    "osha": {"trades_industrial", "engineering", "healthcare", "transportation"},
+    "finance": {"business_finance", "business_admin"},
+}
+
+
+def resolve_career_domain_standard(career_title: str, onet_soc_code: Optional[str] = None) -> str:
+    """
+    Standard BLS SOC taxonomy domain resolution.
+    1. Checks the 2-digit Major Group prefix if onet_soc_code is present.
+    2. Fallback for the ~15 non-standard or custom AI occupations.
+    """
+    if onet_soc_code:
+        prefix = str(onet_soc_code).strip()[:2]
+        if prefix in SOC_MAJOR_GROUP_DOMAINS:
+            return SOC_MAJOR_GROUP_DOMAINS[prefix]
+
+    title_low = (career_title or "").lower()
+    if any(k in title_low for k in ("health", "medic", "dent", "doctor", "nurs", "physic", "pharm", "therap", "surg", "clinical")):
+        return "healthcare"
+    if any(k in title_low for k in ("software", "develop", "program", "data", "web", "computer", "cloud", "devops", "cyber", "ai")):
+        return "tech"
+    if any(k in title_low for k in ("engineer", "aerospace", "mechanical", "electrical", "civil", "architect")):
+        return "engineering"
+    if any(k in title_low for k in ("secretar", "administrat", "office", "clerk", "reception", "assistant", "coordinator")):
+        return "business_admin"
+    if any(k in title_low for k in ("finance", "account", "bank", "invest", "audit", "tax", "budget")):
+        return "business_finance"
+    if any(k in title_low for k in ("pilot", "flight", "driver", "transport", "aviation", "maritime", "cargo")):
+        return "transportation"
+    if any(k in title_low for k in ("welder", "plumb", "electrician", "carpent", "mechanic", "machin", "construct")):
+        return "trades_industrial"
+    return "general"
+
+
+def _is_adapter_compatible_with_career(item: Dict[str, Any], career_title: str, onet_soc_code: Optional[str] = None) -> bool:
+    """Taxonomy-driven adapter capability gate across all 855 careers."""
+    adapter = (item.get("source_adapter") or "").lower()
+    url = (item.get("source_url") or "").lower()
+    if not adapter:
+        if "developer.mozilla.org" in url or "w3schools.com" in url or "geeksforgeeks.org" in url:
+            adapter = "mdn"
+        elif "europepmc.org" in url or "ncbi.nlm.nih.gov" in url or "pubmed" in url:
+            adapter = "clinical_science"
+        elif "owasp.org" in url:
+            adapter = "owasp"
+        elif "osha.gov" in url:
+            adapter = "osha"
+
+    domain = resolve_career_domain_standard(career_title, onet_soc_code)
+    allowed_domains = RESTRICTED_ADAPTER_DOMAINS.get(adapter)
+    if allowed_domains is not None and domain not in allowed_domains:
+        return False
+    return True
+
+
 def _filter_candidates_for_career(items: List[Dict[str, Any]], career_title: str) -> List[Dict[str, Any]]:
-    """Drop cross-career lessons and generic/Wikipedia copies when better-fit material exists."""
-    career_items = [item for item in items if _lesson_matches_career(item, career_title)]
+    """Drop cross-career lessons, domain-incompatible adapters, and generic/Wikipedia copies when better-fit material exists."""
+    career_items = [
+        item for item in items
+        if _lesson_matches_career(item, career_title) and _is_adapter_compatible_with_career(item, career_title)
+    ]
     career_specific_skills = {
         item.get("associated_skill_id")
         for item in career_items
@@ -205,11 +293,64 @@ EVIDENCE_STRENGTH = {
 }
 
 
+# In-memory TTL caches for static occupational and curriculum catalogs
+_career_cache: Dict[str, Dict[str, Any]] = {}
+_career_skills_cache: Dict[str, Dict[str, Any]] = {}
+_skills_lookup_cache: Dict[str, Dict[str, Any]] = {}
+_skills_lookup_expiry: float = 0.0
+CATALOG_CACHE_TTL = 3600.0  # 1 hour
+
+
 class RecommendationService:
     def __init__(self):
         self.embedding_service = EmbeddingService()
         self.content_service = ContentService()
         self.history_service = LearningHistoryService()
+
+    @staticmethod
+    def get_cached_career(career_id: str) -> Dict[str, Any]:
+        global _career_cache
+        if career_id in _career_cache:
+            return _career_cache[career_id]
+        res = supabase_client.table("careers").select(
+            "id, title, description, source_origin, review_status, onet_soc_code, esco_occupation_uri"
+        ).eq("id", career_id).execute()
+        career = res.data[0] if res.data else {}
+        if career:
+            _career_cache[career_id] = career
+        return career
+
+    @staticmethod
+    def get_cached_career_skills(career_id: str) -> Dict[str, Dict[str, Any]]:
+        global _career_skills_cache
+        if career_id in _career_skills_cache:
+            return _career_skills_cache[career_id]
+        career_skills_map: Dict[str, Dict[str, Any]] = {}
+        try:
+            cs_res = supabase_client.table("career_skills").select(
+                "skill_id, importance, importance_score, tier, rank, expected_proficiency, career_level, source_origin, review_status"
+            ).eq("career_id", career_id).execute()
+            for row in (cs_res.data or []):
+                career_skills_map[row["skill_id"]] = row
+            _career_skills_cache[career_id] = career_skills_map
+        except Exception as e:
+            logger.warning(f"Failed to fetch career_skills metadata for career {career_id}: {e}")
+        return career_skills_map
+
+    @staticmethod
+    def get_cached_all_skills() -> Dict[str, Dict[str, Any]]:
+        global _skills_lookup_cache, _skills_lookup_expiry
+        import time as _t
+        now = _t.time()
+        if _skills_lookup_cache and now < _skills_lookup_expiry:
+            return _skills_lookup_cache
+        try:
+            res = supabase_client.table("skills").select("id, name, category").execute()
+            _skills_lookup_cache = {s["id"]: s for s in (res.data or [])}
+            _skills_lookup_expiry = now + CATALOG_CACHE_TTL
+        except Exception as e:
+            logger.warning(f"Failed to fetch skills catalog: {e}")
+        return _skills_lookup_cache
 
     async def get_recommendations_for_user(
         self,
@@ -228,10 +369,7 @@ class RecommendationService:
             return []
 
         career_id = profile_res.data[0]["target_career_id"]
-        career_res = supabase_client.table("careers").select(
-            "id, title, description, source_origin, review_status, onet_soc_code, esco_occupation_uri"
-        ).eq("id", career_id).execute()
-        career = career_res.data[0] if career_res.data else {}
+        career = self.get_cached_career(career_id)
         career_title = career.get("title", "General Career")
 
         # 2. Fetch user's enrolled skills and current proficiencies (Skill Graph Coordinates)
@@ -265,15 +403,7 @@ class RecommendationService:
             return []
 
         # 2B. Fetch Career Graph Metadata (Importance, Tiers, and Ranks)
-        career_skills_map: Dict[str, Dict[str, Any]] = {}
-        try:
-            cs_res = supabase_client.table("career_skills").select(
-                "skill_id, importance, importance_score, tier, rank, expected_proficiency, career_level, source_origin, review_status"
-            ).eq("career_id", career_id).execute()
-            for row in (cs_res.data or []):
-                career_skills_map[row["skill_id"]] = row
-        except Exception as e:
-            logger.warning(f"Failed to fetch career_skills metadata for career {career_id}: {e}")
+        career_skills_map = self.get_cached_career_skills(career_id)
 
         # 2C. Fetch Skill Graph Dependencies (Prerequisites & DAG Relationships)
         user_skill_ids = set(s["id"] for s in user_skills)
@@ -403,21 +533,18 @@ class RecommendationService:
         if not skills_needing_content:
             skills_needing_content = [s for s in user_skills if needs_source_diversity(s)]
 
-        # Refill a short feed, and proactively replace Wikipedia-only coverage with
-        # career-specific material. Limit generation to two skills per request.
+        # Refill a short feed only when existing candidates are insufficient (< 4).
+        # Never block a user with live dynamic generation when sufficient lessons already exist.
         excluded_ids = set(exclude_ids or [])
         remaining_relevant = sum(1 for item in relevant_candidates if item.get("id") not in excluded_ids)
-        needs_refill = remaining_relevant < limit
+        needs_refill = remaining_relevant < min(limit, 4)
         if needs_refill and not skills_needing_content:
             skills_needing_content = sorted(
                 user_skills,
                 key=lambda skill: len(content_by_skill.get(skill["id"], [])),
             )
-        if needs_refill or skills_needing_content:
-            needed_count = min(
-                2,
-                max(limit - remaining_relevant, min(2, len(skills_needing_content))),
-            )
+        if needs_refill and skills_needing_content:
+            needed_count = 1
             logger.info(
                 f"Learner {user_id} ({career_title}) has {len(relevant_candidates)}/{limit} relevant lessons; "
                 f"trying up to {needed_count} career-aware lessons from additional sources."
@@ -427,16 +554,26 @@ class RecommendationService:
 
                 async def _paced_gen(s):
                     async with sem:
-                        res = await self.content_service.generate_dynamic_lesson_for_skill(
-                            skill_id=s["id"],
-                            skill_name=s["name"],
-                            category=s.get("category", "Core"),
-                            career_title=career_title,
-                            target_proficiency=s["proficiency"],
-                            career_skill_context=career_skills_map.get(s["id"], {}),
-                        )
-                        await asyncio.sleep(0.2)
-                        return res
+                        try:
+                            res = await asyncio.wait_for(
+                                self.content_service.generate_dynamic_lesson_for_skill(
+                                    skill_id=s["id"],
+                                    skill_name=s["name"],
+                                    category=s.get("category", "Core"),
+                                    career_title=career_title,
+                                    target_proficiency=s["proficiency"],
+                                    career_skill_context=career_skills_map.get(s["id"], {}),
+                                ),
+                                timeout=7.0,
+                            )
+                            await asyncio.sleep(0.1)
+                            return res
+                        except asyncio.TimeoutError:
+                            logger.warning(f"JIT generation timed out after 7.0s for '{s.get('name')}'; serving existing candidates.")
+                            return None
+                        except Exception as e:
+                            logger.error(f"JIT generation error for '{s.get('name')}': {e}")
+                            return None
 
                 skills_to_generate = skills_needing_content[:needed_count] if skills_needing_content else [
                     s for s in priority_skills if needs_source_diversity(s)
@@ -458,8 +595,7 @@ class RecommendationService:
             return []
 
         # Build skill details lookup for all skills in DB
-        all_skills_res = supabase_client.table("skills").select("id, name, category").execute()
-        all_skills_map = {s["id"]: s for s in (all_skills_res.data or [])}
+        all_skills_map = self.get_cached_all_skills()
 
         # 5. STAGE 2: PYTHON GRAPH & PEDAGOGICAL RE-RANKER
         # Fetch user content activity history (impressions, opens, completions)

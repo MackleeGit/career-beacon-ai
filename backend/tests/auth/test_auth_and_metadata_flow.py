@@ -9,7 +9,7 @@ Verifies:
 
 import pytest
 import re
-from app.routers.onboarding import CareerSearchRequest, SaveSkillsRequest, UnifiedSkillInput
+from app.routers.learner_onboarding import CareerSearchRequest, SaveSkillsRequest, UnifiedSkillInput
 
 
 def test_learner_vs_mentor_role_enumeration():

@@ -31,7 +31,7 @@ _jwks_cache: Optional[dict] = None
 _jwks_fetched_at: float = 0
 _JWKS_TTL = 3600  # seconds
 
-EXCLUDED_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+EXCLUDED_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/api/test/db-audit"}
 
 
 def get_verified_user_id(request: Request) -> str:
@@ -123,6 +123,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
                 algorithms=["ES256", "RS256"],
                 audience="authenticated",
                 issuer=f"{SUPABASE_URL.rstrip('/')}/auth/v1",
+                leeway=60,
             )
 
             # Attach to request for downstream handlers

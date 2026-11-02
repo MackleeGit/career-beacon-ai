@@ -2,7 +2,7 @@ import pytest
 from starlette.testclient import TestClient
 from unittest.mock import MagicMock
 from app.main import app
-from app.routers.onboarding import sanitize_career_query
+from app.routers.learner_onboarding import sanitize_career_query
 
 client = TestClient(app)
 
@@ -15,7 +15,7 @@ def test_sanitize_career_query():
     assert sanitize_career_query("Product Manager") == "Product Manager"
 
 def test_normalized_career_titles_handle_common_plural_forms():
-    from app.routers.onboarding import _normalized_title_words
+    from app.routers.learner_onboarding import _normalized_title_words
 
     assert _normalized_title_words("Petroleum Engineer") == _normalized_title_words("Petroleum Engineers")
     assert _normalized_title_words("Data Analyst") == _normalized_title_words("Data Analysts")
@@ -23,8 +23,8 @@ def test_normalized_career_titles_handle_common_plural_forms():
 
 @pytest.mark.asyncio
 async def test_exact_canonical_title_precedes_low_similarity_fallback(monkeypatch):
-    from app.routers import onboarding
-    from app.routers.onboarding import search_career, CareerSearchRequest
+    from app.routers import learner_onboarding as onboarding
+    from app.routers.learner_onboarding import search_career, CareerSearchRequest
     from starlette.requests import Request
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -102,7 +102,7 @@ def test_unauthenticated_requests_rejected():
 @pytest.mark.asyncio
 async def test_search_career_onet_provenance_contract():
     """Verify search returns matched O*NET career with accurate provenance and review status."""
-    from app.routers.onboarding import search_career, CareerSearchRequest
+    from app.routers.learner_onboarding import search_career, CareerSearchRequest
     from starlette.requests import Request
 
     mock_req = MagicMock(spec=Request)
@@ -138,7 +138,7 @@ async def test_search_career_onet_provenance_contract():
 @pytest.mark.asyncio
 async def test_save_skills_contract_validations():
     """Verify save_skills contract: user verification, empty skill guard, and parameter enforcement."""
-    from app.routers.onboarding import save_skills, SaveSkillsRequest, UnifiedSkillInput
+    from app.routers.learner_onboarding import save_skills, SaveSkillsRequest, UnifiedSkillInput
     from starlette.requests import Request
     from fastapi import HTTPException
 
@@ -172,7 +172,7 @@ async def test_ai_career_proposal_quarantine_contract():
     """Verify that an AI-generated career proposal is strictly quarantined in pending_careers,
 
     marked is_curated=False, source_origin='llm', review_status='unreviewed', and cannot silently enter curated catalogue."""
-    from app.routers.onboarding import save_skills, SaveSkillsRequest, UnifiedSkillInput
+    from app.routers.learner_onboarding import save_skills, SaveSkillsRequest, UnifiedSkillInput
     from app.core.database import supabase_client
     from starlette.requests import Request
     import uuid
@@ -250,7 +250,7 @@ async def test_ai_career_proposal_quarantine_contract():
         assert career_row.get("career_vector") is None, "career_vector must be NULL for uncurated careers"
 
         # Search query for the exact quarantined title must NOT return it as a matched canonical career
-        from app.routers.onboarding import search_career, CareerSearchRequest
+        from app.routers.learner_onboarding import search_career, CareerSearchRequest
         search_res = await search_career(CareerSearchRequest(career_query=unique_title), mock_req)
         if search_res["status"] == "matched":
             assert search_res["career"]["id"] != career_id, "Quarantined career must NEVER be returned as matched!"

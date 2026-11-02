@@ -7,6 +7,11 @@ import { supabase } from './SupabaseClient';
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 async function request(path, options = {}) {
+  // Check online status immediately before attempting request
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('You appear to be offline. Please check your internet connection.');
+  }
+
   // Retrieve current session token (if user is logged in)
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
@@ -17,17 +22,41 @@ async function request(path, options = {}) {
     ...options.headers,
   };
 
+  // Guard against hanging requests when connection drops mid-flight
+  const timeoutMs = options.timeoutMs || 30000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort();
+    } else {
+      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
   let res;
   try {
     res = await fetch(`${BASE_URL}${path}`, {
       headers,
+      signal: controller.signal,
       ...options,
     });
   } catch (err) {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      throw new Error('You appear to be offline. Please check your internet connection.');
+    if (options.signal?.aborted) {
+      const abortErr = new Error('Request aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
     }
-    throw new Error('Unable to reach the backend service. Please check your connection.');
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. The server took too long to respond or your connection was interrupted.');
+    }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      throw new Error('Network connection lost. Please check your internet connection.');
+    }
+    throw new Error('Unable to reach the backend service. Please verify your connection.');
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!res.ok) {
@@ -103,12 +132,12 @@ export async function getOnboardingStatus(userId) {
 /**
  * Fetch personalized micro-learning recommendations (Two-Stage Hybrid).
  */
-export async function getRecommendations(userId, limit = 10, offset = 0, excludeIds = []) {
+export async function getRecommendations(userId, limit = 10, offset = 0, excludeIds = [], options = {}) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   for (const id of excludeIds || []) {
     if (id) params.append('exclude_ids', id);
   }
-  return request(`/api/recommendations/${userId}?${params.toString()}`);
+  return request(`/api/recommendations/${userId}?${params.toString()}`, { timeoutMs: 45000, ...options });
 }
 
 /**
@@ -133,6 +162,20 @@ export async function recordContentOpen(userId, contentId) {
   });
 }
 
+/**
+ * Retrieve today's 3-lesson Daily Focus Drop with streak metadata.
+ */
+export async function getCurrentDailyDrop(options = {}) {
+  return request('/api/recommendations/daily-drop/current', { timeoutMs: 45000, ...options });
+}
+
+/**
+ * 1-Shot Daily Re-Roll: shuffle sprint to secondary priority deficit.
+ */
+export async function rerollDailyDrop() {
+  return request('/api/recommendations/daily-drop/reroll', { method: 'POST', timeoutMs: 30000 });
+}
+
 // ===========================================================================
 // Module 4: Mentorship Ecosystem API Helpers
 // ===========================================================================
@@ -142,6 +185,43 @@ export async function submitMentorOnboarding(payload) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export async function searchMentorCareers(query = '') {
+  const cleanQ = query.trim();
+  if (!cleanQ || cleanQ.length < 2) {
+    return { direct_matches: [], vector_matches: [] };
+  }
+
+  // 1. Attempt the FastAPI backend endpoint first
+  try {
+    const q = encodeURIComponent(cleanQ);
+    const res = await request(`/api/mentor/career-search?q=${q}`);
+    if (res && (res.direct_matches || res.vector_matches)) {
+      return res;
+    }
+  } catch (err) {
+    console.warn('[searchMentorCareers] Backend endpoint unavailable, executing direct Supabase lookup:', err);
+  }
+
+  // 2. High-reliability direct Supabase database fallback
+  try {
+    const { data: directMatches, error } = await supabase
+      .from('careers')
+      .select('id, title, description, source_origin')
+      .ilike('title', `%${cleanQ}%`)
+      .limit(8);
+
+    if (error) throw error;
+
+    return {
+      direct_matches: directMatches || [],
+      vector_matches: [],
+    };
+  } catch (dbErr) {
+    console.error('[searchMentorCareers] Direct Supabase fallback error:', dbErr);
+    return { direct_matches: [], vector_matches: [] };
+  }
 }
 
 export async function fetchMentorSkills(query = '', limit = 30) {
@@ -281,4 +361,79 @@ export async function completeMentorshipSession(sessionId, endorseSkillName = nu
 
 export function getSessionIcsDownloadUrl(sessionId) {
   return `${BASE_URL}/api/mentor/sessions/${encodeURIComponent(sessionId)}/calendar.ics`;
+}
+
+
+export async function resetLearnerAccount() {
+  return request('/api/onboarding/reset', { method: 'POST' });
+}
+
+export async function resetMentorAccount() {
+  return request('/api/mentor/reset', { method: 'POST' });
+}
+
+// ===========================================================================
+// Admin Command Center API Helpers
+// ===========================================================================
+
+export async function getAdminStats() {
+  return request('/api/admin/stats');
+}
+
+export async function getAdminPendingCareers() {
+  return request('/api/admin/careers/pending');
+}
+
+export async function reviewAdminCareer(careerId, action, customTitle = null) {
+  return request(`/api/admin/careers/${encodeURIComponent(careerId)}/review`, {
+    method: 'POST',
+    body: JSON.stringify({ action, custom_title: customTitle }),
+  });
+}
+
+export async function getAdminMentors() {
+  return request('/api/admin/mentors');
+}
+
+export async function verifyAdminMentor(mentorId, verified) {
+  return request(`/api/admin/mentors/${encodeURIComponent(mentorId)}/verify`, {
+    method: 'POST',
+    body: JSON.stringify({ verified }),
+  });
+}
+
+export async function getAdminFlaggedContent() {
+  return request('/api/admin/moderation/flagged');
+}
+
+export async function takeAdminModerationAction(action, itemId, itemType) {
+  return request('/api/admin/moderation/action', {
+    method: 'POST',
+    body: JSON.stringify({ action, item_id: itemId, item_type: itemType }),
+  });
+}
+
+export async function submitLessonFeedback(lessonId, feedback, lessonTitle = null, reason = null) {
+  return request('/api/recommendations/feedback', {
+    method: 'POST',
+    body: JSON.stringify({
+      lesson_id: lessonId,
+      feedback,
+      lesson_title: lessonTitle,
+      reason,
+    }),
+  });
+}
+
+export async function flagContentItem(itemType, itemId, contentSnippet, targetContext = 'Community Content', reason = 'Reported by user') {
+  return request('/api/admin/moderation/flag', {
+    method: 'POST',
+    body: JSON.stringify({
+      item_type: itemType,
+      item_id: itemId,
+      content_snippet: contentSnippet,
+      target_context: targetContext,
+      reason,
+    }),
+  });
 }

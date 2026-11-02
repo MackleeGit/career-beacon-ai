@@ -700,6 +700,21 @@ class MentorshipService:
                 match_tier = "below_threshold"
                 match_badge = "Low Alignment (Filtered by Anti-Desperation Gate)"
 
+            # Calculate Identity & Trust Verification Boost
+            has_google = bool(m.get("google_email") or m.get("is_seeded") or m.get("google_verified"))
+            has_linkedin = bool(m.get("linkedin_url") or m.get("is_seeded") or m.get("linkedin_verified"))
+            is_verified_advisor = bool(m.get("is_verified", True))
+
+            trust_boost = 0
+            if is_verified_advisor:
+                trust_boost += 6
+            if has_google:
+                trust_boost += 4
+            if has_linkedin:
+                trust_boost += 5
+
+            trust_score = min(99, 84 + trust_boost)
+
             conn = learner_conns.get(m["mentor_id"])
             mentor_card = {
                 k: v for k, v in m.items() if k != "mentor_vector"
@@ -707,6 +722,10 @@ class MentorshipService:
             mentor_card.update({
                 "match_score": round(composite_score, 3),
                 "match_percent": match_pct,
+                "trust_score": trust_score,
+                "has_google": has_google,
+                "has_linkedin": has_linkedin,
+                "is_verified": is_verified_advisor,
                 "semantic_similarity_percent": int(round(sem_sim * 100)),
                 "skill_overlap_percent": int(round(overlap_score * 100)),
                 "shared_gap_skills": shared_gap_skills,
@@ -1205,6 +1224,9 @@ class MentorshipService:
                 )
                 end_dt = start_dt + timedelta(minutes=45)
                 start_iso = start_dt.isoformat()
+                # Enforce minimum 24-hour advance booking notice
+                if start_dt < now + timedelta(hours=24):
+                    continue
                 if start_iso in booked_starts:
                     continue
 
@@ -1244,6 +1266,13 @@ class MentorshipService:
             raise ValueError("Invalid ISO timestamp for session start.")
         end_dt = start_dt + timedelta(minutes=45)
 
+        now_utc = datetime.now(timezone.utc)
+        if start_dt < now_utc:
+            raise ValueError("Scheduling conflict: Cannot schedule a session in the past.")
+
+        if start_dt < now_utc + timedelta(hours=24):
+            raise ValueError("Advance notice required: Sessions must be scheduled at least 24 hours in advance to allow preparation.")
+
         for existing in store.get("sessions", []):
             if existing.get("status") == "cancelled":
                 continue
@@ -1252,11 +1281,11 @@ class MentorshipService:
             overlaps = start_dt < ex_end and end_dt > ex_start
             if overlaps and existing["mentor_id"] == mentor_id:
                 raise ValueError(
-                    "Double-booking prevented: This mentor already has a confirmed session during this time window."
+                    "Double-booking prevented: The mentor already has a confirmed session scheduled during this time window."
                 )
             if overlaps and existing["learner_id"] == learner_id:
                 raise ValueError(
-                    "Double-booking prevented: You already have another mentorship session scheduled at this time."
+                    "Double-booking prevented: This learner is unavailable at this time due to an existing scheduled session."
                 )
 
         ctx = self._get_learner_context(learner_id)
@@ -1355,49 +1384,16 @@ class MentorshipService:
         sess["feedback_note"] = feedback_note.strip()
         skill_to_endorse = (endorse_skill_name or sess.get("focus_skill") or "").strip()
 
-        proficiency_update = None
-        if skill_to_endorse and sess.get("learner_id"):
-            learner_id = sess["learner_id"]
-            try:
-                us_res = (
-                    supabase_client.table("user_skills")
-                    .select("skill_id, proficiency, skills(name)")
-                    .eq("user_id", learner_id)
-                    .execute()
-                )
-                matched_row = None
-                for r in us_res.data or []:
-                    sk_name = (r.get("skills") or {}).get("name", "")
-                    if sk_name.lower() == skill_to_endorse.lower() or skill_to_endorse.lower() in sk_name.lower():
-                        matched_row = r
-                        break
-
-                if matched_row:
-                    old_prof = int(matched_row.get("proficiency") or 20)
-                    new_prof = min(100, old_prof + 15)
-                    try:
-                        supabase_client.table("user_skills").update({
-                            "proficiency": new_prof,
-                            "evidence_source": "diagnostic_assessment",
-                        }).eq("user_id", learner_id).eq("skill_id", matched_row["skill_id"]).execute()
-                    except Exception:
-                        supabase_client.table("user_skills").update({
-                            "proficiency": new_prof,
-                        }).eq("user_id", learner_id).eq("skill_id", matched_row["skill_id"]).execute()
-
-                    proficiency_update = {
-                        "skill_id": matched_row["skill_id"],
-                        "skill_name": (matched_row.get("skills") or {}).get("name", skill_to_endorse),
-                        "old_proficiency": old_prof,
-                        "new_proficiency": new_prof,
-                        "increment": new_prof - old_prof,
-                        "evidence_source": "mentor_verified",
-                    }
-                    sess["endorsed_skill"] = proficiency_update
-            except Exception as err:
-                print(f"[MentorshipService] Skill endorsement DB warning: {err}")
+        if skill_to_endorse:
+            sess["endorsed_skill"] = {
+                "skill_name": skill_to_endorse,
+                "endorsement_type": "mentor_reviewed",
+                "feedback_note": feedback_note.strip(),
+                "endorsed_at": _utc_now_iso(),
+            }
 
         self._save_store(store)
+        return sess
         return sess
 
     def get_session_ics(self, session_id: str) -> str:
