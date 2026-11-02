@@ -333,13 +333,17 @@ export default function Recommendations({
     });
     if (isNowExpanded && user?.id) {
       recordContentOpen(user.id, lesson.id).catch(() => {});
-      setRecommendations((prev) =>
-        prev.map((it) =>
-          it.id === lesson.id && !it.has_passed
-            ? { ...it, opened: true, lifecycle_state: 'in_progress_opened' }
-            : it
-        )
-      );
+      setDailyDrop((prev) => {
+        if (!prev || !prev.lessons) return prev;
+        return {
+          ...prev,
+          lessons: prev.lessons.map((it) =>
+            it.id === lesson.id && !it.has_passed
+              ? { ...it, opened: true, lifecycle_state: 'in_progress_opened' }
+              : it
+          )
+        };
+      });
     }
   };
 
