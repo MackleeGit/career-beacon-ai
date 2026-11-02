@@ -1,7 +1,6 @@
 // src/pages/Recommendations.jsx
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  getRecommendations,
   getCurrentDailyDrop,
   rerollDailyDrop,
   recordContentOpen,
@@ -391,9 +390,7 @@ export default function Recommendations({
           const exists = prev.some((p) => p.id === activeQuizLesson.id);
           return exists ? prev : [passedLessonObj, ...prev];
         });
-        setRecommendations((prev) =>
-          prev.map((it) => (it.id === activeQuizLesson.id ? passedLessonObj : it))
-        );
+
 
         if (onSkillUpdated && activeQuizLesson.associated_skill_id && res.new_proficiency != null) {
           onSkillUpdated({
@@ -403,11 +400,15 @@ export default function Recommendations({
           });
         }
       } else {
-        setRecommendations((prev) =>
-          prev.map((it) =>
-            it.id === activeQuizLesson.id ? { ...it, completed: true, lifecycle_state: 'retry_needed' } : it
-          )
-        );
+        setDailyDrop((prev) => {
+          if (!prev || !prev.lessons) return prev;
+          return {
+            ...prev,
+            lessons: prev.lessons.map((it) =>
+              it.id === activeQuizLesson.id ? { ...it, completed: true, lifecycle_state: 'retry_needed' } : it
+            )
+          };
+        });
       }
     } catch (err) {
       alert(`Quiz submission error: ${err.message}`);
@@ -798,7 +799,7 @@ export default function Recommendations({
       )}
 
       {/* Recommendation Feed Items */}
-      {!loading && !error && displayedItems.length > 0 && (
+      {!isCurrentTabLoading && !isCurrentTabError && displayedItems.length > 0 && (
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {displayedItems.map((lesson) => {
