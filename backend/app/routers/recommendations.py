@@ -82,6 +82,16 @@ async def reroll_daily_drop(http_req: Request):
         raise HTTPException(status_code=500, detail=f"Failed to reroll daily drop: {str(e)}")
 
 
+@router.get("/library/completed")
+async def get_user_completed_library(http_req: Request):
+    caller_id = get_verified_user_id(http_req)
+    try:
+        completed = await recommendation_service.get_completed_library_for_user(caller_id)
+        return {"status": "success", "completed_library": completed}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load completed library: {str(e)}")
+
+
 @router.get("/{user_id}")
 async def get_user_recommendations(
     user_id: str,

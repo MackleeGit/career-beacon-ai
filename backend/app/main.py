@@ -27,6 +27,7 @@ app.add_middleware(
         "http://localhost:3000",
         "https://careerbeacon.netlify.app",
     ],
+    allow_origin_regex=r"https://.*\.netlify\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

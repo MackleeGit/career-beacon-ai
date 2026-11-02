@@ -94,7 +94,6 @@ const SOURCE_BADGE_META = {
   },
 };
 
-const SPRINT_SIZE = 5;
 
 function extractDomain(url) {
   if (!url) return 'careerbeacon.edu';
@@ -126,28 +125,24 @@ export default function Recommendations({
   onAskMentorAboutLesson,
   initialSubTab = 'daily',
 }) {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [recommendations, setRecommendations] = useState([]);
+  const [dailyDrop, setDailyDrop] = useState(null);
+  const [loadingDailyDrop, setLoadingDailyDrop] = useState(true);
+  const [dailyDropError, setDailyDropError] = useState(null);
+  const [rerollingDrop, setRerollingDrop] = useState(false);
+
   const [completedLibrary, setCompletedLibrary] = useState([]);
+  const [loadingCompleted, setLoadingCompleted] = useState(false);
+  const [completedError, setCompletedError] = useState(null);
+
   const [feedSubTab, setFeedSubTab] = useState(initialSubTab && initialSubTab !== 'sprint' ? initialSubTab : 'daily');
-  const [sprintNumber, setSprintNumber] = useState(1);
   const [expandedLessons, setExpandedLessons] = useState(() => new Set());
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState(null);
-  const loadMoreSentinelRef = useRef(null);
-  const loadingMoreRef = useRef(false);
   const [activeQuizLesson, setActiveQuizLesson] = useState(null);
   const [quizAnswers, setQuizAnswers] = useState({});
   const [submittingQuiz, setSubmittingQuiz] = useState(false);
   const [quizResult, setQuizResult] = useState(null);
   const [passedLessons, setPassedLessons] = useState(() => new Set());
   const [imgErrors, setImgErrors] = useState({});
-  const [dailyDrop, setDailyDrop] = useState(null);
-  const [loadingDailyDrop, setLoadingDailyDrop] = useState(true);
-  const [dailyDropError, setDailyDropError] = useState(null);
-  const [rerollingDrop, setRerollingDrop] = useState(false);
+  const [pipelinePhase, setPipelinePhase] = useState(0);
   const activeRequestIdRef = useRef(0);
   const abortControllerRef = useRef(null);
 
@@ -241,66 +236,35 @@ export default function Recommendations({
     };
   }, []);
 
-  const fetchFeed = useCallback(async () => {
-    if (!user?.id) return;
-    const reqId = ++activeRequestIdRef.current;
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+  // Progressive Pipeline Stages for Educational Curation
+  const PIPELINE_STEPS = [
+    {
+      phase: 1,
+      title: 'Analyzing Skill Graph & Priority Deficits',
+      subtitle: `Prioritizing highest-yield competency gap for ${career?.title || 'your career path'}...`,
+      badge: 'Phase 1/3'
+    },
+    {
+      phase: 2,
+      title: 'Querying Verified Educational Repositories',
+      subtitle: 'Filtering domain literature across Europe PMC, MDN Web Docs & Open Courseware...',
+      badge: 'Phase 2/3'
+    },
+    {
+      phase: 3,
+      title: 'Synthesizing Self-Contained Micro-Lessons',
+      subtitle: 'Calibrating 3 focused instructional modules and 5-question verified checkpoints...',
+      badge: 'Phase 3/3'
     }
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    // Only show full-screen skeleton if no lessons are loaded yet
-    setLoading((prevLoading) => {
-      return recommendations.length === 0 ? true : prevLoading;
-    });
-    if (recommendations.length === 0) {
-      setError(null);
-    }
-    try {
-      const res = await getRecommendations(user.id, SPRINT_SIZE, 0, [], { signal: abortController.signal });
-      if (reqId !== activeRequestIdRef.current) return;
-      const items = res.recommendations || [];
-      const serverLibrary = res.completed_library || [];
-      const activeItems = items.filter((it) => !it.has_passed);
-      const alreadyPassed = [...serverLibrary, ...items.filter((it) => it.has_passed)];
-      setRecommendations(activeItems.length > 0 ? activeItems : items);
-      setCompletedLibrary((prev) => {
-        const existingIds = new Set(prev.map((p) => p.id));
-        const merged = [...prev];
-        for (const p of alreadyPassed) {
-          if (p?.id && !existingIds.has(p.id)) {
-            existingIds.add(p.id);
-            merged.push(p);
-          }
-        }
-        return merged;
-      });
-      setPassedLessons((prev) => new Set([...prev, ...alreadyPassed.map((p) => p.id)]));
-      setHasMore(items.length >= 4);
-      setError(null);
-      setLoadMoreError(null);
-    } catch (err) {
-      if (err?.name === 'AbortError' || reqId !== activeRequestIdRef.current) {
-        return;
-      }
-      console.error('Failed to load recommendations:', err);
-      if (recommendations.length > 0) {
-        // Soft error notice if lessons are already rendered
-        setLoadMoreError('Unable to refresh recommendations. Showing current sprint.');
-      } else {
-        setError(err.message || 'Could not load recommendations');
-      }
-    } finally {
-      if (reqId === activeRequestIdRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [user?.id, recommendations.length]);
+  ];
 
   useEffect(() => {
-    fetchFeed();
-  }, [fetchFeed]);
+    if (!loadingDailyDrop) return;
+    const timer = setInterval(() => {
+      setPipelinePhase((prev) => (prev + 1) % 3);
+    }, 2200);
+    return () => clearInterval(timer);
+  }, [loadingDailyDrop]);
 
   const fetchDailyDrop = useCallback(async () => {
     if (!user?.id) return;
@@ -323,6 +287,27 @@ export default function Recommendations({
     fetchDailyDrop();
   }, [fetchDailyDrop]);
 
+  const fetchCompleted = useCallback(async () => {
+    if (!user?.id) return;
+    setLoadingCompleted(true);
+    setCompletedError(null);
+    try {
+      const res = await getCompletedLibrary();
+      setCompletedLibrary(res.completed_library || []);
+    } catch (err) {
+      console.error('Failed to load completed library:', err);
+      setCompletedError(err.message || 'Could not load completed library');
+    } finally {
+      setLoadingCompleted(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (feedSubTab === 'completed') {
+      fetchCompleted();
+    }
+  }, [feedSubTab, fetchCompleted]);
+
   const handleRerollDailyDrop = async () => {
     if (rerollingDrop) return;
     setRerollingDrop(true);
@@ -333,40 +318,11 @@ export default function Recommendations({
         setFeedbackToast('Daily drop shuffled to secondary deficit.');
       }
     } catch (err) {
-      setFeedbackToast(err.message || 'Could not shuffle sprint.');
+      setFeedbackToast(err.message || 'Could not shuffle drop.');
     } finally {
       setRerollingDrop(false);
     }
   };
-
-  const loadMoreRecommendations = useCallback(async () => {
-    if (!user?.id || loadingMoreRef.current) return;
-    loadingMoreRef.current = true;
-    setLoadingMore(true);
-    setLoadMoreError(null);
-    try {
-      const seenIds = [
-        ...recommendations.map((lesson) => lesson.id),
-        ...completedLibrary.map((lesson) => lesson.id),
-      ];
-      const res = await getRecommendations(user.id, SPRINT_SIZE, 0, seenIds);
-      const nextItems = res.recommendations || [];
-      if (nextItems.length > 0) {
-        setRecommendations((current) => {
-          const knownIds = new Set(current.map((lesson) => lesson.id));
-          return [...current, ...nextItems.filter((lesson) => !knownIds.has(lesson.id))];
-        });
-        setSprintNumber((n) => n + 1);
-      }
-      setHasMore(nextItems.length >= 4);
-    } catch (err) {
-      console.error('Failed to load more recommendations:', err);
-      setLoadMoreError('Could not load more lessons. Please try again.');
-    } finally {
-      loadingMoreRef.current = false;
-      setLoadingMore(false);
-    }
-  }, [user?.id, recommendations, completedLibrary]);
 
   const toggleExpandLesson = (lesson) => {
     const isNowExpanded = !expandedLessons.has(lesson.id);
@@ -485,10 +441,9 @@ export default function Recommendations({
   };
 
   const savedIds = new Set(savedLessons.map((s) => s.id));
-  const sprintCompletedCount = recommendations.filter((r) => passedLessons.has(r.id) || r.has_passed).length;
 
-  const isCurrentTabLoading = feedSubTab === 'daily' ? loadingDailyDrop : loading;
-  const isCurrentTabError = feedSubTab === 'daily' ? dailyDropError : error;
+  const isCurrentTabLoading = feedSubTab === 'daily' ? loadingDailyDrop : (feedSubTab === 'completed' ? loadingCompleted : false);
+  const isCurrentTabError = feedSubTab === 'daily' ? dailyDropError : (feedSubTab === 'completed' ? completedError : null);
 
   let displayedItems = dailyDrop?.lessons || [];
   if (feedSubTab === 'completed') displayedItems = completedLibrary;
@@ -656,7 +611,7 @@ export default function Recommendations({
 
       {/* Loading State with Progressive Generation Pipeline */}
       {isCurrentTabLoading && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }} aria-busy="true" aria-label="Synthesizing learning recommendations">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }} aria-busy="true" aria-label="Curating daily focus drop">
           <div
             className="card"
             style={{
@@ -665,6 +620,7 @@ export default function Recommendations({
               background: 'var(--surface)',
               position: 'relative',
               overflow: 'hidden',
+              borderRadius: 'var(--r-lg)',
             }}
           >
             <div
@@ -679,44 +635,68 @@ export default function Recommendations({
                 animation: 'pulse 1.8s ease-in-out infinite',
               }}
             />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <div
-                style={{
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: 'var(--r-md)',
-                  background: 'var(--accent-soft)',
-                  color: 'var(--accent)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                <Compass size={20} />
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div
+                  style={{
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: 'var(--r-md)',
+                    background: 'var(--accent-soft)',
+                    color: 'var(--accent)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <Compass size={22} className="spinning" />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
+                    <span className="badge badge--accent" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                      {PIPELINE_STEPS[pipelinePhase].badge}
+                    </span>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Curating 3-Lesson Daily Drop</span>
+                  </div>
+                  <h4 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {PIPELINE_STEPS[pipelinePhase].title}
+                  </h4>
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
-                  Curating Daily Focus Drop for {career?.title || 'your occupational roadmap'}
-                </h4>
-                <p style={{ margin: '4px 0 0', fontSize: '0.83rem', color: 'var(--text-secondary)' }}>
-                  Aligning verified instructional resources with your assessed skill frontier...
-                </p>
+
+              {/* Stage Progress Pills */}
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', background: 'var(--surface-sunken)', padding: '5px 10px', borderRadius: 'var(--r-full)', border: '1px solid var(--border-subtle)' }}>
+                {PIPELINE_STEPS.map((step, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      width: idx === pipelinePhase ? '24px' : '8px',
+                      height: '8px',
+                      borderRadius: 'var(--r-full)',
+                      background: idx <= pipelinePhase ? 'var(--accent)' : 'var(--border-strong)',
+                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    }}
+                    title={step.title}
+                  />
+                ))}
               </div>
             </div>
 
-            <div style={{ marginTop: '16px' }}>
-              <div className="progress-bar" style={{ height: '4px', overflow: 'hidden' }}>
-                <div
-                  className="progress-bar__fill"
-                  style={{
-                    width: '100%',
-                    background: 'linear-gradient(90deg, var(--accent) 0%, var(--status-info) 50%, var(--accent) 100%)',
-                    backgroundSize: '200% 100%',
-                    animation: 'pulse 1.4s ease-in-out infinite',
-                  }}
-                />
-              </div>
+            <p style={{ margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              {PIPELINE_STEPS[pipelinePhase].subtitle}
+            </p>
+
+            <div className="progress-bar" style={{ height: '4px' }}>
+              <div
+                className="progress-bar__fill"
+                style={{
+                  width: `${((pipelinePhase + 1) / 3) * 100}%`,
+                  transition: 'width 0.4s ease',
+                  background: 'var(--accent)',
+                }}
+              />
             </div>
           </div>
 

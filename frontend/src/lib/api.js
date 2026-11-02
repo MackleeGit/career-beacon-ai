@@ -172,6 +172,10 @@ export async function getCurrentDailyDrop(options = {}) {
 /**
  * 1-Shot Daily Re-Roll: shuffle sprint to secondary priority deficit.
  */
+export async function getCompletedLibrary() {
+  return request('/api/recommendations/library/completed');
+}
+
 export async function rerollDailyDrop() {
   return request('/api/recommendations/daily-drop/reroll', { method: 'POST', timeoutMs: 30000 });
 }
