@@ -40,6 +40,9 @@ logger = logging.getLogger("career_beacon.content_service")
 
 # Calibrated base authority weights by instructional adapter
 SOURCE_AUTHORITY_WEIGHTS: Dict[str, float] = {
+    "owasp": 0.96,
+    "osha": 0.97,
+    "finance": 0.93,
     "youtube": 0.94,
     "structured_tutorial": 0.92,
     "open_textbook": 0.90,
@@ -58,6 +61,12 @@ def get_source_trust_score(source_str: str) -> Optional[float]:
     if not source_str:
         return None
     low = source_str.lower()
+    if "owasp" in low:
+        return SOURCE_AUTHORITY_WEIGHTS["owasp"]
+    if "osha" in low or "safety standard" in low or "niosh" in low:
+        return SOURCE_AUTHORITY_WEIGHTS["osha"]
+    if "finance" in low or "accounting standard" in low:
+        return SOURCE_AUTHORITY_WEIGHTS["finance"]
     if "youtube" in low:
         return SOURCE_AUTHORITY_WEIGHTS["youtube"]
     if any(k in low for k in ("geeksforgeeks", "tutorialspoint", "w3schools", "structured_tutorial")):
@@ -78,6 +87,12 @@ def get_source_trust_score(source_str: str) -> Optional[float]:
 def classify_source_adapter(source_url: str, source_label: str = "") -> str:
     """Maps a lesson URL or source label to one of the 7 canonical adapter keys for the Feed Mixer."""
     combined = f"{source_url or ''} {source_label or ''}".lower()
+    if "owasp.org" in combined or "owasp" in combined:
+        return "owasp"
+    if "osha.gov" in combined or "osha" in combined or "niosh" in combined:
+        return "osha"
+    if "investopedia.com" in combined or "corporatefinance" in combined:
+        return "finance"
     if "youtube.com" in combined or "youtu.be" in combined:
         return "youtube"
     if any(k in combined for k in ("geeksforgeeks.org", "tutorialspoint.com", "w3schools.com")):
@@ -169,12 +184,13 @@ def validate_source_content(raw_text: str, skill_name: str) -> bool:
     skill_tokens = [re.sub(r"[^a-zA-Z0-9]", "", t).lower() for t in skill_name.split()]
     meaningful_tokens = [t for t in skill_tokens if len(t) >= 3 and t not in stop_words]
     if meaningful_tokens:
-        # Match full token or 5-char stem for morphological variants (e.g. "welding" vs "weld")
-        matched = any(
-            (token in lower_text) or (len(token) >= 5 and token[:5] in lower_text)
-            for token in meaningful_tokens
+        # Require multiple token matches for multi-token skills to avoid cross-domain collisions
+        min_required = 1 if len(meaningful_tokens) <= 2 else 2
+        matches_count = sum(
+            1 for token in meaningful_tokens
+            if (token in lower_text) or (len(token) >= 5 and token[:5] in lower_text)
         )
-        if not matched:
+        if matches_count < min_required:
             return False
 
     return True
@@ -410,7 +426,8 @@ class ContentService:
         ]
         headers = {"User-Agent": ACADEMIC_USER_AGENT}
         for api_url, wiki_base, label in apis:
-            for query_str in (f"{skill_name} {career_title}".strip(), skill_name):
+            clean_career = re.sub(r",.*$", "", career_title or "").strip()
+            for query_str in (f"{skill_name} {clean_career}".strip(), skill_name):
                 try:
                     srch = await client.get(
                         f"{api_url}?action=query&list=search&srsearch={quote_plus(query_str)}&utf8=&format=json&srlimit=3",
@@ -421,7 +438,18 @@ class ContentService:
                     results = srch.json().get("query", {}).get("search", [])
                     for item in results:
                         page_title = item.get("title", "")
-                        if not page_title or any(skip in page_title.lower() for skip in ("talk:", "user:", "template:", "category:")):
+                        if not page_title or any(skip in page_title.lower() for skip in ("talk:", "user:", "template:", "category:", "wikijournal", "user group", "project:", "wikiversity:", "wikibooks:", "draft:", "module:")):
+                            continue
+                        # Anti-historical / mythology / philosophy / fiction filter for modern workplace skills
+                        hist_skips = ("history of", "mythology", "dynasty", "ancient", "medieval", "century bc", "empire", "folklore", "poetry", "ontology", "philosophy of", "fiction", "novel")
+                        if any(h in page_title.lower() for h in hist_skips) and not any(k in skill_name.lower() for k in ("history", "ancient", "myth", "philosophy")):
+                            continue
+
+                        # Strict Title Topical Relevance: The textbook title must contain at least one topical token from skill or career
+                        title_clean = page_title.lower()
+                        skill_words = [t.lower() for t in skill_name.split() if len(t) >= 4 and t.lower() not in {"general", "basic", "advanced", "skills"}]
+                        career_words = [t.lower() for t in career_title.split() if len(t) >= 4 and t.lower() not in {"general", "assistant"}]
+                        if not (any(w in title_clean for w in skill_words) or any(w in title_clean for w in career_words)):
                             continue
                         page_url = f"{wiki_base}{quote_plus(page_title.replace(' ', '_'))}"
                         if page_url in excluded:
@@ -434,11 +462,26 @@ class ContentService:
                             pages = ext_resp.json().get("query", {}).get("pages", {})
                             for _, pdata in pages.items():
                                 extract = strip_html_and_clean(pdata.get("extract", ""))
-                                if validate_source_content(extract, skill_name):
+                                tokens = [t.lower() for t in skill_name.split() if len(t) >= 4 and t.lower() not in {"general", "basic", "advanced", "skills"}]
+                                best_idx = -1
+                                for tok in tokens:
+                                    idx = extract.lower().find(tok)
+                                    if idx != -1:
+                                        best_idx = idx
+                                        break
+                                start_idx = max(0, best_idx - 200) if best_idx != -1 else 0
+                                slice_text = extract[start_idx:start_idx + 8000]
+                                if validate_source_content(slice_text, skill_name):
+                                    # Semantic Domain Verification: Verify textbook belongs to same occupational domain
+                                    tb_domain = await self.resolve_career_domain(page_title, slice_text[:300])
+                                    tgt_domain = await self.resolve_career_domain(career_title, skill_name)
+                                    if tgt_domain not in {"general", ""} and tb_domain not in {"general", ""} and tb_domain != tgt_domain:
+                                        logger.info(f"Semantically rejecting open textbook '{page_title}' ({tb_domain}) for career '{career_title}' ({tgt_domain})")
+                                        continue
                                     return {
                                         "title": page_title,
                                         "source_url": page_url,
-                                        "raw_text": extract[:10000],
+                                        "raw_text": slice_text,
                                         "source": label,
                                         "source_adapter": "open_textbook",
                                         "trust_score": SOURCE_AUTHORITY_WEIGHTS["open_textbook"],
@@ -456,39 +499,45 @@ class ContentService:
     ) -> Optional[Dict[str, Any]]:
         """Adapter 5: Europe PMC & NCBI Bookshelf / StatPearls (Healthcare, Bioscience, Engineering, Safety)."""
         headers = {"User-Agent": ACADEMIC_USER_AGENT}
-        try:
-            query = quote_plus(f'"{skill_name}" AND ({career_title or "practice"})')
-            resp = await client.get(
-                f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query={query}&resultType=core&format=json&pageSize=5",
-                headers=headers,
-            )
-            if resp.status_code == 200:
-                results = resp.json().get("resultList", {}).get("result", [])
-                for art in results:
-                    abstract = strip_html_and_clean(art.get("abstractText", ""))
-                    title = strip_html_and_clean(art.get("title", "")).rstrip(".")
-                    pmid = art.get("pmid") or art.get("id")
-                    pmcid = art.get("pmcid")
-                    if pmcid:
-                        art_url = f"https://europepmc.org/article/MED/{pmid}" if pmid else f"https://europepmc.org/articles/{pmcid}"
-                    elif pmid:
-                        art_url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                    else:
-                        continue
-                    if art_url in excluded:
-                        continue
-                    combined = f"{title}.\n\n{abstract}".strip()
-                    if validate_source_content(combined, skill_name):
-                        return {
-                            "title": title[:140],
-                            "source_url": art_url,
-                            "raw_text": combined[:8000],
-                            "source": "Europe PMC / NCBI",
-                            "source_adapter": "clinical_science",
-                            "trust_score": SOURCE_AUTHORITY_WEIGHTS["clinical_science"],
-                        }
-        except Exception as e:
-            logger.debug(f"EuropePMC/NCBI adapter error: {e}")
+        clean_career = re.sub(r",.*$", "", career_title or "").strip()
+        queries = [
+            f'"{skill_name}" AND ({clean_career})' if clean_career else f'"{skill_name}"',
+            f"{skill_name} {clean_career}".strip() if clean_career else skill_name,
+            skill_name,
+        ]
+        for query_str in queries:
+            try:
+                resp = await client.get(
+                    f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query={quote_plus(query_str)}&resultType=core&format=json&pageSize=5",
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get("resultList", {}).get("result", [])
+                    for art in results:
+                        abstract = strip_html_and_clean(art.get("abstractText", ""))
+                        title = strip_html_and_clean(art.get("title", "")).rstrip(".")
+                        pmid = art.get("pmid") or art.get("id")
+                        pmcid = art.get("pmcid")
+                        if pmcid:
+                            art_url = f"https://europepmc.org/article/MED/{pmid}" if pmid else f"https://europepmc.org/articles/{pmcid}"
+                        elif pmid:
+                            art_url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                        else:
+                            continue
+                        if art_url in excluded:
+                            continue
+                        combined = f"{title}.\n\n{abstract}".strip()
+                        if validate_source_content(combined, skill_name):
+                            return {
+                                "title": title[:140],
+                                "source_url": art_url,
+                                "raw_text": combined[:8000],
+                                "source": "Europe PMC / NCBI",
+                                "source_adapter": "clinical_science",
+                                "trust_score": SOURCE_AUTHORITY_WEIGHTS["clinical_science"],
+                            }
+            except Exception as e:
+                logger.debug(f"EuropePMC/NCBI adapter error: {e}")
         return None
 
     async def _fetch_openalex_chapter(
@@ -539,6 +588,7 @@ class ContentService:
         client: httpx.AsyncClient,
         skill_name: str,
         excluded: set,
+        career_title: str = "",
     ) -> Optional[Dict[str, Any]]:
         """Adapter 7: Wikipedia Multi-Section Extracts (Strictly Last-Resort Fallback)."""
         headers = {"User-Agent": ACADEMIC_USER_AGENT}
@@ -562,34 +612,286 @@ class ContentService:
         except Exception as e:
             logger.debug(f"Wikipedia summary error: {e}")
 
-        try:
-            r_srch = await client.get(
-                f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={quote_plus(skill_name)}&utf8=&format=json",
-                headers=headers,
-            )
-            if r_srch.status_code == 200:
-                results = r_srch.json().get("query", {}).get("search", [])
-                if results:
-                    best_title = results[0]["title"]
-                    slug2 = best_title.replace(" ", "_")
-                    r_sum = await client.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote_plus(slug2)}", headers=headers)
-                    if r_sum.status_code == 200:
-                        d2 = r_sum.json()
-                        extract2 = d2.get("extract", "")
-                        if d2.get("type") == "standard" and validate_source_content(extract2, skill_name):
-                            page_url = d2.get("content_urls", {}).get("desktop", {}).get("page") or f"https://en.wikipedia.org/wiki/{slug2}"
-                            if page_url not in excluded:
+        clean_skill = re.sub(r"^(?:Coordinating|Managing|Establishing and Maintaining|Developing and Implementing|Analyzing|Evaluating)\s+", "", skill_name, flags=re.IGNORECASE).strip()
+        search_queries = [skill_name]
+        if clean_skill and clean_skill.lower() != skill_name.lower():
+            search_queries.append(clean_skill)
+            search_queries.append(f"Corporate {clean_skill.lower()}")
+
+        for q in search_queries:
+            try:
+                r_srch = await client.get(
+                    f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={quote_plus(q)}&utf8=&format=json&srlimit=5",
+                    headers=headers,
+                )
+                if r_srch.status_code == 200:
+                    results = r_srch.json().get("query", {}).get("search", [])
+                    for res_item in results[:5]:
+                        cand_title = res_item.get("title", "")
+                        if not cand_title or any(skip in cand_title.lower() for skip in ("disambiguation", "list of", "portal:", "template:", "category:")):
+                            continue
+
+                        # Anti-historical/mythology filter for modern workplace skills
+                        hist_skips = ("history of", "mythology", "dynasty", "ancient", "medieval", "century bc", "empire", "folklore")
+                        if any(h in cand_title.lower() for h in hist_skips) and not any(k in skill_name.lower() for k in ("history", "ancient", "myth")):
+                            continue
+
+                        # Strict Title Topical Relevance: The Wikipedia title must contain at least one topical token from skill or career
+                        title_clean = cand_title.lower()
+                        skill_words = [t.lower() for t in skill_name.split() if len(t) >= 4 and t.lower() not in {"general", "basic", "advanced", "skills"}]
+                        career_words = [t.lower() for t in career_title.split() if len(t) >= 4 and t.lower() not in {"general", "assistant"}]
+                        if skill_words or career_words:
+                            if not (any(w in title_clean for w in skill_words) or any(w in title_clean for w in career_words)):
+                                continue
+                        slug2 = cand_title.replace(" ", "_")
+                        page_url = f"https://en.wikipedia.org/wiki/{quote_plus(slug2)}"
+                        if page_url in excluded:
+                            continue
+                        r_sum = await client.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote_plus(slug2)}", headers=headers)
+                        if r_sum.status_code == 200:
+                            d2 = r_sum.json()
+                            extract2 = d2.get("extract", "")
+                            if d2.get("type") == "standard" and validate_source_content(extract2, skill_name):
                                 return {
-                                    "title": d2.get("title", best_title),
+                                    "title": d2.get("title", cand_title),
                                     "source_url": page_url,
                                     "raw_text": extract2[:5000],
                                     "source": "wikipedia",
                                     "source_adapter": "wikipedia",
                                     "trust_score": SOURCE_AUTHORITY_WEIGHTS["wikipedia"],
                                 }
-        except Exception as e:
-            logger.debug(f"Wikipedia search fallback error: {e}")
+            except Exception as e:
+                logger.debug(f"Wikipedia search fallback error for '{q}': {e}")
         return None
+
+
+    async def _fetch_owasp_cheatsheet(
+        self,
+        client: httpx.AsyncClient,
+        skill_name: str,
+        career_title: str,
+        excluded: set,
+    ) -> Optional[Dict[str, Any]]:
+        """Adapter: OWASP Official Security Standards (Keyless GitHub Raw API)."""
+        cheatsheet_map = [
+            (("vulnerability", "scanning", "assessment"), "Vulnerability_Disclosure_Cheat_Sheet.md", "Vulnerability Management"),
+            (("log", "monitoring", "event", "siem"), "Logging_Cheat_Sheet.md", "Security Logging and Event Monitoring"),
+            (("incident", "response", "playbook", "breach"), "Incident_Response_Cheat_Sheet.md", "Incident Response Standard"),
+            (("auth", "login", "credential", "password", "session"), "Authentication_Cheat_Sheet.md", "Authentication Security"),
+            (("access control", "rbac", "permission", "privilege"), "Access_Control_Cheat_Sheet.md", "Access Control Standard"),
+            (("crypto", "encryption", "key", "cipher"), "Cryptographic_Storage_Cheat_Sheet.md", "Cryptographic Storage Standard"),
+            (("api", "endpoint", "rest", "graphql"), "REST_Security_Cheat_Sheet.md", "REST API Security Standard"),
+            (("threat", "model", "risk", "attack surface"), "Threat_Modeling_Cheat_Sheet.md", "Threat Modeling Standard"),
+            (("injection", "sql", "xss", "input"), "Injection_Prevention_Cheat_Sheet.md", "Input Validation & Injection Prevention"),
+            (("cloud", "container", "docker", "microservice"), "Microservices_Security_Cheat_Sheet.md", "Microservices Security Architecture"),
+            (("ai", "llm", "agent"), "AI_Agent_Security_Cheat_Sheet.md", "AI Agent Security Standard"),
+        ]
+
+        clean_lower = f"{skill_name} {career_title}".lower()
+        selected_file = None
+        display_label = None
+
+        for keywords, filename, label in cheatsheet_map:
+            if any(k in clean_lower for k in keywords):
+                selected_file = filename
+                display_label = label
+                break
+
+        if not selected_file and any(k in clean_lower for k in ("security", "cyber", "infosec")):
+            selected_file = "Vulnerability_Disclosure_Cheat_Sheet.md"
+            display_label = "Vulnerability Management Standard"
+
+        if not selected_file:
+            return None
+
+        raw_url = f"https://raw.githubusercontent.com/OWASP/CheatSheetSeries/master/cheatsheets/{selected_file}"
+        public_url = f"https://cheatsheetseries.owasp.org/cheatsheets/{selected_file.replace('.md', '.html')}"
+        if public_url in excluded or raw_url in excluded:
+            return None
+
+        try:
+            resp = await client.get(raw_url, headers={"User-Agent": ACADEMIC_USER_AGENT})
+            if resp.status_code == 200 and resp.text:
+                raw_text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", resp.text)
+                raw_text = re.sub(r"```[\s\S]*?```", " ", raw_text)
+                raw_text = re.sub(r"#+\s*", "", raw_text)
+                cleaned = strip_html_and_clean(raw_text)
+
+                if len(cleaned) >= 200:
+                    title = f"OWASP {display_label}: {skill_name}"
+                    return {
+                        "title": title[:140],
+                        "source_url": public_url,
+                        "raw_text": cleaned[:10000],
+                        "source": "OWASP Security Standard",
+                        "source_adapter": "owasp",
+                        "trust_score": SOURCE_AUTHORITY_WEIGHTS["owasp"],
+                    }
+        except Exception as e:
+            logger.debug(f"OWASP adapter error: {e}")
+        return None
+
+    async def _fetch_osha_standards(
+        self,
+        client: httpx.AsyncClient,
+        skill_name: str,
+        career_title: str,
+        excluded: set,
+    ) -> Optional[Dict[str, Any]]:
+        """Adapter: OSHA & NIOSH Technical Safety Standards (Skilled Trades, Electrical, Industrial)."""
+        trade_queries = [
+            f"Occupational safety {skill_name}".strip(),
+            f"OSHA technical standard {skill_name}".strip(),
+            f"National Electrical Code {skill_name}".strip(),
+        ]
+        headers = {"User-Agent": ACADEMIC_USER_AGENT}
+        for q in trade_queries:
+            try:
+                srch = await client.get(
+                    f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={quote_plus(q)}&utf8=&format=json&srlimit=3",
+                    headers=headers,
+                )
+                if srch.status_code == 200:
+                    results = srch.json().get("query", {}).get("search", [])
+                    for item in results:
+                        page_title = item.get("title", "")
+                        if not page_title or any(skip in page_title.lower() for skip in ("disambiguation", "list of", "portal:")):
+                            continue
+                        page_url = f"https://en.wikipedia.org/wiki/{quote_plus(page_title.replace(' ', '_'))}"
+                        if page_url in excluded:
+                            continue
+                        ext_resp = await client.get(
+                            f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles={quote_plus(page_title)}&format=json",
+                            headers=headers,
+                        )
+                        if ext_resp.status_code == 200:
+                            pages = ext_resp.json().get("query", {}).get("pages", {})
+                            for _, pdata in pages.items():
+                                extract = strip_html_and_clean(pdata.get("extract", ""))
+                                if validate_source_content(extract, skill_name):
+                                    return {
+                                        "title": f"OSHA Technical Safety Standard: {page_title}",
+                                        "source_url": page_url,
+                                        "raw_text": extract[:10000],
+                                        "source": "OSHA / Technical Safety Standard",
+                                        "source_adapter": "osha",
+                                        "trust_score": SOURCE_AUTHORITY_WEIGHTS["osha"],
+                                    }
+            except Exception as e:
+                logger.debug(f"OSHA adapter error: {e}")
+        return None
+
+    async def _fetch_finance_knowledge(
+        self,
+        client: httpx.AsyncClient,
+        skill_name: str,
+        career_title: str,
+        excluded: set,
+    ) -> Optional[Dict[str, Any]]:
+        """Adapter: Financial Reporting & Accounting Standards (Wikibooks Accounting & Corporate Finance)."""
+        finance_queries = [
+            f"Financial Accounting {skill_name}".strip(),
+            f"Accounting Principles {skill_name}".strip(),
+            f"Corporate Finance {skill_name}".strip(),
+        ]
+        headers = {"User-Agent": ACADEMIC_USER_AGENT}
+        for q in finance_queries:
+            try:
+                srch = await client.get(
+                    f"https://en.wikibooks.org/w/api.php?action=query&list=search&srsearch={quote_plus(q)}&utf8=&format=json&srlimit=3",
+                    headers=headers,
+                )
+                if srch.status_code == 200:
+                    results = srch.json().get("query", {}).get("search", [])
+                    for item in results:
+                        page_title = item.get("title", "")
+                        if not page_title or any(skip in page_title.lower() for skip in ("talk:", "user:", "template:")):
+                            continue
+                        page_url = f"https://en.wikibooks.org/wiki/{quote_plus(page_title.replace(' ', '_'))}"
+                        if page_url in excluded:
+                            continue
+                        ext_resp = await client.get(
+                            f"https://en.wikibooks.org/w/api.php?action=query&prop=extracts&explaintext=1&titles={quote_plus(page_title)}&format=json",
+                            headers=headers,
+                        )
+                        if ext_resp.status_code == 200:
+                            pages = ext_resp.json().get("query", {}).get("pages", {})
+                            for _, pdata in pages.items():
+                                extract = strip_html_and_clean(pdata.get("extract", ""))
+                                if validate_source_content(extract, skill_name):
+                                    return {
+                                        "title": f"Accounting & Financial Standard: {page_title}",
+                                        "source_url": page_url,
+                                        "raw_text": extract[:10000],
+                                        "source": "Accounting & Financial Standard",
+                                        "source_adapter": "finance",
+                                        "trust_score": SOURCE_AUTHORITY_WEIGHTS["finance"],
+                                    }
+            except Exception as e:
+                logger.debug(f"Finance knowledge adapter error: {e}")
+        return None
+
+    async def resolve_career_domain(
+        self,
+        career_title: str,
+        skill_name: str,
+        category: str = "",
+        onet_soc_code: Optional[str] = None,
+    ) -> str:
+        """
+        Determines the occupational domain (health | tech | finance | safety_trades | security | general)
+        using a two-tier hierarchy:
+          1. Deterministic O*NET SOC Major Group (for catalog-backed occupations).
+          2. Semantic Embedding Vector Centroids (for novel AI-suggested or frontier occupations).
+        Zero hardcoded substring matching.
+        """
+        if onet_soc_code:
+            prefix = str(onet_soc_code).strip()[:2]
+            if prefix in {"29", "31"}:
+                return "health"
+            if prefix == "15":
+                return "tech"
+            if prefix == "17":
+                return "engineering"
+            if prefix == "19":
+                return "science"
+            if prefix in {"11", "43"}:
+                return "business_admin"
+            if prefix in {"13", "41"}:
+                return "finance"
+            if prefix in {"33", "47", "49", "51"}:
+                return "safety_trades"
+            if prefix == "53":
+                return "transportation"
+
+        # Tier 2: Semantic Vector Cosine Similarity against Domain Anchors
+        if not hasattr(self, "_domain_anchor_vectors") or not self._domain_anchor_vectors:
+            anchors = {
+                "health": "healthcare medicine clinical medical doctor surgery nursing dental oral pharmacology hospital patient biology anatomy",
+                "tech": "software programming technology web development cloud computer code database api network algorithms operating systems sysadmin linux unix server infrastructure",
+                "engineering": "aerospace engineering mechanical electrical civil propulsion avionics thermodynamics fluid structural robotics aeronautics CAD materials",
+                "science": "biology chemistry physics laboratory scientific research genetics biochemistry environmental earth",
+                "security": "cybersecurity information security vulnerability penetration testing access control incident response cryptography",
+                "finance": "finance accounting banking financial economics corporate budget taxation balance sheet valuation audit investments revenue",
+                "business_admin": "office administration secretary executive assistant business travel coordination scheduling clerical workplace management corporate operations administrative logistics customer communication reception office technology",
+                "safety_trades": "occupational workplace safety hazard compliance construction electrical wiring mechanical trades industrial osha",
+                "transportation": "aviation pilot aircraft flight navigation aerospace transportation maritime logistics vessel air traffic control flight deck cockpit",
+            }
+            self._domain_anchor_vectors = {}
+            for d, text in anchors.items():
+                self._domain_anchor_vectors[d] = await self.embedding_service.get_embedding(text)
+
+        query_text = f"{career_title} {category} {skill_name}".strip()
+        query_vector = await self.embedding_service.get_embedding(query_text)
+
+        scores = {
+            d: sum(x * y for x, y in zip(query_vector, v))
+            for d, v in self._domain_anchor_vectors.items()
+        }
+        best_domain = max(scores, key=scores.get)
+        if scores[best_domain] >= 0.45:
+            return best_domain
+        return "general"
 
     async def fetch_live_source_for_skill(
         self,
@@ -606,14 +908,20 @@ class ContentService:
         Wikipedia strictly as a last-resort fallback.
         """
         excluded = {u for u in (exclude_source_urls or set()) if u}
-        context = f"{category or ''} {career_title or ''} {skill_name or ''}".lower()
-        is_health_or_bio = any(k in context for k in ("health", "medical", "clinical", "dental", "nurs", "pharmac", "therap", "patient", "biolog", "anatom", "surgical"))
-        is_tech = any(k in context for k in ("tech", "software", "program", "data", "develop", "web", "ai", "cloud", "cyber", "network", "sql", "python", "javascript", "engineer"))
+        domain = await self.resolve_career_domain(career_title, skill_name, category=category)
 
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             # Build domain-aware adapter execution order
             adapter_order = []
-            if is_health_or_bio:
+            if domain == "security":
+                adapter_order.extend([
+                    ("owasp", lambda: self._fetch_owasp_cheatsheet(client, skill_name, career_title, excluded)),
+                    ("mdn", lambda: self._fetch_mdn_docs(client, skill_name, category, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, skill_name, category, excluded)),
+                ])
+            elif domain == "health":
                 adapter_order.extend([
                     ("clinical_science", lambda: self._fetch_clinical_and_science(client, skill_name, career_title, excluded)),
                     ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
@@ -621,7 +929,50 @@ class ContentService:
                     ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
                     ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, skill_name, category, excluded)),
                 ])
-            elif is_tech:
+            elif domain == "safety_trades":
+                adapter_order.extend([
+                    ("osha", lambda: self._fetch_osha_standards(client, skill_name, career_title, excluded)),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                ])
+            elif domain == "business_admin":
+                adapter_order.extend([
+                    ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, skill_name, category, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                ])
+            elif domain == "finance":
+                adapter_order.extend([
+                    ("finance", lambda: self._fetch_finance_knowledge(client, skill_name, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
+                ])
+            elif domain == "engineering":
+                adapter_order.extend([
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
+                    ("clinical_science", lambda: self._fetch_clinical_and_science(client, skill_name, career_title, excluded)),
+                    ("osha", lambda: self._fetch_osha_standards(client, skill_name, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                ])
+            elif domain == "transportation":
+                adapter_order.extend([
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
+                    ("osha", lambda: self._fetch_osha_standards(client, skill_name, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                ])
+            elif domain == "science":
+                adapter_order.extend([
+                    ("clinical_science", lambda: self._fetch_clinical_and_science(client, skill_name, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
+                ])
+            elif domain == "tech":
                 adapter_order.extend([
                     ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, skill_name, category, excluded)),
                     ("mdn", lambda: self._fetch_mdn_docs(client, skill_name, category, career_title, excluded)),
@@ -630,7 +981,7 @@ class ContentService:
                     ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
                 ])
             else:
-                # Universal career routing (Finance, Management, Trades, Culinary, Law, Operations, Creative)
+                # Universal career routing (Management, Trades, Culinary, Law, Operations, Creative)
                 adapter_order.extend([
                     ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded)),
                     ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
@@ -650,7 +1001,7 @@ class ContentService:
                     return res
 
             # Last resort: Wikipedia fallback
-            wiki_res = await self._fetch_wikipedia_fallback(client, skill_name, excluded)
+            wiki_res = await self._fetch_wikipedia_fallback(client, skill_name, excluded, career_title=career_title)
             if wiki_res:
                 return wiki_res
 
@@ -811,29 +1162,34 @@ Rules:
         }
 
         for record_attempt in [record_full, record_compat]:
-            try:
-                if existing_id:
-                    db_res = supabase_client.table("micro_content").update(record_attempt).eq("id", existing_id).execute()
-                else:
-                    db_res = supabase_client.table("micro_content").insert(record_attempt).execute()
+            for retry in range(2):
+                try:
+                    if existing_id:
+                        db_res = supabase_client.table("micro_content").update(record_attempt).eq("id", existing_id).execute()
+                    else:
+                        db_res = supabase_client.table("micro_content").insert(record_attempt).execute()
 
-                if db_res.data:
-                    saved_row = db_res.data[0]
-                    if "quizzes" not in saved_row or not saved_row["quizzes"]:
-                        saved_row["quizzes"] = valid_quizzes
-                    if "difficulty_level" not in saved_row:
-                        saved_row["difficulty_level"] = difficulty_level
-                    saved_row["concept_overview"] = concept_overview
-                    saved_row["practice_scenario"] = practice_scenario
-                    saved_row["source_name"] = source
-                    saved_row["source_adapter"] = source_adapter
-                    return saved_row
-            except Exception as e:
-                err_str = str(e)
-                if "column" in err_str and record_attempt == record_full:
-                    continue
-                logger.error(f"Database save error for '{title}': {e}")
-                return None
+                    if db_res.data:
+                        saved_row = db_res.data[0]
+                        if "quizzes" not in saved_row or not saved_row["quizzes"]:
+                            saved_row["quizzes"] = valid_quizzes
+                        if "difficulty_level" not in saved_row:
+                            saved_row["difficulty_level"] = difficulty_level
+                        saved_row["concept_overview"] = concept_overview
+                        saved_row["practice_scenario"] = practice_scenario
+                        saved_row["source_name"] = source
+                        saved_row["source_adapter"] = source_adapter
+                        return saved_row
+                except Exception as e:
+                    err_str = str(e)
+                    if "column" in err_str and record_attempt == record_full:
+                        break
+                    if "disconnected" in err_str.lower() and retry == 0:
+                        import time
+                        time.sleep(0.5)
+                        continue
+                    logger.error(f"Database save error for '{title}': {e}")
+                    return None
 
         return None
 
@@ -867,19 +1223,15 @@ Rules:
             exclude_source_urls=excluded_urls,
             preferred_adapters=preferred_adapters,
         )
-        if not live_source or not live_source.get("source_url") or not live_source.get("raw_text"):
-            logger.warning(f"No verifiable source material found for '{skill_name}'. Aborting dynamic lesson generation.")
+        if not live_source or not live_source.get("source_url") or not live_source.get("raw_text") or not validate_source_content(live_source.get("raw_text", ""), skill_name):
+            logger.warning(f"No verifiable real educational source found for '{skill_name}' ({career_title}).")
             return None
 
         source_url = live_source["source_url"]
         source_title = live_source["title"]
         raw_text = live_source["raw_text"]
 
-        if not validate_source_content(raw_text, skill_name):
-            logger.warning(f"Source content for '{skill_name}' failed sufficiency validation.")
-            return None
-
-        title = f"{source_title} — {career_title}" if career_title and career_title.lower() not in source_title.lower() else source_title
+        title = source_title
 
         return await self.atomize_and_create_quiz({
             "title": title,

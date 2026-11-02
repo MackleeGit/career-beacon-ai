@@ -1,106 +1,159 @@
 // src/components/Toast.jsx
 import { useEffect } from 'react';
+import { X, CheckCircle2, AlertCircle, Info } from './Icons';
 
 /**
- * Confirmation toast modal component.
- * Props:
- *   message: string shown in the toast
- *   onConfirm: called when user clicks the confirm button
- *   onCancel: called when user clicks Cancel or the backdrop
- *   confirmLabel: text for the confirm button (default: "Yes, log out")
- *   confirmDanger: if true, confirm button is styled red (default: true)
+ * Universal Toast & Confirmation Dialog component.
+ *
+ * Mode 1: Notification Toast (default when onCancel is omitted)
+ *   Renders a lightweight, non-blocking floating pill/snackbar with auto-dismiss.
+ *
+ * Mode 2: Confirmation Dialog (when onCancel or isConfirmation is provided)
+ *   Renders a focused modal confirmation box with Cancel + Confirm actions.
  */
 export default function Toast({
   message,
   onConfirm,
   onCancel,
-  confirmLabel = 'Yes, log out',
-  confirmDanger = true,
+  onClose,
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  confirmDanger = false,
+  type = 'info', // 'success' | 'error' | 'info'
+  autoCloseMs = 4000,
 }) {
-  // Close on Escape key
+  const isConfirmDialog = Boolean(onCancel);
+  const handleDismiss = onClose || onCancel || onConfirm;
+
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onCancel(); };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onCancel]);
+    if (!isConfirmDialog && autoCloseMs && handleDismiss) {
+      const timer = setTimeout(() => {
+        handleDismiss();
+      }, autoCloseMs);
+      return () => clearTimeout(timer);
+    }
+  }, [isConfirmDialog, autoCloseMs, handleDismiss]);
 
-  return (
-    <>
-      {/* Backdrop */}
-      <div
-        onClick={onCancel}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 999,
-          background: 'rgba(0,0,0,0.45)',
-          backdropFilter: 'blur(2px)',
-          animation: 'fadeIn 0.15s ease',
-        }}
-      />
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Escape' && handleDismiss) handleDismiss();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [handleDismiss]);
 
-      {/* Toast card */}
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="toast-msg"
-        style={{
-          position: 'fixed',
-          bottom: '32px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 1000,
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--r-lg)',
-          padding: '20px 24px',
-          minWidth: '300px',
-          maxWidth: '90vw',
-          boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '16px',
-          animation: 'slideUp 0.2s cubic-bezier(0.34,1.56,0.64,1)',
-        }}
-      >
-        <p id="toast-msg" style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-          {message}
-        </p>
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-          <button
-            id="toast-cancel-btn"
-            type="button"
-            className="btn btn--ghost btn--sm"
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-          <button
-            id="toast-confirm-btn"
-            type="button"
-            className="btn btn--sm"
-            onClick={onConfirm}
+  // Mode 2: Confirmation Modal Dialog
+  if (isConfirmDialog) {
+    return (
+      <>
+        <div
+          onClick={handleDismiss}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 999,
+            background: 'var(--backdrop)',
+            backdropFilter: 'blur(2px)',
+          }}
+        />
+
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="toast-msg"
+          style={{
+            position: 'fixed',
+            bottom: '32px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1000,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--r-lg)',
+            padding: '20px 24px',
+            minWidth: '320px',
+            maxWidth: '460px',
+            width: 'calc(100vw - 32px)',
+            boxShadow: 'var(--shadow-xl)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+          }}
+        >
+          <p
+            id="toast-msg"
             style={{
-              background: confirmDanger ? 'hsl(0,72%,50%)' : 'var(--accent)',
-              color: '#fff',
-              border: 'none',
+              margin: 0,
+              fontSize: '0.92rem',
+              color: 'var(--text-primary)',
+              fontWeight: 500,
+              lineHeight: 1.5,
             }}
           >
-            {confirmLabel}
-          </button>
+            {message}
+          </p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button
+              id="toast-cancel-btn"
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={onCancel}
+            >
+              {cancelLabel}
+            </button>
+            <button
+              id="toast-confirm-btn"
+              type="button"
+              className={`btn btn--sm ${confirmDanger ? 'btn--danger' : 'btn--primary'}`}
+              onClick={onConfirm}
+            >
+              {confirmLabel}
+            </button>
+          </div>
         </div>
-      </div>
+      </>
+    );
+  }
 
-      <style>{`
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateX(-50%) translateY(20px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0);    }
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to   { opacity: 1; }
-        }
-      `}</style>
-    </>
+  // Mode 1: Notification Toast / Snackbar (floating, non-blocking)
+  return (
+    <div
+      role="status"
+      style={{
+        position: 'fixed',
+        bottom: '24px',
+        right: '24px',
+        zIndex: 1000,
+        background: 'var(--surface-elevated, var(--surface))',
+        color: 'var(--text-primary)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--r-md)',
+        padding: '12px 18px',
+        boxShadow: 'var(--shadow-lg)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        maxWidth: 'min(420px, calc(100vw - 32px))',
+        animation: 'slideUp 0.2s ease-out',
+      }}
+    >
+      {type === 'success' ? (
+        <CheckCircle2 size={18} style={{ color: 'var(--status-success)', flexShrink: 0 }} />
+      ) : type === 'error' ? (
+        <AlertCircle size={18} style={{ color: 'var(--status-danger)', flexShrink: 0 }} />
+      ) : (
+        <Info size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+      )}
+      <span style={{ fontSize: '0.86rem', lineHeight: 1.4, flex: 1 }}>{message}</span>
+      <button
+        type="button"
+        className="btn btn--ghost btn--xs"
+        onClick={handleDismiss}
+        style={{ padding: '4px', color: 'var(--text-muted)' }}
+        aria-label="Dismiss notification"
+      >
+        <X size={14} />
+      </button>
+    </div>
   );
 }

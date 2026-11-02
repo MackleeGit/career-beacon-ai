@@ -29,6 +29,8 @@ def _now_iso() -> str:
 
 
 class LearningHistoryService:
+    _remote_table_available: Optional[bool] = None
+
     def __init__(self):
         os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -143,17 +145,21 @@ class LearningHistoryService:
         """Returns map of content_id -> activity details for the learner."""
         activity_map: Dict[str, Dict[str, Any]] = {}
 
-        # 1. Try Supabase
-        try:
-            res = supabase_client.table("user_content_activity").select("*").eq(
-                "user_id", user_id
-            ).execute()
-            if res.data:
-                for row in res.data:
-                    activity_map[row["content_id"]] = row
-                return activity_map
-        except Exception:
-            pass
+        # 1. Try Supabase if table is known to be available
+        if self._remote_table_available is not False:
+            try:
+                res = supabase_client.table("user_content_activity").select("*").eq(
+                    "user_id", user_id
+                ).execute()
+                if res.data:
+                    for row in res.data:
+                        activity_map[row["content_id"]] = row
+                    self._remote_table_available = True
+                    return activity_map
+            except Exception as e:
+                if "PGRST205" in str(e) or "Could not find the table" in str(e):
+                    LearningHistoryService._remote_table_available = False
+                logger.debug(f"Remote user_content_activity unavailable: {e}")
 
         # 2. Local fallback
         try:
@@ -188,27 +194,30 @@ class LearningHistoryService:
         local_map = {(r["user_id"], r["content_id"]): r for r in local_records}
 
         for cid in content_ids:
-            # Remote upsert attempt
-            try:
-                existing_res = supabase_client.table("user_content_activity").select(
-                    "times_recommended"
-                ).eq("user_id", user_id).eq("content_id", cid).execute()
-                if existing_res.data:
-                    current_times = existing_res.data[0].get("times_recommended", 1)
-                    supabase_client.table("user_content_activity").update({
-                        "times_recommended": current_times + 1,
-                        "last_seen_at": now,
-                    }).eq("user_id", user_id).eq("content_id", cid).execute()
-                else:
-                    supabase_client.table("user_content_activity").insert({
-                        "user_id": user_id,
-                        "content_id": cid,
-                        "first_seen_at": now,
-                        "last_seen_at": now,
-                        "times_recommended": 1,
-                    }).execute()
-            except Exception:
-                pass
+            # Remote upsert attempt if table exists
+            if self._remote_table_available is not False:
+                try:
+                    existing_res = supabase_client.table("user_content_activity").select(
+                        "times_recommended"
+                    ).eq("user_id", user_id).eq("content_id", cid).execute()
+                    if existing_res.data:
+                        current_times = existing_res.data[0].get("times_recommended", 1)
+                        supabase_client.table("user_content_activity").update({
+                            "times_recommended": current_times + 1,
+                            "last_seen_at": now,
+                        }).eq("user_id", user_id).eq("content_id", cid).execute()
+                    else:
+                        supabase_client.table("user_content_activity").insert({
+                            "user_id": user_id,
+                            "content_id": cid,
+                            "first_seen_at": now,
+                            "last_seen_at": now,
+                            "times_recommended": 1,
+                        }).execute()
+                    self._remote_table_available = True
+                except Exception as e:
+                    if "PGRST205" in str(e) or "Could not find the table" in str(e):
+                        LearningHistoryService._remote_table_available = False
 
             # Local update
             key = (user_id, cid)
