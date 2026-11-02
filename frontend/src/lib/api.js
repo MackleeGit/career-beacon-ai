@@ -23,7 +23,7 @@ async function request(path, options = {}) {
   };
 
   // Guard against hanging requests when connection drops mid-flight
-  const timeoutMs = options.timeoutMs || 30000;
+  const timeoutMs = options.timeoutMs || 75000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -137,7 +137,7 @@ export async function getRecommendations(userId, limit = 10, offset = 0, exclude
   for (const id of excludeIds || []) {
     if (id) params.append('exclude_ids', id);
   }
-  return request(`/api/recommendations/${userId}?${params.toString()}`, { timeoutMs: 45000, ...options });
+  return request(`/api/recommendations/${userId}?${params.toString()}`, { timeoutMs: 75000, ...options });
 }
 
 /**
@@ -166,7 +166,7 @@ export async function recordContentOpen(userId, contentId) {
  * Retrieve today's 3-lesson Daily Focus Drop with streak metadata.
  */
 export async function getCurrentDailyDrop(options = {}) {
-  return request('/api/recommendations/daily-drop/current', { timeoutMs: 45000, ...options });
+  return request('/api/recommendations/daily-drop/current', { timeoutMs: 75000, ...options });
 }
 
 /**

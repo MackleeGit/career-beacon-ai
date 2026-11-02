@@ -94,7 +94,7 @@ const SOURCE_BADGE_META = {
   },
 };
 
-// SPRINT_SIZE legacy removed
+const SPRINT_SIZE = 5;
 
 function extractDomain(url) {
   if (!url) return 'careerbeacon.edu';
