@@ -5,6 +5,9 @@ management/*.docx
 management/Doc Refs/
 management/archive/
 management/onet_data/
+management/DEMO_PRESENTATION_SCRIPT.md
+management/SUPERVISOR_DEFENSE_AND_PRESENTATION_MASTER_GUIDE.md
+management/*.bak
 pdf-forge-exports/
 
 # Frontend (Node.js / React / Vite)
