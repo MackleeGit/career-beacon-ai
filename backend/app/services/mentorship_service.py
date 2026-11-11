@@ -272,16 +272,19 @@ class MentorshipService:
             db_mentors = supabase_client.table("mentors").select("*").execute()
             known_ids = {m["mentor_id"] for m in store["mentors"]}
             for row in db_mentors.data or []:
-                mid = row.get("profile_id") or row.get("mentor_id") or row.get("id")
-                if mid and mid not in known_ids:
-                    prof = (
-                        supabase_client.table("profiles")
-                        .select("full_name, bio")
-                        .eq("id", mid)
-                        .limit(1)
-                        .execute()
-                    )
-                    p_data = prof.data[0] if prof.data else {}
+                mid = row.get("profile_id")
+                if not mid or mid in known_ids:
+                    continue
+                prof = (
+                    supabase_client.table("profiles")
+                    .select("full_name, bio")
+                    .eq("id", mid)
+                    .limit(1)
+                    .execute()
+                )
+                p_data = prof.data[0] if prof.data else {}
+                if not p_data:
+                    continue
                     exp_raw = row.get("expertise") or ""
                     parts = [p.strip() for p in exp_raw.split("|") if p.strip()]
                     p_domain = parts[0] if len(parts) >= 1 else "Software Architecture & Full-Stack"
