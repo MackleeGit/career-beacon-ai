@@ -150,59 +150,125 @@
     "created_at": "2026-11-11T03:25:51.847435+00:00"
   },
   {
-    "id": "8dc0a6fa-e4e6-4178-8f2e-0914b4a2b845",
-    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "id": "29eac41d-f14b-4f82-88ba-aab0756a9044",
+    "user_id": "36ed8a27-693e-479d-8e17-fc6b6c938350",
     "sprint_date": "2026-11-11",
-    "target_skill_id": "fc3c402d-ced3-4837-aa17-da9663af5f77",
-    "target_skill_name": "Computers and Electronics",
+    "target_skill_id": "6a21c569-5d06-4bec-b54c-bac1d6571609",
+    "target_skill_name": "Vital signs measurement",
     "focus_skill_names": [
+      "Discharge teaching",
+      "Vital signs measurement",
+      "Specimen collection for labs"
+    ],
+    "active_lesson_ids": [
+      "8e10b03a-fea8-44ad-a8e6-0d77e94d0943",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09"
+    ],
+    "reserve_lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+      "34afd917-9edf-436e-9fbd-820811d90517",
+      "448db73e-87ff-42c0-a6b1-98fffa0ac938"
+    ],
+    "lesson_ids": [
+      "8e10b03a-fea8-44ad-a8e6-0d77e94d0943",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 0,
+    "is_completed": false,
+    "created_at": "2026-11-11T08:32:49.544894+00:00"
+  },
+  {
+    "id": "c1ab829d-57de-4e68-8f6f-eb10f0271627",
+    "user_id": "cd6a2ada-186a-4153-b4ca-324973c4e88e",
+    "sprint_date": "2026-11-11",
+    "target_skill_id": "813147aa-58df-43ea-a7d4-3a0230dc1fbf",
+    "target_skill_name": "System Architecture & Design Patterns",
+    "focus_skill_names": [
+      "RESTful API Design & Integration",
+      "Relational Databases & SQL",
       "Computers and Electronics"
     ],
     "active_lesson_ids": [
-      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
-      "b2f93d89-a3b9-47c9-919c-47dacab0db64",
-      "025a4d16-9781-4119-8c03-139be8a5d68c"
+      "2e294281-6c79-40f6-8b5e-d06d3a066e43",
+      "05c33e93-6c96-405c-bbf8-f2c40723c38b",
+      "a8cac6c2-6353-440e-9e7e-70fba9d7d34d"
     ],
     "reserve_lesson_ids": [
-      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab"
+      "b67b36ab-117d-4f6d-aa1a-ded4cf6ea1f2",
+      "b6e9eb34-dea6-457d-91fd-8d1a6eef169b",
+      "da74585b-c13d-4e5f-98f2-69a55e2d994b"
     ],
     "lesson_ids": [
-      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
-      "b2f93d89-a3b9-47c9-919c-47dacab0db64",
-      "025a4d16-9781-4119-8c03-139be8a5d68c"
+      "2e294281-6c79-40f6-8b5e-d06d3a066e43",
+      "05c33e93-6c96-405c-bbf8-f2c40723c38b",
+      "a8cac6c2-6353-440e-9e7e-70fba9d7d34d"
     ],
     "passed_lesson_ids": [],
-    "rerolls_used": 1,
+    "rerolls_used": 0,
     "is_completed": false,
-    "created_at": "2026-11-11T05:00:07.620413+00:00"
+    "created_at": "2026-11-11T08:33:24.354766+00:00"
   },
   {
-    "id": "f1cbcbee-ab19-48fd-8290-d060627f60e4",
+    "id": "cf1d3ffe-3aa3-489a-a23a-1aee1e55a866",
     "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
     "sprint_date": "2026-11-11",
     "target_skill_id": "12747a70-e40f-4628-be18-f0e5efb67776",
     "target_skill_name": "JavaScript (ES6+)",
     "focus_skill_names": [
-      "JavaScript (ES6+)"
+      "Frontend Frameworks (React / Vue)",
+      "Node.js & Server Basics",
+      "HTML5 & Semantic Markup"
     ],
     "active_lesson_ids": [
-      "ebfb1514-2719-433b-b2f8-d29453d901f8",
-      "4f5dad22-f172-4307-8bbe-ed8c9711a95a",
-      "446a9306-4426-4571-b324-758d66c2d3f2"
+      "9c6c9466-7c97-4410-8dd1-515f43cee1d5",
+      "6e367be2-ae54-409f-982b-7c9044d6379f",
+      "9e4cb87d-a21a-4fca-9999-94574b7a0a1e"
     ],
     "reserve_lesson_ids": [
-      "ebfb1514-2719-433b-b2f8-d29453d901f8",
-      "4f5dad22-f172-4307-8bbe-ed8c9711a95a",
-      "446a9306-4426-4571-b324-758d66c2d3f2"
+      "e347a7e4-39c6-40a7-bf12-101dd660fe44",
+      "b514aa03-660f-4ff5-8fd3-0fcfd74e39df",
+      "d4430e5e-467f-4dae-ad81-c732e55ec30e"
     ],
     "lesson_ids": [
-      "ebfb1514-2719-433b-b2f8-d29453d901f8",
-      "4f5dad22-f172-4307-8bbe-ed8c9711a95a",
-      "446a9306-4426-4571-b324-758d66c2d3f2"
+      "9c6c9466-7c97-4410-8dd1-515f43cee1d5",
+      "6e367be2-ae54-409f-982b-7c9044d6379f",
+      "9e4cb87d-a21a-4fca-9999-94574b7a0a1e"
     ],
     "passed_lesson_ids": [],
-    "rerolls_used": 1,
+    "rerolls_used": 0,
     "is_completed": false,
-    "created_at": "2026-11-11T05:02:17.632746+00:00"
+    "created_at": "2026-11-11T08:33:33.863693+00:00"
+  },
+  {
+    "id": "de2fd0ea-3d83-415c-8a04-285327f6cbe3",
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "sprint_date": "2026-11-11",
+    "target_skill_id": "5f59b6f5-6987-4f85-81a0-ec7ef5600a9c",
+    "target_skill_name": "Administration and Management",
+    "focus_skill_names": [
+      "Computers and Electronics"
+    ],
+    "active_lesson_ids": [
+      "a8cac6c2-6353-440e-9e7e-70fba9d7d34d",
+      "8e10b03a-fea8-44ad-a8e6-0d77e94d0943",
+      "448db73e-87ff-42c0-a6b1-98fffa0ac938"
+    ],
+    "reserve_lesson_ids": [
+      "34afd917-9edf-436e-9fbd-820811d90517",
+      "b6e9eb34-dea6-457d-91fd-8d1a6eef169b",
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab"
+    ],
+    "lesson_ids": [
+      "a8cac6c2-6353-440e-9e7e-70fba9d7d34d",
+      "8e10b03a-fea8-44ad-a8e6-0d77e94d0943",
+      "448db73e-87ff-42c0-a6b1-98fffa0ac938"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 0,
+    "is_completed": false,
+    "created_at": "2026-11-11T08:34:42.304311+00:00"
   }
 ]
