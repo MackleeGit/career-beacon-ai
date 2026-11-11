@@ -405,7 +405,9 @@ async def get_ingestion_overview(http_req: Request):
     """Returns real-time metrics on the seeded curriculum reservoir in Supabase."""
     require_admin_role(http_req)
     try:
-        res = supabase_client.table("micro_content").select("id, source_adapter, associated_skill_id, content, created_at").execute()
+        from app.services.content_service import classify_source_adapter
+
+        res = supabase_client.table("micro_content").select("id, associated_skill_id, content, created_at").execute()
         rows = res.data or []
         total_lessons = len(rows)
 
@@ -414,22 +416,30 @@ async def get_ingestion_overview(http_req: Request):
         field_counts: Dict[str, int] = {}
 
         for r in rows:
-            adapter = r.get("source_adapter") or "general"
-            adapter_counts[adapter] = adapter_counts.get(adapter, 0) + 1
-            if r.get("associated_skill_id"):
-                skill_ids.add(r["associated_skill_id"])
-
+            c_dict = {}
             c_raw = r.get("content")
             if isinstance(c_raw, str):
                 try:
                     c_dict = json.loads(c_raw)
-                    f_id = c_dict.get("field_id") or "general"
-                    field_counts[f_id] = field_counts.get(f_id, 0) + 1
                 except Exception:
-                    pass
+                    c_dict = {}
             elif isinstance(c_raw, dict):
-                f_id = c_raw.get("field_id") or "general"
-                field_counts[f_id] = field_counts.get(f_id, 0) + 1
+                c_dict = c_raw
+
+            skill_id = r.get("associated_skill_id") or c_dict.get("associated_skill_id")
+            if skill_id:
+                skill_ids.add(skill_id)
+
+            adapter = (
+                r.get("source_adapter")
+                or c_dict.get("source_adapter")
+                or classify_source_adapter(c_dict.get("source_url", ""), str(c_dict.get("source_name") or c_dict.get("source") or ""))
+                or "general"
+            )
+            adapter_counts[adapter] = adapter_counts.get(adapter, 0) + 1
+
+            f_id = c_dict.get("field_id") or "general"
+            field_counts[f_id] = field_counts.get(f_id, 0) + 1
 
         return {
             "status": "success",
