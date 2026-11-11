@@ -1329,6 +1329,20 @@ input[type="range"] {
   }
 }
 
+/* Onboarding Career Catalog Split View: Responsive 2-column on desktop/tablet, stacked 1-column on mobile */
+.onboarding-split-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(240px, 1.3fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+@media (max-width: 640px) {
+  .onboarding-split-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ==========================================================================
    REDUCED MOTION SUPPORT
    ========================================================================== */

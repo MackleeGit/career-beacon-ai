@@ -364,14 +364,7 @@ function CareerInput({ user, onResult, onSelectCareer, onLogoutRequest }) {
             </div>
 
             {/* Split View: Scrollable List on Left, Detail Preview on Right */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(200px, 1fr) minmax(240px, 1.3fr)',
-                gap: '12px',
-                alignItems: 'stretch',
-              }}
-            >
+            <div className="onboarding-split-grid">
               {/* Left Column: Scrollable List of Careers */}
               <div
                 style={{
