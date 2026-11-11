@@ -110,6 +110,21 @@ Use these verified accounts during the presentation. All accounts exist in Supab
 
 ---
 
+### Test Case 7: Live Novel Niche Career Induction & Instant Day 1 Drop
+- **Goal**: Prove the system handles modern, uncatalogued occupations with instantaneous live induction, zero scraping failure, and zero card duplication.
+- **Action**:
+  1. Register a new learner or enter onboarding.
+  2. Type a specialized modern occupation: `Autonomous Drone Fleet Architect` (or existing niche: `Robotics Engineer`).
+  3. Show the live LLM taxonomy standardization in ~2 seconds: extracts 8-10 actionable competencies (`Flight Path Optimization`, `Collision Avoidance Algorithm Validation`, `Autonomous Navigation Stack Deployment`), classifies into `Engineering`, and quarantines in `pending_careers` with `review_status="unreviewed"`.
+  4. Complete onboarding: The learner immediately lands on an active 3-card Daily Drop with 0ms lag.
+  5. Click **"Shuffle Daily Drop"**: Shows 3 fresh reserve cards with 0 overlap.
+  6. Click **"Take Quiz"**: Shows a 5-question technical diagnostic checkpoint with real-time scoring and explanations.
+  7. **Reset Utility**: Run `python backend/scripts/prepare_niche_demo.py --reset` to clear the test onboarding state for the next demonstration while preserving the primed curriculum reservoir.
+- **What to Say**:
+  > *"If a student wants to pursue an emerging specialization not yet captured by O*NET, Career Beacon dynamically extracts an actionable competency stack, quarantines the unreviewed career for administrator governance, and immediately matches the student to pre-seeded, vector-validated technical lessons with zero cold-start delay."*
+
+---
+
 ## 4. Tough Supervisor Questions & Bulletproof Answers
 
 #### Q: "Why didn't you just call the OpenAI API directly from the frontend whenever a user clicks something?"
@@ -123,3 +138,9 @@ Use these verified accounts during the presentation. All accounts exist in Supab
 
 #### Q: "How does your system prevent cross-domain contamination?"
 > **Answer**: *"Every career is classified into an authoritative Occupational Domain Standard (e.g. Healthcare SOC 29/31, Tech SOC 15, Engineering SOC 17). Sibling sharing is allowed only within matching domains. Even if a nursing student's search mentions a technical word, our domain barrier prevents engineering or tech lessons from ever appearing in their clinical feed."*
+
+#### Q: "What if a user invents a completely fictional career like 'Alien Space Farmer'?"
+> **Answer**: *"Our input hygiene gate employs a multi-tiered defense: 1) Blocklist token and keyboard entropy checking, 2) Kinesthetic scope redirecting for physical athletics, and 3) An LLM Occupational Scope Gate that evaluates professional validity and rejects non-occupational gibberish before any records enter the database."*
+
+#### Q: "How are notifications, ingestion, and daily drops kept running after pushing to cloud production?"
+> **Answer**: *"Our production backend on Render includes an autonomous self-ping keep-alive loop to prevent instance sleep, an in-process daily personalization worker running every 24 hours to refresh learner drops, an on-demand fallback that generates drops on-the-fly if a user visits before the cron, and an 8-second polling notification engine in the frontend for real-time mentorship session alerts."*
