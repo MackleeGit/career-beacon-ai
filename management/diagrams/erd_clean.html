@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Entity Relationship Diagram</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: #ffffff;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        .toolbar {
+            margin-bottom: 12px;
+        }
+        .btn {
+            background: #000000;
+            color: #ffffff;
+            border: 1px solid #000000;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn:hover { background: #333333; }
+        svg {
+            background: #ffffff;
+            border: 1px solid #000000;
+        }
+        text {
+            font-family: Arial, Helvetica, sans-serif;
+            fill: #000000;
+        }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <button class="btn" onclick="exportPNG()">Download High-Res PNG</button>
+</div>
+
+<svg id="diagram-svg" width="1080" height="660" viewBox="0 0 1080 660" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#000000"/>
+        </marker>
+    </defs>
+
+    <!-- White background -->
+    <rect width="1080" height="660" fill="#ffffff"/>
+
+    <!-- ================= RELATIONSHIP CONNECTOR LINES ================= -->
+
+    <!-- 1. profiles.target_career_id -> careers.id (1:1 / N:1) -->
+    <!-- From right of profiles (230, 90) to left of careers (290, 90) -->
+    <line x1="230" y1="90" x2="290" y2="90" stroke="#000000" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="260" y="82" font-size="11" font-weight="bold" text-anchor="middle">N:1</text>
+
+    <!-- 2. profiles.id -> user_skills.user_id (1:N) -->
+    <!-- From bottom of profiles (130, 240) to top of user_skills (130, 390) -->
+    <line x1="130" y1="240" x2="130" y2="390" stroke="#000000" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="145" y="315" font-size="11" font-weight="bold">1:N</text>
+
+    <!-- 3. careers.id -> career_skills.career_id (1:N) -->
+    <!-- From bottom of careers (395, 240) to top of career_skills (395, 390) -->
+    <line x1="395" y1="240" x2="395" y2="390" stroke="#000000" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="410" y="315" font-size="11" font-weight="bold">1:N</text>
+
+    <!-- 4. skills.id -> career_skills.skill_id (1:N) -->
+    <!-- From left of skills (560, 160) -> down to (520, 160) -> down to (520, 470) -> left to career_skills (500, 470) -->
+    <path d="M 560 160 L 520 160 L 520 470 L 500 470" fill="none" stroke="#000000" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="532" y="315" font-size="11" font-weight="bold">1:N</text>
+
+    <!-- 5. skills.id -> user_skills.skill_id (1:N) -->
+    <!-- Routed safely along top margin above careers to avoid crossing any box:
+         From top of skills (660, 20) -> up to (660, 10) -> left to (210, 10) -> down to user_skills via left alley -->
+    <!-- Alternative safe routing: From left of skills (560, 110) -> left over careers top -> to user_skills -->
+    <!-- Let's route: skills(610, 20) -> (610, 8) -> (20, 8) -> (20, 470) -> user_skills(30, 470) -->
+    <path d="M 610 20 L 610 8 L 20 8 L 20 470 L 30 470" fill="none" stroke="#000000" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+    <text x="210" y="20" font-size="10" font-weight="bold">skills -> user_skills (1:N)</text>
+
+    <!-- 6. skills.id -> micro_content.associated_skill_id (1:N) -->
+    <!-- From bottom of skills (660, 240) to top of micro_content (660, 370) -->
+    <line x1="660" y1="240" x2="660" y2="370" stroke="#000000" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="675" y="305" font-size="11" font-weight="bold">1:N</text>
+
+    <!-- 7. profiles.id -> mentors.profile_id (1:0..1) -->
+    <!-- From right of profiles top (230, 50) -> through alley to mentors top (830, 50) -->
+    <!-- Safe routing: above careers: profiles(180, 20) -> (180, 14) -> (910, 14) -> mentors(910, 20) -->
+    <path d="M 180 20 L 180 14 L 910 14 L 910 20" fill="none" stroke="#000000" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="545" y="12" font-size="10" font-weight="bold" text-anchor="middle">profiles -> mentors (1:0..1)</text>
+
+    <!-- 8. mentors.id -> mentor_qa.mentor_id (1:N) -->
+    <!-- From bottom of mentors (945, 240) to top of mentor_qa (945, 370) -->
+    <line x1="945" y1="240" x2="945" y2="370" stroke="#000000" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="960" y="305" font-size="11" font-weight="bold">1:N</text>
+
+
+    <!-- ================= ENTITY TABLES (BLACK & WHITE) ================= -->
+
+    <!-- 1. PROFILES -->
+    <g transform="translate(30, 20)">
+        <rect width="200" height="220" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="200" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="100" y="22" font-size="13" font-weight="bold" text-anchor="middle">PROFILES</text>
+        
+        <text x="10" y="52" font-size="11" font-weight="bold">[PK] id : uuid</text>
+        <text x="10" y="74" font-size="11">email : text (unique)</text>
+        <text x="10" y="96" font-size="11">full_name : text</text>
+        <text x="10" y="118" font-size="11" font-weight="bold">[FK] target_career_id : uuid</text>
+        <text x="10" y="140" font-size="11">bio : text</text>
+        <text x="10" y="162" font-size="11">avatar_url : text</text>
+        <text x="10" y="184" font-size="11">created_at : timestamptz</text>
+        <text x="10" y="206" font-size="11">updated_at : timestamptz</text>
+    </g>
+
+    <!-- 2. CAREERS -->
+    <g transform="translate(290, 20)">
+        <rect width="210" height="220" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="210" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="105" y="22" font-size="13" font-weight="bold" text-anchor="middle">CAREERS</text>
+        
+        <text x="10" y="52" font-size="11" font-weight="bold">[PK] id : uuid</text>
+        <text x="10" y="74" font-size="11">title : text (unique)</text>
+        <text x="10" y="96" font-size="11">description : text</text>
+        <text x="10" y="122" font-size="11" font-weight="bold">[VEC] career_vector</text>
+        <text x="15" y="138" font-size="10">vector(384)</text>
+        <text x="15" y="152" font-size="9.5" fill="#444444">HNSW cosine index</text>
+        <text x="10" y="180" font-size="11">created_at : timestamptz</text>
+        <text x="10" y="202" font-size="11">updated_at : timestamptz</text>
+    </g>
+
+    <!-- 3. SKILLS -->
+    <g transform="translate(560, 20)">
+        <rect width="200" height="220" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="200" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="100" y="22" font-size="13" font-weight="bold" text-anchor="middle">SKILLS</text>
+        
+        <text x="10" y="52" font-size="11" font-weight="bold">[PK] id : uuid</text>
+        <text x="10" y="78" font-size="11">name : text (unique)</text>
+        <text x="10" y="104" font-size="11">category : text</text>
+        <text x="10" y="130" font-size="11">created_at : timestamptz</text>
+        <text x="10" y="156" font-size="11">updated_at : timestamptz</text>
+    </g>
+
+    <!-- 4. MENTORS -->
+    <g transform="translate(830, 20)">
+        <rect width="230" height="220" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="230" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="115" y="22" font-size="13" font-weight="bold" text-anchor="middle">MENTORS</text>
+        
+        <text x="10" y="52" font-size="11" font-weight="bold">[PK] id : uuid</text>
+        <text x="10" y="74" font-size="11" font-weight="bold">[FK] profile_id : uuid</text>
+        <text x="10" y="96" font-size="11">bio : text</text>
+        <text x="10" y="118" font-size="11">expertise : text</text>
+        <text x="10" y="140" font-size="11">rating_avg : numeric(3,2)</text>
+        <text x="10" y="162" font-size="11" font-weight="bold">[VEC] mentor_vector</text>
+        <text x="15" y="178" font-size="10">vector(384)</text>
+        <text x="10" y="202" font-size="11">created_at : timestamptz</text>
+    </g>
+
+    <!-- 5. USER_SKILLS (Junction) -->
+    <g transform="translate(30, 390)">
+        <rect width="200" height="180" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="200" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="100" y="22" font-size="13" font-weight="bold" text-anchor="middle">USER_SKILLS</text>
+        
+        <text x="10" y="54" font-size="11" font-weight="bold">[PK, FK] user_id : uuid</text>
+        <text x="10" y="78" font-size="11" font-weight="bold">[PK, FK] skill_id : uuid</text>
+        <text x="10" y="104" font-size="11" font-weight="bold">proficiency : int (0-100)</text>
+        <text x="10" y="128" font-size="11">last_used : timestamptz</text>
+        <text x="10" y="152" font-size="9.5" fill="#444444">(Updated on quiz pass)</text>
+    </g>
+
+    <!-- 6. CAREER_SKILLS (Junction) -->
+    <g transform="translate(290, 390)">
+        <rect width="210" height="180" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="210" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="105" y="22" font-size="13" font-weight="bold" text-anchor="middle">CAREER_SKILLS</text>
+        
+        <text x="10" y="54" font-size="11" font-weight="bold">[PK, FK] career_id : uuid</text>
+        <text x="10" y="78" font-size="11" font-weight="bold">[PK, FK] skill_id : uuid</text>
+        <text x="10" y="104" font-size="11">rank : int default 0</text>
+        <text x="10" y="132" font-size="9.5" fill="#444444">(Maps career taxonomy to</text>
+        <text x="10" y="146" font-size="9.5" fill="#444444">required core skills)</text>
+    </g>
+
+    <!-- 7. MICRO_CONTENT -->
+    <g transform="translate(550, 370)">
+        <rect width="220" height="260" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="220" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="110" y="22" font-size="13" font-weight="bold" text-anchor="middle">MICRO_CONTENT</text>
+        
+        <text x="10" y="52" font-size="11" font-weight="bold">[PK] id : uuid</text>
+        <text x="10" y="72" font-size="11">title : text</text>
+        <text x="10" y="92" font-size="11">summary_bullets : text</text>
+        <text x="10" y="112" font-size="11" font-weight="bold">[FK] associated_skill_id : uuid</text>
+        <text x="10" y="132" font-size="11">difficulty_level : int (1-5)</text>
+        <text x="10" y="152" font-size="11">source_trust_score : float</text>
+        <text x="10" y="172" font-size="11">quizzes : jsonb (5 MCQs)</text>
+        <text x="10" y="194" font-size="11" font-weight="bold">[VEC] embedding : vector(384)</text>
+        <text x="15" y="210" font-size="9.5" fill="#444444">HNSW index (cosine)</text>
+        <text x="10" y="230" font-size="10.5">source_url : text</text>
+        <text x="10" y="248" font-size="10.5">created_at : timestamptz</text>
+    </g>
+
+    <!-- 8. MENTOR_QA -->
+    <g transform="translate(830, 370)">
+        <rect width="230" height="230" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <line x1="0" y1="32" x2="230" y2="32" stroke="#000000" stroke-width="1.5"/>
+        <text x="115" y="22" font-size="13" font-weight="bold" text-anchor="middle">MENTOR_QA</text>
+        
+        <text x="10" y="52" font-size="11" font-weight="bold">[PK] id : uuid</text>
+        <text x="10" y="74" font-size="11" font-weight="bold">[FK] mentor_id : uuid</text>
+        <text x="10" y="96" font-size="11">question : text</text>
+        <text x="10" y="118" font-size="11">answer : text</text>
+        <text x="10" y="142" font-size="11" font-weight="bold">[VEC] embedding</text>
+        <text x="15" y="158" font-size="10">vector(384)</text>
+        <text x="15" y="172" font-size="9.5" fill="#444444">HNSW index (cosine)</text>
+        <text x="10" y="196" font-size="11">created_at : timestamptz</text>
+    </g>
+
+</svg>
+
+<script>
+function exportPNG() {
+    const svg = document.getElementById('diagram-svg');
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const scale = 2;
+    canvas.width = svg.getAttribute('width') * scale;
+    canvas.height = svg.getAttribute('height') * scale;
+    const ctx = canvas.getContext('2d');
+    
+    const img = new Image();
+    const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(svgBlob);
+    
+    img.onload = function() {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        
+        const a = document.createElement('a');
+        a.download = 'ERD_Diagram.png';
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+    };
+    img.src = url;
+}
+</script>
+
+</body>
+</html>

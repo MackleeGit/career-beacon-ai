@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/SupabaseClient';
 import {
   getRecommendations,
+  getCurrentDailyDrop,
   resetLearnerAccount,
   getMentorshipConnections,
   getMentorshipSessions,
@@ -119,6 +120,8 @@ function SkillCard({ skill, onFocusSkill }) {
 export default function Dashboard({ user, career, skills = [], onSkillUpdated, onRecalibrateCareer }) {
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'feed' | 'graph' | 'saved' | 'mentorship' | 'settings'
   const [feedInitialSubTab, setFeedInitialSubTab] = useState('daily');
+  const [mentorshipInitialSubTab, setMentorshipInitialSubTab] = useState('matches');
+  const [mentorshipInitialConnId, setMentorshipInitialConnId] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -216,6 +219,15 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
     async function loadOverviewSnapshot() {
       if (!user?.id || activeTab !== 'overview') return;
       try {
+        const dropRes = await getCurrentDailyDrop().catch(() => null);
+        if (dropRes?.drop?.lessons?.length && isMounted) {
+          setOverviewFeed({
+            recommendations: dropRes.drop.lessons.slice(0, 3),
+            completed: [],
+            loading: false,
+          });
+          return;
+        }
         const res = await getRecommendations(user.id, 4);
         if (isMounted) {
           setOverviewFeed({
@@ -257,7 +269,7 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
       }
     }
     loadNotificationsData();
-    const interval = setInterval(loadNotificationsData, 45000);
+    const interval = setInterval(loadNotificationsData, 8000);
     return () => {
       isMounted = false;
       clearInterval(interval);
@@ -275,9 +287,13 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
     setActiveTab('mentorship');
   };
 
-  const navigateTo = (tab, subTab = 'daily') => {
+  const navigateTo = (tab, subTab = 'daily', connectionId = null) => {
     if (tab === 'feed') setFeedInitialSubTab(subTab);
     if (tab === 'saved') setFeedInitialSubTab('completed');
+    if (tab === 'mentorship') {
+      if (subTab) setMentorshipInitialSubTab(subTab);
+      if (connectionId) setMentorshipInitialConnId(connectionId);
+    }
     setActiveTab(tab);
     setMobileMenuOpen(false);
   };
@@ -550,7 +566,10 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
               role="learner"
               sessions={learnerSessions}
               connections={learnerConnections}
-              onNavigate={(tab) => navigateTo(tab)}
+              activeTab={activeTab}
+              activeSubTab={mentorshipInitialSubTab}
+              activeConnectionId={mentorshipInitialConnId}
+              onNavigate={(tab, subTab, connId) => navigateTo(tab, subTab, connId)}
               onNotifyToast={setToastMessage}
             />
             <ThemeSelector />
@@ -593,6 +612,8 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
               user={user}
               career={career}
               skills={skills}
+              initialSubTab={mentorshipInitialSubTab}
+              initialConnectionId={mentorshipInitialConnId}
               prefillQuestion={prefillMentorQuestion}
               onClearPrefillQuestion={() => setPrefillMentorQuestion(null)}
             />

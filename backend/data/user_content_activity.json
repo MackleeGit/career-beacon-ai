@@ -1,0 +1,344 @@
+[
+  {
+    "user_id": "2a64245a-a91c-419c-b322-68222e57fb26",
+    "content_id": "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+    "first_seen_at": "2026-11-10T14:30:24.301287+00:00",
+    "last_seen_at": "2026-11-10T14:31:32.242957+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 4
+  },
+  {
+    "user_id": "2a64245a-a91c-419c-b322-68222e57fb26",
+    "content_id": "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+    "first_seen_at": "2026-11-10T14:30:24.301287+00:00",
+    "last_seen_at": "2026-11-10T14:34:04.431211+00:00",
+    "opened_at": "2026-11-10T14:34:04.431211+00:00",
+    "completed_at": null,
+    "times_recommended": 4
+  },
+  {
+    "user_id": "2a64245a-a91c-419c-b322-68222e57fb26",
+    "content_id": "4de02688-2e3f-4a58-92d5-e2ad73098c09",
+    "first_seen_at": "2026-11-10T14:31:32.242957+00:00",
+    "last_seen_at": "2026-11-10T14:31:50.159632+00:00",
+    "opened_at": "2026-11-10T14:31:50.159632+00:00",
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "798e276f-e229-458e-958c-d196034d95de",
+    "content_id": "bd1875d9-7b3d-4d7a-8e40-3f1611da6ace",
+    "first_seen_at": "2026-11-10T14:55:56.576622+00:00",
+    "last_seen_at": "2026-11-10T14:55:56.576622+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "798e276f-e229-458e-958c-d196034d95de",
+    "content_id": "31506e9f-5806-41cd-bb90-0ffc03101f86",
+    "first_seen_at": "2026-11-10T14:55:56.576622+00:00",
+    "last_seen_at": "2026-11-10T14:55:56.576622+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "4cd153f3-5a7b-40cf-9047-a4a710d6a080",
+    "first_seen_at": "2026-11-10T15:06:52.727151+00:00",
+    "last_seen_at": "2026-11-10T15:08:02.573859+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "310bc0d5-b0b2-4f2c-8943-e75be4f7e39c",
+    "first_seen_at": "2026-11-10T15:08:02.573859+00:00",
+    "last_seen_at": "2026-11-10T16:24:25.526921+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 3
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "5b026864-dc64-4628-a628-3f8c174558a5",
+    "first_seen_at": "2026-11-10T15:08:02.573859+00:00",
+    "last_seen_at": "2026-11-10T15:08:02.573859+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "63f13df2-62f3-4803-8b37-b27c194dabb9",
+    "first_seen_at": "2026-11-10T15:08:02.573859+00:00",
+    "last_seen_at": "2026-11-10T16:21:13.330678+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "83b18c45-c75b-4816-8255-a1282480c950",
+    "first_seen_at": "2026-11-10T15:40:37.500622+00:00",
+    "last_seen_at": "2026-11-10T21:57:35.401275+00:00",
+    "opened_at": "2026-11-10T16:40:27.601032+00:00",
+    "completed_at": null,
+    "times_recommended": 24
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "5b026864-dc64-4628-a628-3f8c174558a5",
+    "first_seen_at": "2026-11-10T15:40:37.500622+00:00",
+    "last_seen_at": "2026-11-10T15:42:45.335535+00:00",
+    "opened_at": "2026-11-10T15:42:45.335535+00:00",
+    "completed_at": null,
+    "times_recommended": 4
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "2e294281-6c79-40f6-8b5e-d06d3a066e43",
+    "first_seen_at": "2026-11-10T15:40:59.188970+00:00",
+    "last_seen_at": "2026-11-10T21:57:35.401275+00:00",
+    "opened_at": "2026-11-10T15:41:38.452723+00:00",
+    "completed_at": null,
+    "times_recommended": 23
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "cd1815c1-91db-4765-8aad-a6923872e78e",
+    "first_seen_at": "2026-11-10T16:21:13.330678+00:00",
+    "last_seen_at": "2026-11-10T21:23:51.391944+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 3
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "0e8d24f3-21fd-4afa-98a5-f3c5ecc6c304",
+    "first_seen_at": "2026-11-10T16:21:13.330678+00:00",
+    "last_seen_at": "2026-11-10T16:21:13.330678+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "ae254572-a555-4c63-ba9c-a1726e1dc75d",
+    "first_seen_at": "2026-11-10T16:21:13.330678+00:00",
+    "last_seen_at": "2026-11-10T16:24:25.526921+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "9b5504f2-de74-485e-a936-e42026cb8c8e",
+    "first_seen_at": "2026-11-10T16:24:25.526921+00:00",
+    "last_seen_at": "2026-11-10T21:23:51.391944+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "content_id": "3a7bce3e-93f2-465d-b5b3-d184b6c3e84d",
+    "first_seen_at": "2026-11-10T16:24:25.526921+00:00",
+    "last_seen_at": "2026-11-10T21:23:51.391944+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "9b5504f2-de74-485e-a936-e42026cb8c8e",
+    "first_seen_at": "2026-11-10T16:35:41.566206+00:00",
+    "last_seen_at": "2026-11-10T21:57:35.401275+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 20
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "4de02688-2e3f-4a58-92d5-e2ad73098c09",
+    "first_seen_at": "2026-11-10T16:35:41.566206+00:00",
+    "last_seen_at": "2026-11-10T16:38:44.950192+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 9
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+    "first_seen_at": "2026-11-10T16:35:41.566206+00:00",
+    "last_seen_at": "2026-11-10T16:41:23.841060+00:00",
+    "opened_at": "2026-11-10T16:41:23.841060+00:00",
+    "completed_at": null,
+    "times_recommended": 9
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "e6caeb54-a33c-4364-8b24-95a115115421",
+    "first_seen_at": "2026-11-10T16:53:09.444706+00:00",
+    "last_seen_at": "2026-11-10T21:57:35.401275+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 9
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "0be85876-3036-440b-83df-afc404dbc674",
+    "first_seen_at": "2026-11-10T16:53:09.444706+00:00",
+    "last_seen_at": "2026-11-10T21:57:35.401275+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 8
+  },
+  {
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "content_id": "24841660-cf5d-4aa0-8fd2-f583a0ea38f0",
+    "first_seen_at": "2026-11-10T16:53:09.444706+00:00",
+    "last_seen_at": "2026-11-10T21:57:35.401275+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 8
+  },
+  {
+    "user_id": "719a1585-89e6-4033-8862-069f86f32293",
+    "content_id": "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+    "first_seen_at": "2026-11-11T03:22:04.906413+00:00",
+    "last_seen_at": "2026-11-11T03:40:35.662218+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 6
+  },
+  {
+    "user_id": "719a1585-89e6-4033-8862-069f86f32293",
+    "content_id": "4de02688-2e3f-4a58-92d5-e2ad73098c09",
+    "first_seen_at": "2026-11-11T03:22:04.906413+00:00",
+    "last_seen_at": "2026-11-11T03:40:35.662218+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 6
+  },
+  {
+    "user_id": "719a1585-89e6-4033-8862-069f86f32293",
+    "content_id": "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+    "first_seen_at": "2026-11-11T03:22:04.906413+00:00",
+    "last_seen_at": "2026-11-11T03:42:01.228720+00:00",
+    "opened_at": "2026-11-11T03:22:25.007663+00:00",
+    "completed_at": "2026-11-11T03:42:01.228720+00:00",
+    "times_recommended": 6
+  },
+  {
+    "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
+    "content_id": "7cdfc5ca-93f9-43b5-95b0-202ec88cdb44",
+    "first_seen_at": "2026-11-11T04:31:59.694186+00:00",
+    "last_seen_at": "2026-11-11T05:02:17.634743+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
+    "content_id": "4f5dad22-f172-4307-8bbe-ed8c9711a95a",
+    "first_seen_at": "2026-11-11T04:31:59.694186+00:00",
+    "last_seen_at": "2026-11-11T05:02:19.364753+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
+    "content_id": "446a9306-4426-4571-b324-758d66c2d3f2",
+    "first_seen_at": "2026-11-11T04:31:59.694186+00:00",
+    "last_seen_at": "2026-11-11T05:02:19.364753+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 2
+  },
+  {
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "content_id": "448db73e-87ff-42c0-a6b1-98fffa0ac938",
+    "first_seen_at": "2026-11-11T05:00:07.624938+00:00",
+    "last_seen_at": "2026-11-11T05:00:07.624938+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "content_id": "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+    "first_seen_at": "2026-11-11T05:00:07.624938+00:00",
+    "last_seen_at": "2026-11-11T05:00:07.624938+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "content_id": "4de02688-2e3f-4a58-92d5-e2ad73098c09",
+    "first_seen_at": "2026-11-11T05:00:07.624938+00:00",
+    "last_seen_at": "2026-11-11T05:00:07.624938+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "content_id": "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+    "first_seen_at": "2026-11-11T05:00:31.513108+00:00",
+    "last_seen_at": "2026-11-11T05:00:31.513108+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "content_id": "b2f93d89-a3b9-47c9-919c-47dacab0db64",
+    "first_seen_at": "2026-11-11T05:00:31.513108+00:00",
+    "last_seen_at": "2026-11-11T05:00:31.513108+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "content_id": "025a4d16-9781-4119-8c03-139be8a5d68c",
+    "first_seen_at": "2026-11-11T05:00:31.513108+00:00",
+    "last_seen_at": "2026-11-11T05:00:31.513108+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
+    "content_id": "83b18c45-c75b-4816-8255-a1282480c950",
+    "first_seen_at": "2026-11-11T05:02:17.634743+00:00",
+    "last_seen_at": "2026-11-11T05:02:17.634743+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
+    "content_id": "3a7bce3e-93f2-465d-b5b3-d184b6c3e84d",
+    "first_seen_at": "2026-11-11T05:02:17.634743+00:00",
+    "last_seen_at": "2026-11-11T05:02:17.634743+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  },
+  {
+    "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
+    "content_id": "ebfb1514-2719-433b-b2f8-d29453d901f8",
+    "first_seen_at": "2026-11-11T05:02:19.364753+00:00",
+    "last_seen_at": "2026-11-11T05:02:19.364753+00:00",
+    "opened_at": null,
+    "completed_at": null,
+    "times_recommended": 1
+  }
+]

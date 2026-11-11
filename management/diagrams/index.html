@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 4 Diagrams Suite</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: #ffffff;
+            color: #000000;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        header {
+            background: #f4f4f4;
+            border-bottom: 2px solid #000000;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .header-title h1 {
+            font-size: 15px;
+            font-weight: bold;
+            color: #000000;
+        }
+        .header-title p {
+            font-size: 11px;
+            color: #555555;
+        }
+        .tabs {
+            display: flex;
+            gap: 6px;
+        }
+        .tab-btn {
+            background: #ffffff;
+            color: #000000;
+            border: 1px solid #000000;
+            padding: 7px 13px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .tab-btn:hover {
+            background: #e0e0e0;
+        }
+        .tab-btn.active {
+            background: #000000;
+            color: #ffffff;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+        .action-btn {
+            background: #000000;
+            color: #ffffff;
+            border: 1px solid #000000;
+            padding: 7px 13px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .action-btn:hover {
+            background: #333333;
+        }
+        main {
+            flex: 1;
+            position: relative;
+            background: #ffffff;
+            overflow: auto;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-title">
+            <h1>Chapter 4 Academic Diagrams Suite (Black &amp; White)</h1>
+            <p>Dual Semantic Recommendation Framework</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('erd', this)">
+                Figure 4.2: ERD
+            </button>
+            <button class="tab-btn" onclick="switchTab('class', this)">
+                Figure 4.3: Class Diagram
+            </button>
+            <button class="tab-btn" onclick="switchTab('activity', this)">
+                Figure 4.4: Activity Diagram
+            </button>
+            <button class="tab-btn" onclick="switchTab('architecture', this)">
+                Figure 4.5: System Architecture
+            </button>
+            <button class="tab-btn" onclick="switchTab('usecase', this)">
+                Figure 4.1: Use Case
+            </button>
+        </div>
+
+        <div class="actions">
+            <a id="open-tab-btn" href="erd_clean.html" target="_blank" class="action-btn">
+                Open In Dedicated Window
+            </a>
+        </div>
+    </header>
+
+    <main>
+        <iframe id="diagram-frame" src="erd_clean.html"></iframe>
+    </main>
+
+    <script>
+        const diagrams = {
+            'erd': 'erd_clean.html',
+            'class': 'class_diagram_clean.html',
+            'activity': 'activity_clean.html',
+            'architecture': 'architecture_clean.html',
+            'usecase': 'usecase_clean.html'
+        };
+
+        function switchTab(key, btn) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const file = diagrams[key];
+            document.getElementById('diagram-frame').src = file;
+            document.getElementById('open-tab-btn').href = file;
+        }
+    </script>
+
+</body>
+</html>

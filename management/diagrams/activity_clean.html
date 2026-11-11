@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Figure 4.3: Activity Diagram / Flowchart</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: #f1f5f9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 16px;
+        }
+        .toolbar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            align-items: center;
+        }
+        .btn {
+            background: #1e293b;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn:hover { background: #334155; }
+        .canvas-container {
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+            padding: 12px 16px 20px;
+            max-width: 100%;
+        }
+        .caption {
+            text-align: center;
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <button class="btn" onclick="exportPNG()">📷 Download Crisp PNG (for Word/PDF)</button>
+    <span style="font-size: 12px; color: #64748b;">Fits 1080p screen at 100% zoom without scrolling</span>
+</div>
+
+<div class="canvas-container" id="capture-area">
+    <svg id="diagram-svg" width="1120" height="650" viewBox="0 0 1120 650" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#334155"/>
+            </marker>
+            <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#16a34a"/>
+            </marker>
+            <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#dc2626"/>
+            </marker>
+            <filter id="box-shadow" x="-3%" y="-4%" width="106%" height="110%" filterUnits="userSpaceOnUse">
+                <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.06"/>
+            </filter>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1120" height="650" fill="#ffffff"/>
+
+        <!-- Main Title -->
+        <text x="560" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#0f172a">Activity Diagram – End-to-End Learner Progression &amp; Recommendation Lifecycle</text>
+        <text x="560" y="48" text-anchor="middle" font-size="12" fill="#64748b">Complete operational flow across Client UI, FastAPI AI Engine, and Supabase pgvector</text>
+
+        <!-- ================= 4 PHASE PANELS (Horizontal Flow) ================= -->
+        
+        <!-- PHASE 1: ONBOARDING & SEMANTIC MATCH -->
+        <rect x="20" y="65" width="260" height="520" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+        <rect x="20" y="65" width="260" height="30" rx="8" fill="#e2e8f0"/>
+        <rect x="20" y="85" width="260" height="10" fill="#e2e8f0"/>
+        <text x="150" y="85" text-anchor="middle" font-size="12" font-weight="700" fill="#1e293b">Phase 1: Intent &amp; Vector Match</text>
+
+        <!-- PHASE 2: CALIBRATION & SKILL GRAPH -->
+        <rect x="295" y="65" width="260" height="520" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+        <rect x="295" y="65" width="260" height="30" rx="8" fill="#e2e8f0"/>
+        <rect x="295" y="85" width="260" height="10" fill="#e2e8f0"/>
+        <text x="425" y="85" text-anchor="middle" font-size="12" font-weight="700" fill="#1e293b">Phase 2: Baseline Calibration</text>
+
+        <!-- PHASE 3: TWO-STAGE RECOMMENDATION -->
+        <rect x="570" y="65" width="260" height="520" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+        <rect x="570" y="65" width="260" height="30" rx="8" fill="#e2e8f0"/>
+        <rect x="570" y="85" width="260" height="10" fill="#e2e8f0"/>
+        <text x="700" y="85" text-anchor="middle" font-size="12" font-weight="700" fill="#1e293b">Phase 3: Two-Stage Re-Ranking</text>
+
+        <!-- PHASE 4: ASSESSMENT & PROGRESSION -->
+        <rect x="845" y="65" width="255" height="520" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+        <rect x="845" y="65" width="255" height="30" rx="8" fill="#e2e8f0"/>
+        <rect x="845" y="85" width="255" height="10" fill="#e2e8f0"/>
+        <text x="972" y="85" text-anchor="middle" font-size="12" font-weight="700" fill="#1e293b">Phase 4: Quiz &amp; Mastery Loop</text>
+
+
+        <!-- ================= PHASE 1 NODES ================= -->
+        <!-- Start Node -->
+        <circle cx="150" cy="120" r="11" fill="#1e293b"/>
+        <line x1="150" y1="131" x2="150" y2="150" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Action: Input Career Query -->
+        <g transform="translate(40, 150)" filter="url(#box-shadow)">
+            <rect width="220" height="42" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="110" y="21" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Learner inputs Career Goal</text>
+            <text x="110" y="34" text-anchor="middle" font-size="9.5" fill="#64748b">e.g., "Fullstack AI Engineer"</text>
+        </g>
+        <line x1="150" y1="192" x2="150" y2="218" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Action: Vector Embedding -->
+        <g transform="translate(40, 218)" filter="url(#box-shadow)">
+            <rect width="220" height="44" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+            <text x="110" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Compute 384-dim Vector</text>
+            <text x="110" y="34" text-anchor="middle" font-size="9.5" fill="#15803d">match_careers RPC in Supabase</text>
+        </g>
+        <line x1="150" y1="262" x2="150" y2="290" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Decision 1: Similarity >= 0.85? -->
+        <polygon points="150,290 215,318 150,346 85,318" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+        <text x="150" y="315" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">Cosine Sim</text>
+        <text x="150" y="327" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">≥ 0.85?</text>
+
+        <!-- Decision 1 Branch NO -> LLM Fallback -->
+        <line x1="150" y1="346" x2="150" y2="380" stroke="#dc2626" stroke-width="1.6" marker-end="url(#arrow-red)"/>
+        <text x="160" y="365" font-size="10" font-weight="700" fill="#dc2626">No</text>
+
+        <g transform="translate(40, 380)" filter="url(#box-shadow)">
+            <rect width="220" height="50" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+            <text x="110" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#991b1b">LLM Taxonomy Fallback</text>
+            <text x="110" y="33" text-anchor="middle" font-size="9.5" fill="#b91c1c">Groq (Llama-3.3) → Gemini</text>
+            <text x="110" y="44" text-anchor="middle" font-size="9" fill="#7f1d1d">Generates Career &amp; 4-8 Skills</text>
+        </g>
+
+        <!-- Decision 1 Branch YES -> Exact Vector Match -->
+        <line x1="215" y1="318" x2="250" y2="318" stroke="#16a34a" stroke-width="1.6"/>
+        <line x1="250" y1="318" x2="250" y2="475" stroke="#16a34a" stroke-width="1.6"/>
+        <line x1="250" y1="475" x2="185" y2="475" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arrow-green)"/>
+        <text x="228" y="310" font-size="10" font-weight="700" fill="#16a34a">Yes</text>
+
+        <!-- Rejoin Action: Load Canonical Career -->
+        <g transform="translate(40, 455)" filter="url(#box-shadow)">
+            <rect width="220" height="40" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="110" y="21" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Load Career &amp; Skill Set</text>
+            <text x="110" y="33" text-anchor="middle" font-size="9.5" fill="#64748b">Standardized Schema</text>
+        </g>
+        <line x1="150" y1="430" x2="150" y2="455" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Flow to Phase 2 -->
+        <line x1="260" y1="475" x2="315" y2="475" stroke="#334155" stroke-width="1.8"/>
+        <line x1="315" y1="475" x2="315" y2="170" stroke="#334155" stroke-width="1.8"/>
+        <line x1="315" y1="170" x2="335" y2="170" stroke="#334155" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+
+        <!-- ================= PHASE 2 NODES ================= -->
+        <!-- Action: Render Skill Sliders -->
+        <g transform="translate(315, 150)" filter="url(#box-shadow)">
+            <rect width="220" height="44" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="110" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Display Baseline Sliders</text>
+            <text x="110" y="33" text-anchor="middle" font-size="9.5" fill="#64748b">Novice (20%), Int (50%), Adv (80%)</text>
+        </g>
+        <line x1="425" y1="194" x2="425" y2="225" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Action: User Adjusts Sliders -->
+        <g transform="translate(315, 225)" filter="url(#box-shadow)">
+            <rect width="220" height="42" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="110" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">User Calibrates Proficiency</text>
+            <text x="110" y="33" text-anchor="middle" font-size="9.5" fill="#64748b">Adjusts sliders &amp; clicks "Save"</text>
+        </g>
+        <line x1="425" y1="267" x2="425" y2="300" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Action: Atomic DB Transaction -->
+        <g transform="translate(315, 300)" filter="url(#box-shadow)">
+            <rect width="220" height="50" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+            <text x="110" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Atomic DB Persistence</text>
+            <text x="110" y="33" text-anchor="middle" font-size="9.5" fill="#15803d">profiles.target_career_id</text>
+            <text x="110" y="44" text-anchor="middle" font-size="9" fill="#15803d">user_skills (upsert batch)</text>
+        </g>
+        <line x1="425" y1="350" x2="425" y2="385" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Action: Render Skill Graph Dashboard -->
+        <g transform="translate(315, 385)" filter="url(#box-shadow)">
+            <rect width="220" height="50" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="110" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Skill Graph Dashboard</text>
+            <text x="110" y="33" text-anchor="middle" font-size="9.5" fill="#2563eb">Highlights Gaps (Proficiency &lt; 80%)</text>
+            <text x="110" y="44" text-anchor="middle" font-size="9" fill="#64748b">Computes overall career readiness %</text>
+        </g>
+
+        <!-- Flow to Phase 3 -->
+        <line x1="535" y1="410" x2="590" y2="410" stroke="#334155" stroke-width="1.8"/>
+        <line x1="590" y1="410" x2="590" y2="170" stroke="#334155" stroke-width="1.8"/>
+        <line x1="590" y1="170" x2="610" y2="170" stroke="#334155" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+
+        <!-- ================= PHASE 3 NODES ================= -->
+        <!-- Action: Stage 1 Vector Candidate Retrieval -->
+        <g transform="translate(590, 150)" filter="url(#box-shadow)">
+            <rect width="220" height="50" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+            <text x="110" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Stage 1: Semantic Recall</text>
+            <text x="110" y="33" text-anchor="middle" font-size="9.5" fill="#15803d">pgvector cosine query</text>
+            <text x="110" y="44" text-anchor="middle" font-size="9" fill="#166534">Retrieves top 30 relevant lessons</text>
+        </g>
+        <line x1="700" y1="200" x2="700" y2="235" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Action: Stage 2 Composite Re-ranking -->
+        <g transform="translate(590, 235)" filter="url(#box-shadow)">
+            <rect width="220" height="80" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="110" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Stage 2: Composite Re-ranking</text>
+            <text x="110" y="35" text-anchor="middle" font-size="9.5" fill="#334155">• Skill Gap Priority Weight (0.45)</text>
+            <text x="110" y="48" text-anchor="middle" font-size="9.5" fill="#334155">• Semantic Relevance Sim (0.35)</text>
+            <text x="110" y="61" text-anchor="middle" font-size="9.5" fill="#334155">• Difficulty Proximity (0.20)</text>
+            <text x="110" y="74" text-anchor="middle" font-size="9" fill="#1d4ed8">× Diversity Penalties (top 5 lessons)</text>
+        </g>
+        <line x1="700" y1="315" x2="700" y2="355" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Action: Render Recommendations Feed -->
+        <g transform="translate(590, 355)" filter="url(#box-shadow)">
+            <rect width="220" height="46" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="110" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Render Personalized Feed</text>
+            <text x="110" y="34" text-anchor="middle" font-size="9.5" fill="#64748b">3-bullet summary + 5-question quiz</text>
+        </g>
+
+        <!-- Flow to Phase 4 -->
+        <line x1="810" y1="378" x2="865" y2="378" stroke="#334155" stroke-width="1.8"/>
+        <line x1="865" y1="378" x2="865" y2="170" stroke="#334155" stroke-width="1.8"/>
+        <line x1="865" y1="170" x2="885" y2="170" stroke="#334155" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+
+        <!-- ================= PHASE 4 NODES ================= -->
+        <!-- Action: Take Quiz -->
+        <g transform="translate(865, 150)" filter="url(#box-shadow)">
+            <rect width="215" height="42" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="107" y="20" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">Learner Completes Quiz</text>
+            <text x="107" y="33" text-anchor="middle" font-size="9.5" fill="#64748b">Submits 5 MCQ answers</text>
+        </g>
+        <line x1="972" y1="192" x2="972" y2="225" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Decision 2: Quiz Score >= 60%? -->
+        <polygon points="972,225 1037,253 972,281 907,253" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+        <text x="972" y="249" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">Quiz Score</text>
+        <text x="972" y="261" text-anchor="middle" font-size="10" font-weight="700" fill="#92400e">≥ 60%?</text>
+
+        <!-- Decision 2 Branch NO -> Ask MENTOR Prompt -->
+        <line x1="907" y1="253" x2="880" y2="253" stroke="#dc2626" stroke-width="1.6"/>
+        <line x1="880" y1="253" x2="880" y2="450" stroke="#dc2626" stroke-width="1.6"/>
+        <line x1="880" y1="450" x2="905" y2="450" stroke="#dc2626" stroke-width="1.6" marker-end="url(#arrow-red)"/>
+        <text x="888" y="245" font-size="10" font-weight="700" fill="#dc2626">No</text>
+
+        <!-- Ask MENTOR Action -->
+        <g transform="translate(905, 430)" filter="url(#box-shadow)">
+            <rect width="175" height="44" rx="6" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+            <text x="87" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#9a3412">Trigger "Ask MENTOR"</text>
+            <text x="87" y="32" text-anchor="middle" font-size="9.5" fill="#c2410c">Contextual help &amp; booking</text>
+        </g>
+
+        <!-- Decision 2 Branch YES -> Update Proficiency +10% -->
+        <line x1="972" y1="281" x2="972" y2="310" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arrow-green)"/>
+        <text x="982" y="296" font-size="10" font-weight="700" fill="#16a34a">Yes (Pass)</text>
+
+        <g transform="translate(865, 310)" filter="url(#box-shadow)">
+            <rect width="215" height="42" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+            <text x="107" y="19" text-anchor="middle" font-size="11.5" font-weight="600" fill="#15803d">Proficiency +10% XP</text>
+            <text x="107" y="32" text-anchor="middle" font-size="9.5" fill="#166534">Updated in user_skills table</text>
+        </g>
+        <line x1="972" y1="352" x2="972" y2="380" stroke="#334155" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- Decision 3: Skill Proficiency == 100%? -->
+        <polygon points="972,380 1032,404 972,428 912,404" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+        <text x="972" y="401" text-anchor="middle" font-size="9.5" font-weight="700" fill="#92400e">Proficiency</text>
+        <text x="972" y="412" text-anchor="middle" font-size="9.5" font-weight="700" fill="#92400e">= 100%?</text>
+
+        <!-- Branch YES -> Mastered Badge -->
+        <line x1="972" y1="428" x2="972" y2="495" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arrow-green)"/>
+        <text x="982" y="450" font-size="10" font-weight="700" fill="#16a34a">Yes</text>
+
+        <!-- Mastered Terminal Node -->
+        <g transform="translate(895, 495)">
+            <circle cx="77" cy="22" r="18" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+            <circle cx="77" cy="22" r="10" fill="#16a34a"/>
+            <text x="77" y="52" text-anchor="middle" font-size="11" font-weight="700" fill="#15803d">SKILL MASTERED</text>
+        </g>
+
+        <!-- Branch NO -> Loop back to Recommendation Feed -->
+        <path d="M 1032 404 L 1055 404 L 1055 125 L 700 125 L 700 145" fill="none" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+        <text x="1038" y="396" font-size="9.5" font-weight="700" fill="#2563eb">No</text>
+        <text x="870" y="118" font-size="9.5" font-weight="600" fill="#2563eb">Loop: Next Recommendation</text>
+
+        <!-- Bottom Legend -->
+        <g transform="translate(30, 600)">
+            <rect x="0" y="0" width="12" height="12" rx="2" fill="#eff6ff" stroke="#3b82f6"/>
+            <text x="18" y="10" font-size="11" fill="#334155">Client Action</text>
+
+            <rect x="130" y="0" width="12" height="12" rx="2" fill="#f0fdf4" stroke="#16a34a"/>
+            <text x="148" y="10" font-size="11" fill="#334155">AI / DB Operation</text>
+
+            <polygon points="280,6 288,0 296,6 288,12" fill="#fffbeb" stroke="#d97706"/>
+            <text x="306" y="10" font-size="11" fill="#334155">Decision Gateway</text>
+
+            <line x1="440" y1="6" x2="470" y2="6" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+            <text x="478" y="10" font-size="11" fill="#334155">Adaptive Loop</text>
+        </g>
+    </svg>
+    <div class="caption">Figure 4.3: Activity Diagram – End-to-End Learner Lifecycle &amp; Recommendation Engine</div>
+</div>
+
+<script>
+function exportPNG() {
+    const svg = document.getElementById('diagram-svg');
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const scale = 2; // High-DPI 2x
+    canvas.width = svg.getAttribute('width') * scale;
+    canvas.height = svg.getAttribute('height') * scale;
+    const ctx = canvas.getContext('2d');
+    
+    const img = new Image();
+    const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(svgBlob);
+    
+    img.onload = function() {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        
+        const a = document.createElement('a');
+        a.download = 'Figure_4_3_Activity_Diagram.png';
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+    };
+    img.src = url;
+}
+</script>
+
+</body>
+</html>

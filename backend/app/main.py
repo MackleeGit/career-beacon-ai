@@ -34,7 +34,8 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(test.router)
+if os.getenv("ENVIRONMENT") == "development":
+    app.include_router(test.router)
 app.include_router(learner_onboarding.router)
 app.include_router(recommendations.router)
 app.include_router(mentor.router)  # Mentor module 4 router
@@ -51,3 +52,33 @@ def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+@app.on_event("startup")
+async def start_keepalive_ping():
+    """
+    Prevents Render free-tier instance from sleeping (spins down after 15 min inactivity).
+    Pings the public /health endpoint every 10 minutes (600 seconds).
+    Automatically reads RENDER_EXTERNAL_URL injected by Render, or BACKEND_URL / PING_URL.
+    """
+    import asyncio
+    import httpx
+
+    ping_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("BACKEND_URL") or os.getenv("PING_URL")
+    if not ping_url:
+        return
+
+    target = f"{ping_url.rstrip('/')}/health" if not ping_url.endswith("/health") else ping_url
+
+    async def _ping_loop():
+        await asyncio.sleep(60)  # Initial grace delay after boot
+        while True:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(target)
+                    print(f"[keep-alive] Self-ping {target} -> Status {resp.status_code}")
+            except Exception as e:
+                print(f"[keep-alive] Self-ping notice: {e}")
+            await asyncio.sleep(600)  # Every 10 minutes
+
+    asyncio.create_task(_ping_loop())
+

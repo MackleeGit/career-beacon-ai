@@ -36,7 +36,7 @@
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-The recommendation feed combines semantic retrieval with career-skill priorities, proficiency gaps, prerequisite relationships, lesson difficulty, content-source type, and learner activity. It requests more lessons as the learner continues through the feed and keeps completed lessons in a separate library. A distinct Daily Focus Drop provides three lessons for a daily target skill, with one optional same-skill shuffle and streak tracking.
+The recommendation engine combines semantic retrieval with career-skill priorities, proficiency gaps, prerequisite relationships, lesson difficulty, calibrated source authority weights, and learner activity. The primary learning flow delivers a high-impact Daily Focus Drop of three curated lessons targeting the learner's highest skill deficit, accompanied by an optional one-shot re-roll, daily streak tracking, in-app concept overviews, and interactive 5-question checkpoints. Completed lessons are archived into a searchable completed library.
 
 ---
 

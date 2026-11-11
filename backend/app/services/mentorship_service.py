@@ -26,12 +26,15 @@ import os
 import json
 import uuid
 import math
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 from app.core.database import supabase_client
 from app.services.embedding_service import EmbeddingService
+
+logger = logging.getLogger("career_beacon.mentorship_service")
 
 ECOSYSTEM_STORE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -51,296 +54,42 @@ def _cosine_similarity(v1: Optional[List[float]], v2: Optional[List[float]]) -> 
     if not v1 or not v2 or len(v1) != len(v2):
         return 0.0
     dot = sum(a * b for a, b in zip(v1, v2))
-    n1 = math.sqrt(sum(a * a for a in v1))
-    n2 = math.sqrt(sum(b * b for b in v2))
-    if n1 == 0.0 or n2 == 0.0:
+    n1_sq = sum(a * a for a in v1)
+    n2_sq = sum(b * b for b in v2)
+    # Fast path for unit-normalized vectors (FastEmbed outputs unit length)
+    if 0.98 <= n1_sq <= 1.02 and 0.98 <= n2_sq <= 1.02:
+        return max(0.0, min(1.0, dot))
+    denom = math.sqrt(n1_sq * n2_sq)
+    if denom == 0.0:
         return 0.0
-    return max(0.0, min(1.0, dot / (n1 * n2)))
+    return max(0.0, min(1.0, dot / denom))
 
 
 # ---------------------------------------------------------------------------
-# Pre-Seeded Cross-Industry Reference Mentors (6 Domains)
+# Pre-Seeded Cross-Industry Reference Mentors (Loaded from External Fixture)
 # ---------------------------------------------------------------------------
-SEEDED_MENTORS: List[Dict[str, Any]] = [
-    {
-        "mentor_id": "seed-mentor-swe",
-        "full_name": "Dr. Marcus Vance",
-        "primary_domain": "Software Architecture & Full-Stack",
-        "headline": "Principal Distributed Systems Architect | Ex-Cloud Infrastructure Lead",
-        "bio": "14+ years designing fault-tolerant microservices, PostgreSQL/SQL indexing strategies, REST/GraphQL APIs, and coaching software engineers through system design and production readiness.",
-        "expertise_skills": [
-            "Python", "SQL", "PostgreSQL", "System Design", "Docker",
-            "REST APIs", "Software Architecture", "Git", "JavaScript", "React"
-        ],
-        "weekly_hours": 6,
-        "available_days": ["Mon", "Wed", "Fri"],
-        "preferred_time_window": "Evening",
-        "max_mentees": 5,
-        "active_mentees_count": 2,
-        "verified_sessions_count": 28,
-        "avg_rating": 4.9,
-        "is_seeded": True,
-    },
-    {
-        "mentor_id": "seed-mentor-data",
-        "full_name": "Elena Rostova",
-        "primary_domain": "AI, Machine Learning & Data Science",
-        "headline": "Lead Machine Learning & Analytics Engineer | NLP & Predictive Modeling",
-        "bio": "Specializes in production ML pipelines, SQL/Pandas data wrangling, statistical hypothesis testing, vector embeddings, and helping data analysts transition into applied AI roles.",
-        "expertise_skills": [
-            "Machine Learning", "Data Analysis", "Python", "SQL",
-            "Statistics", "Pandas", "Deep Learning", "Data Visualization", "NLP"
-        ],
-        "weekly_hours": 5,
-        "available_days": ["Tue", "Thu", "Sat"],
-        "preferred_time_window": "Afternoon",
-        "max_mentees": 4,
-        "active_mentees_count": 1,
-        "verified_sessions_count": 19,
-        "avg_rating": 4.95,
-        "is_seeded": True,
-    },
-    {
-        "mentor_id": "seed-mentor-fin",
-        "full_name": "Jonathan Sterling, CFA",
-        "primary_domain": "Finance, Accounting & Quantitative Analysis",
-        "headline": "VP of Corporate Finance & Risk Advisory | Chartered Financial Analyst",
-        "bio": "Mentors aspiring financial analysts, accountants, and auditors in 3-statement financial modeling, GAAP/IFRS compliance, budgeting, variance analysis, and valuation.",
-        "expertise_skills": [
-            "Financial Analysis", "Accounting", "Financial Modeling", "Budgeting",
-            "Risk Management", "Excel", "Auditing", "Corporate Finance", "Economics"
-        ],
-        "weekly_hours": 4,
-        "available_days": ["Tue", "Thu"],
-        "preferred_time_window": "Evening",
-        "max_mentees": 5,
-        "active_mentees_count": 2,
-        "verified_sessions_count": 22,
-        "avg_rating": 4.85,
-        "is_seeded": True,
-    },
-    {
-        "mentor_id": "seed-mentor-health",
-        "full_name": "Sarah Jenkins, RN, MSN",
-        "primary_domain": "Healthcare, Nursing & Clinical Practice",
-        "headline": "Clinical Nurse Educator & Patient Safety Director | Acute Care Specialist",
-        "bio": "12 years in acute clinical care, triage protocols, clinical documentation, pharmacology safety, and mentoring healthcare practitioners and clinical coordinators.",
-        "expertise_skills": [
-            "Patient Care", "Clinical Assessment", "Medical Terminology",
-            "Infection Control", "Healthcare Compliance", "Triage", "Emergency Care"
-        ],
-        "weekly_hours": 5,
-        "available_days": ["Mon", "Thu", "Sat"],
-        "preferred_time_window": "Morning",
-        "max_mentees": 4,
-        "active_mentees_count": 1,
-        "verified_sessions_count": 16,
-        "avg_rating": 5.0,
-        "is_seeded": True,
-    },
-    {
-        "mentor_id": "seed-mentor-eng",
-        "full_name": "Engr. David Okafor, PE",
-        "primary_domain": "Civil, Mechanical & Petroleum Engineering",
-        "headline": "Senior Structural & Energy Systems Engineer | Project Management Professional",
-        "bio": "Guides civil, mechanical, and petroleum engineers in CAD/structural analysis, reservoir & fluid mechanics, OSHA field safety, and capital project execution.",
-        "expertise_skills": [
-            "Engineering Design", "Project Management", "AutoCAD", "Structural Analysis",
-            "Fluid Mechanics", "Quality Assurance", "Operations Management", "Safety Compliance"
-        ],
-        "weekly_hours": 4,
-        "available_days": ["Wed", "Sat"],
-        "preferred_time_window": "Afternoon",
-        "max_mentees": 4,
-        "active_mentees_count": 1,
-        "verified_sessions_count": 14,
-        "avg_rating": 4.88,
-        "is_seeded": True,
-    },
-    {
-        "mentor_id": "seed-mentor-culinary",
-        "full_name": "Chef Antoine Moreau",
-        "primary_domain": "Culinary Arts, Hospitality & Skilled Trades",
-        "headline": "Executive Culinary Director & Multi-Unit Kitchen Operations Specialist",
-        "bio": "20 years leading commercial kitchens and quick-service food operations. Mentors cooks, chefs, and hospitality leads in HACCP food safety, prep station throughput, inventory cost control, and menu execution.",
-        "expertise_skills": [
-            "Food Safety & HACCP", "Kitchen Operations", "Food Preparation",
-            "Inventory Management", "Menu Costing", "Sanitation", "Quality Control", "Customer Service"
-        ],
-        "weekly_hours": 6,
-        "available_days": ["Mon", "Tue", "Fri"],
-        "preferred_time_window": "Afternoon",
-        "max_mentees": 6,
-        "active_mentees_count": 2,
-        "verified_sessions_count": 31,
-        "avg_rating": 4.92,
-        "is_seeded": True,
-    },
-]
+SEEDS_FILE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data",
+    "seeds",
+    "mentorship_seeds.json",
+)
 
-SEEDED_PULSE_POSTS: List[Dict[str, Any]] = [
-    {
-        "id": "pulse-seed-1",
-        "mentor_id": "seed-mentor-swe",
-        "mentor_name": "Dr. Marcus Vance",
-        "mentor_headline": "Principal Distributed Systems Architect",
-        "primary_domain": "Software Architecture & Full-Stack",
-        "post_type": "Industry Insight",
-        "title": "Why Composite B-Tree Indexes Fail Silently in High-Write PostgreSQL Workloads",
-        "body": (
-            "When optimizing slow SQL queries, junior engineers often add single-column indexes on every WHERE clause column. "
-            "In production, column order inside a composite index (Leftmost Prefix Rule) dictates whether the query planner performs an Index Seek or falls back to a Sequential Scan.\n\n"
-            "Rule of thumb for your next architecture review: place equality predicates (=) first, and range predicates (>, <, BETWEEN) last."
-        ),
-        "skill_tags": ["SQL", "PostgreSQL", "System Design", "Software Architecture"],
-        "external_url": "https://use-the-index-luke.com/",
-        "likes_count": 18,
-        "liked_by": [],
-        "created_at": "2026-10-30T14:20:00+00:00",
-    },
-    {
-        "id": "pulse-seed-2",
-        "mentor_id": "seed-mentor-fin",
-        "mentor_name": "Jonathan Sterling, CFA",
-        "mentor_headline": "VP of Corporate Finance & Risk Advisory",
-        "primary_domain": "Finance, Accounting & Quantitative Analysis",
-        "post_type": "Career & Hiring Advice",
-        "title": "The #1 Working Capital Mistake in Entry-Level Financial Modeling Tests",
-        "body": (
-            "In 80% of financial analyst case interviews I grade, candidates link Net Income to the Cash Flow Statement properly but invert the cash impact of Accounts Receivable (AR) and Inventory.\n\n"
-            "Remember: an increase in an operating asset (AR or Inventory) is a CASH OUTFLOW, while an increase in Accounts Payable (AP) is a CASH INFLOW. Always run a balance sheet check row (Assets - Liabilities - Equity = 0) before submitting!"
-        ),
-        "skill_tags": ["Financial Modeling", "Accounting", "Financial Analysis", "Corporate Finance"],
-        "external_url": None,
-        "likes_count": 14,
-        "liked_by": [],
-        "created_at": "2026-10-30T18:00:00+00:00",
-    },
-    {
-        "id": "pulse-seed-3",
-        "mentor_id": "seed-mentor-culinary",
-        "mentor_name": "Chef Antoine Moreau",
-        "mentor_headline": "Executive Culinary Director & Kitchen Operations Specialist",
-        "primary_domain": "Culinary Arts, Hospitality & Skilled Trades",
-        "post_type": "Industry Insight",
-        "title": "Mastering the Two-Stage Cooling Protocol & Station Mise en Place Under Rush Load",
-        "body": (
-            "Whether you run a high-volume fast-food line or a brigade kitchen, two habits separate top operators from chaotic shifts:\n"
-            "1. Strict Temperature Danger Zone control (cooling cooked batches from 135°F to 70°F within 2 hours, and down to 41°F within 4 hours).\n"
-            "2. FIFO (First-In, First-Out) pan rotation so prep waste stays under 3.5%."
-        ),
-        "skill_tags": ["Food Safety & HACCP", "Kitchen Operations", "Food Preparation", "Sanitation"],
-        "external_url": None,
-        "likes_count": 21,
-        "liked_by": [],
-        "created_at": "2026-10-31T08:15:00+00:00",
-    },
-    {
-        "id": "pulse-seed-4",
-        "mentor_id": "seed-mentor-data",
-        "mentor_name": "Elena Rostova",
-        "mentor_headline": "Lead Machine Learning & Analytics Engineer",
-        "primary_domain": "AI, Machine Learning & Data Science",
-        "post_type": "Event / Webinar",
-        "title": "Live Workshop This Thursday: Preventing Data Leakage in Time-Series & Tabular ML",
-        "body": (
-            "Hosting a 45-minute open workshop this Thursday at 17:00 UTC covering target encoding pitfalls, "
-            "temporal train/validation splits, and how to defend your evaluation metrics in technical interviews."
-        ),
-        "skill_tags": ["Machine Learning", "Data Analysis", "Statistics", "Python"],
-        "external_url": "https://scikit-learn.org/stable/common_pitfalls.html",
-        "likes_count": 25,
-        "liked_by": [],
-        "created_at": "2026-10-31T10:30:00+00:00",
-    },
-]
 
-SEEDED_QUESTIONS: List[Dict[str, Any]] = [
-    {
-        "id": "qa-seed-1",
-        "learner_id": "demo-learner-1",
-        "learner_name": "Alex Rivera",
-        "career_title": "Software Developer",
-        "skill_tag": "SQL",
-        "title": "When should I use a CTE (WITH clause) versus a temporary indexed table in PostgreSQL?",
-        "body": "While doing the SQL micro-learning sprint, I noticed CTEs make complex aggregations readable, but how do they behave on multi-million row joins?",
-        "source_lesson_title": "PostgreSQL Query Optimization & Indexing",
-        "status": "answered",
-        "created_at": "2026-10-29T16:00:00+00:00",
-        "answers": [
-            {
-                "id": "ans-seed-1",
-                "mentor_id": "seed-mentor-swe",
-                "mentor_name": "Dr. Marcus Vance",
-                "mentor_headline": "Principal Distributed Systems Architect",
-                "body": (
-                    "Great question! Since PostgreSQL 12+, non-recursive CTEs referenced only once are inlined by default (acting like subqueries so index pushdown works). "
-                    "However, if a CTE is referenced multiple times and materialized in memory without indexes, a Temporary Table with an explicit CREATE INDEX on the join key is significantly faster for 5M+ rows."
-                ),
-                "upvotes": 12,
-                "upvoted_by": [],
-                "is_verified_mentor": True,
-                "created_at": "2026-10-29T17:15:00+00:00",
-            }
-        ],
-    },
-    {
-        "id": "qa-seed-2",
-        "learner_id": "demo-learner-2",
-        "learner_name": "Maya Lin",
-        "career_title": "Financial Analyst",
-        "skill_tag": "Financial Modeling",
-        "title": "How do you justify WACC terminal growth rate assumptions during an valuation defense?",
-        "body": "If a company is growing revenue at 18% over the 5-year forecast window, why must the perpetuity growth rate (g) in the Gordon Growth Model stay below 2.5%–3.0%?",
-        "source_lesson_title": "Discounted Cash Flow (DCF) & Terminal Value",
-        "status": "answered",
-        "created_at": "2026-10-30T11:10:00+00:00",
-        "answers": [
-            {
-                "id": "ans-seed-2",
-                "mentor_id": "seed-mentor-fin",
-                "mentor_name": "Jonathan Sterling, CFA",
-                "mentor_headline": "VP of Corporate Finance & Risk Advisory",
-                "body": (
-                    "Because a terminal growth rate applies forever (to infinity). Mathematically, if a single firm grew faster than nominal global GDP (typically 2.5%–3.0%) forever, "
-                    "that single company would eventually become larger than the entire global economy. If the company still has high growth in Year 5, extend your explicit forecast to a 10-year two-stage DCF before applying terminal value."
-                ),
-                "upvotes": 9,
-                "upvoted_by": [],
-                "is_verified_mentor": True,
-                "created_at": "2026-10-30T12:05:00+00:00",
-            }
-        ],
-    },
-    {
-        "id": "qa-seed-3",
-        "learner_id": "demo-learner-3",
-        "learner_name": "Devon Brooks",
-        "career_title": "Cooks, Fast Food",
-        "skill_tag": "Food Safety & HACCP",
-        "title": "What is the exact corrective action if a hot-holding line drops below 135°F (57°C) during peak lunch?",
-        "body": "If our steam table thermometer reads 124°F during a rush check, can we just turn up the dial on the holding well, or do we have to reheat on the range?",
-        "source_lesson_title": "HACCP Critical Control Points in Commercial Kitchens",
-        "status": "answered",
-        "created_at": "2026-10-31T09:00:00+00:00",
-        "answers": [
-            {
-                "id": "ans-seed-3",
-                "mentor_id": "seed-mentor-culinary",
-                "mentor_name": "Chef Antoine Moreau",
-                "mentor_headline": "Executive Culinary Director & Kitchen Operations Specialist",
-                "body": (
-                    "Never use a hot-holding steam table to reheat food! Holding wells are engineered only to maintain temperature, not bring food rapidly through the danger zone. "
-                    "Corrective action: If it has been under 135°F for less than 2 hours, rapidly reheat the batch on a stove/oven to 165°F (74°C) for at least 15 seconds before returning it to a verified 135°F+ holding well."
-                ),
-                "upvotes": 15,
-                "upvoted_by": [],
-                "is_verified_mentor": True,
-                "created_at": "2026-10-31T09:40:00+00:00",
-            }
-        ],
-    },
-]
+def _load_mentorship_seeds() -> Dict[str, Any]:
+    if os.path.exists(SEEDS_FILE_PATH):
+        try:
+            with open(SEEDS_FILE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"[MentorshipService] Failed to load seeds file: {e}")
+    return {"mentors": [], "pulse_posts": [], "questions": []}
+
+
+_SEEDS_CACHE = _load_mentorship_seeds()
+SEEDED_MENTORS: List[Dict[str, Any]] = _SEEDS_CACHE.get("mentors", [])
+SEEDED_PULSE_POSTS: List[Dict[str, Any]] = _SEEDS_CACHE.get("pulse_posts", [])
+SEEDED_QUESTIONS: List[Dict[str, Any]] = _SEEDS_CACHE.get("questions", [])
 
 
 class MentorshipService:
@@ -393,25 +142,60 @@ class MentorshipService:
             json.dump(data, f, indent=2)
 
     async def _ensure_mentor_vectors(self, store: Dict[str, Any]) -> None:
-        """Lazily computes and caches 384-d vectors for any mentor missing `mentor_vector`."""
-        updated = False
-        for m in store.get("mentors", []):
-            if not m.get("mentor_vector"):
-                skills_str = ", ".join(m.get("expertise_skills", []))
-                text = (
-                    f"Domain: {m.get('primary_domain', '')}. "
-                    f"Headline: {m.get('headline', '')}. "
-                    f"Specialization: {m.get('bio', '')}. "
-                    f"Core Skills: {skills_str}."
-                )
-                try:
-                    vec = await self.embedding_service.get_embedding(text)
-                    m["mentor_vector"] = vec
-                    updated = True
-                except Exception as err:
-                    print(f"[MentorshipService] Failed to embed mentor {m.get('mentor_id')}: {err}")
-        if updated:
+        """Lazily computes and caches dual 384-d vectors (`domain_vector` and `skills_vector`) for mentors using batch inference."""
+        missing = [
+            m for m in store.get("mentors", [])
+            if not m.get("domain_vector") or not m.get("skills_vector") or not m.get("mentor_vector")
+        ]
+        if not missing:
+            return
+        domain_texts = [
+            f"Occupational Domain: {m.get('primary_domain', '')}. Role: {m.get('headline', '')}. Scope: {m.get('bio', '')}."
+            for m in missing
+        ]
+        skills_texts = [
+            f"Domain: {m.get('primary_domain', '')}. Core Technical Competencies: {', '.join(m.get('expertise_skills', []))}."
+            for m in missing
+        ]
+        try:
+            all_vecs = await self.embedding_service.get_embeddings_batch(domain_texts + skills_texts)
+            n = len(missing)
+            for idx, m in enumerate(missing):
+                d_vec = all_vecs[idx]
+                s_vec = all_vecs[n + idx]
+                m["domain_vector"] = d_vec
+                m["skills_vector"] = s_vec
+                m["mentor_vector"] = d_vec
             self._save_store(store)
+        except Exception as err:
+            logger.warning(f"[MentorshipService] Failed to batch embed mentors: {err}")
+
+    @staticmethod
+    def _format_question_embed_text(q: Dict[str, Any]) -> str:
+        base = f"{q.get('title', '').strip()}. Skill: {q.get('skill_tag', '').strip()}. {q.get('body', '').strip()[:200]}"
+        answers = q.get("answers") or []
+        if answers and isinstance(answers[0], dict) and answers[0].get("body"):
+            base += f" Answer: {answers[0]['body'].strip()[:250]}"
+        return base
+
+    async def _ensure_question_vectors(self, store: Dict[str, Any]) -> None:
+        """Lazily computes and caches 384-d vectors for questions (including answer text when answered)."""
+        missing = [
+            q for q in store.get("questions", [])
+            if not q.get("embedding") or (q.get("answers") and not q.get("answer_embedded"))
+        ]
+        if not missing:
+            return
+        texts = [self._format_question_embed_text(q) for q in missing]
+        try:
+            vecs = await self.embedding_service.get_embeddings_batch(texts)
+            for q, vec in zip(missing, vecs):
+                q["embedding"] = vec
+                if q.get("answers"):
+                    q["answer_embedded"] = True
+            self._save_store(store)
+        except Exception as err:
+            logger.warning(f"[MentorshipService] Failed to batch embed questions: {err}")
 
     async def register_or_update_mentor(
         self,
@@ -429,16 +213,14 @@ class MentorshipService:
         """Registers or updates a real mentor user inside the Mentorship Ecosystem store."""
         store = self._ensure_store()
         skills_str = ", ".join(expertise_skills)
-        text = (
-            f"Domain: {primary_domain}. "
-            f"Headline: {headline}. "
-            f"Specialization: {bio}. "
-            f"Core Skills: {skills_str}."
-        )
+        domain_text = f"Occupational Domain: {primary_domain}. Role: {headline}. Scope: {bio}."
+        skills_text = f"Domain: {primary_domain}. Core Technical Competencies: {skills_str}."
         try:
-            vec = await self.embedding_service.get_embedding(text)
+            vecs = await self.embedding_service.get_embeddings_batch([domain_text, skills_text])
+            domain_vec = vecs[0] if len(vecs) == 2 else None
+            skills_vec = vecs[1] if len(vecs) == 2 else None
         except Exception:
-            vec = None
+            domain_vec, skills_vec = None, None
 
         existing = next((m for m in store["mentors"] if m["mentor_id"] == mentor_id), None)
         if existing:
@@ -452,7 +234,9 @@ class MentorshipService:
                 "preferred_time_window": preferred_time_window or "Evening",
                 "expertise_skills": expertise_skills,
                 "max_mentees": max_mentees,
-                "mentor_vector": vec or existing.get("mentor_vector"),
+                "mentor_vector": domain_vec or existing.get("mentor_vector"),
+                "domain_vector": domain_vec or existing.get("domain_vector"),
+                "skills_vector": skills_vec or existing.get("skills_vector"),
             })
             record = existing
         else:
@@ -471,12 +255,14 @@ class MentorshipService:
                 "verified_sessions_count": 0,
                 "avg_rating": 5.0,
                 "is_seeded": False,
-                "mentor_vector": vec,
+                "mentor_vector": domain_vec,
+                "domain_vector": domain_vec,
+                "skills_vector": skills_vec,
             }
             store["mentors"].insert(0, record)
 
         self._save_store(store)
-        return {k: v for k, v in record.items() if k != "mentor_vector"}
+        return {k: v for k, v in record.items() if k not in ("mentor_vector", "domain_vector", "skills_vector")}
 
     async def get_all_mentors(self) -> List[Dict[str, Any]]:
         store = self._ensure_store()
@@ -614,15 +400,16 @@ class MentorshipService:
 
         top_gaps = [g["name"] for g in ctx["gap_skills"][:8]]
         all_skill_names = [s["name"] for s in ctx["all_skills"]]
-        need_summary = (
-            f"Target Career: {ctx['career_title']}. "
-            f"Description: {ctx['career_description']}. "
-            f"Priority Skill Gaps: {', '.join(top_gaps if top_gaps else all_skill_names)}."
-        )
+        gaps_str = ", ".join(top_gaps if top_gaps else all_skill_names)
+        # Dual-vector mentor queries matching stored mentor `domain_vector` and `skills_vector`
+        domain_query = f"Occupational Domain: {ctx['career_title']}. Role: {ctx['career_title']}."
+        skills_query = f"Domain: {ctx['career_title']}. Core Technical Competencies: {gaps_str}."
         try:
-            learner_vec = await self.embedding_service.get_embedding(need_summary)
+            q_vecs = await self.embedding_service.get_embeddings_batch([domain_query, skills_query])
+            learner_domain_vec = q_vecs[0] if len(q_vecs) == 2 else None
+            learner_skills_vec = q_vecs[1] if len(q_vecs) == 2 else None
         except Exception:
-            learner_vec = None
+            learner_domain_vec, learner_skills_vec = None, None
 
         learner_conns = {
             c["mentor_id"]: c
@@ -634,8 +421,18 @@ class MentorshipService:
         filtered_out_count = 0
 
         career_lower = ctx["career_title"].lower()
-        gap_lower_map = {g["name"].lower(): g["name"] for g in ctx["gap_skills"]}
-        all_lower_map = {s["name"].lower(): s["name"] for s in ctx["all_skills"]}
+        gap_lower_map = {g["name"].lower().strip(): g["name"] for g in ctx["gap_skills"]}
+        all_lower_map = {s["name"].lower().strip(): s["name"] for s in ctx["all_skills"]}
+
+        def _skills_equivalent(m_skill: str, l_skill: str) -> bool:
+            if m_skill == l_skill:
+                return True
+            m_toks = set(m_skill.replace("-", " ").split())
+            l_toks = set(l_skill.replace("-", " ").split())
+            # Require at least 2 shared tokens to avoid single-word false positives ("design" vs "system design")
+            if len(m_toks) >= 2 and len(l_toks) >= 2 and (m_toks.issubset(l_toks) or l_toks.issubset(m_toks)):
+                return True
+            return False
 
         for m in mentors:
             if m["mentor_id"] == learner_id:
@@ -645,23 +442,25 @@ class MentorshipService:
             max_cap = int(m.get("max_mentees", 5))
             has_capacity = active_count < max_cap
 
-            sem_sim = _cosine_similarity(learner_vec, m.get("mentor_vector"))
+            domain_sim = _cosine_similarity(learner_domain_vec, m.get("domain_vector") or m.get("mentor_vector"))
+            skills_sim = _cosine_similarity(learner_skills_vec, m.get("skills_vector") or m.get("mentor_vector"))
+            sem_sim = (0.50 * domain_sim) + (0.50 * skills_sim)
 
             mentor_skills = m.get("expertise_skills", [])
             shared_gap_skills: List[str] = []
             shared_general_skills: List[str] = []
 
             for m_sk in mentor_skills:
-                m_low = m_sk.lower()
+                m_low = m_sk.lower().strip()
                 matched_gap = next(
-                    (orig for k_low, orig in gap_lower_map.items() if m_low in k_low or k_low in m_low),
+                    (orig for k_low, orig in gap_lower_map.items() if _skills_equivalent(m_low, k_low)),
                     None,
                 )
                 if matched_gap and matched_gap not in shared_gap_skills:
                     shared_gap_skills.append(matched_gap)
                 else:
                     matched_any = next(
-                        (orig for k_low, orig in all_lower_map.items() if m_low in k_low or k_low in m_low),
+                        (orig for k_low, orig in all_lower_map.items() if _skills_equivalent(m_low, k_low)),
                         None,
                     )
                     if matched_any and matched_any not in shared_general_skills:
@@ -676,14 +475,17 @@ class MentorshipService:
             domain_str = f"{m.get('primary_domain', '')} {m.get('headline', '')} {m.get('bio', '')}".lower()
             career_tokens = [t for t in career_lower.replace(",", " ").split() if len(t) > 3]
             token_hits = sum(1 for tok in career_tokens if tok in domain_str)
-            domain_score = 1.0 if token_hits > 0 else (0.5 if shared_gap_skills else 0.0)
+            domain_score = 1.0 if token_hits > 0 else (0.75 if domain_sim >= 0.65 else (0.4 if shared_gap_skills else 0.0))
 
-            composite_score = (0.55 * sem_sim) + (0.30 * overlap_score) + (0.15 * domain_score)
+            composite_score = (0.30 * domain_sim) + (0.30 * skills_sim) + (0.25 * overlap_score) + (0.15 * domain_score)
             match_pct = int(round(composite_score * 100))
 
             passes_anti_desperation = (
-                composite_score >= ANTI_DESPERATION_THRESHOLD
-                or len(shared_gap_skills) >= 1
+                domain_sim >= 0.56
+                and (
+                    composite_score >= ANTI_DESPERATION_THRESHOLD
+                    or (len(shared_gap_skills) >= 1 and domain_sim >= 0.60)
+                )
             )
 
             if not passes_anti_desperation and not include_below_threshold:
@@ -717,7 +519,7 @@ class MentorshipService:
 
             conn = learner_conns.get(m["mentor_id"])
             mentor_card = {
-                k: v for k, v in m.items() if k != "mentor_vector"
+                k: v for k, v in m.items() if k not in ("mentor_vector", "domain_vector", "skills_vector")
             }
             mentor_card.update({
                 "match_score": round(composite_score, 3),
@@ -882,9 +684,17 @@ class MentorshipService:
         result = []
         for c in conns:
             m = mentors_by_id.get(c["mentor_id"], {})
+            conn_msgs = [msg for msg in store.get("messages", []) if msg.get("connection_id") == c["id"]]
+            unread = [
+                msg for msg in conn_msgs
+                if msg.get("sender_id") != learner_id and learner_id not in msg.get("read_by", [msg.get("sender_id")])
+            ]
             result.append({
                 **c,
                 "mentor": {k: v for k, v in m.items() if k != "mentor_vector"} if m else None,
+                "last_message": conn_msgs[-1] if conn_msgs else None,
+                "unread_count": len(unread),
+                "unread_messages": unread,
             })
         return result
 
@@ -894,11 +704,51 @@ class MentorshipService:
         seeded_ids = {m["mentor_id"] for m in SEEDED_MENTORS}
         if not direct and mentor_id not in seeded_ids:
             direct = [c for c in store["connections"] if c["mentor_id"] in seeded_ids]
-        return direct
+
+        result = []
+        for c in direct:
+            conn_msgs = [msg for msg in store.get("messages", []) if msg.get("connection_id") == c["id"]]
+            unread = [
+                msg for msg in conn_msgs
+                if msg.get("sender_id") != mentor_id and mentor_id not in msg.get("read_by", [msg.get("sender_id")])
+            ]
+            result.append({
+                **c,
+                "last_message": conn_msgs[-1] if conn_msgs else None,
+                "unread_count": len(unread),
+                "unread_messages": unread,
+            })
+        return result
 
     def get_messages(self, connection_id: str, user_id: str) -> List[Dict[str, Any]]:
         store = self._ensure_store()
-        return [m for m in store["messages"] if m["connection_id"] == connection_id]
+        changed = False
+        conn_msgs = []
+        for m in store.get("messages", []):
+            if m.get("connection_id") == connection_id:
+                conn_msgs.append(m)
+                read_by = m.setdefault("read_by", [m.get("sender_id")])
+                if user_id and user_id not in read_by:
+                    read_by.append(user_id)
+                    changed = True
+        if changed:
+            self._save_store(store)
+        return conn_msgs
+
+    def mark_messages_read(self, connection_id: str, user_id: str) -> int:
+        store = self._ensure_store()
+        changed = False
+        count = 0
+        for m in store.get("messages", []):
+            if m.get("connection_id") == connection_id:
+                read_by = m.setdefault("read_by", [m.get("sender_id")])
+                if user_id and user_id not in read_by:
+                    read_by.append(user_id)
+                    count += 1
+                    changed = True
+        if changed:
+            self._save_store(store)
+        return count
 
     def send_message(
         self,
@@ -927,6 +777,7 @@ class MentorshipService:
             "sender_role": sender_role,
             "text": text.strip(),
             "created_at": _utc_now_iso(),
+            "read_by": [sender_id],
         }
         store["messages"].append(msg)
         self._save_store(store)
@@ -1052,14 +903,37 @@ class MentorshipService:
 
         if search_query and search_query.strip():
             sq = search_query.strip().lower()
-            questions = [
-                q for q in questions
-                if sq in q.get("title", "").lower()
-                or sq in q.get("body", "").lower()
-                or sq in q.get("skill_tag", "").lower()
-                or sq in q.get("career_title", "").lower()
-                or any(sq in a.get("body", "").lower() for a in q.get("answers", []))
-            ]
+            await self._ensure_question_vectors(store)
+            try:
+                query_vec = await self.embedding_service.get_embedding(search_query)
+            except Exception:
+                query_vec = None
+
+            scored_questions: List[tuple[float, Dict[str, Any]]] = []
+            for q in questions:
+                # 1. Lexical match check
+                is_exact_lexical = (
+                    sq in q.get("title", "").lower()
+                    or sq in q.get("body", "").lower()
+                    or sq in q.get("skill_tag", "").lower()
+                    or sq in q.get("career_title", "").lower()
+                    or any(sq in a.get("body", "").lower() for a in q.get("answers", []))
+                )
+                lexical_bonus = 0.35 if is_exact_lexical else 0.0
+
+                # 2. Semantic vector cosine similarity
+                sem_sim = 0.0
+                if query_vec and q.get("embedding"):
+                    sem_sim = _cosine_similarity(query_vec, q.get("embedding"))
+
+                total_score = max(sem_sim + lexical_bonus, 0.85 if is_exact_lexical else sem_sim)
+                if total_score >= 0.45 or is_exact_lexical:
+                    q_copy = dict(q)
+                    q_copy["search_relevance"] = round(total_score, 3)
+                    scored_questions.append((total_score, q_copy))
+
+            scored_questions.sort(key=lambda item: item[0], reverse=True)
+            questions = [item[1] for item in scored_questions]
 
         if mentor_id:
             mentor_obj = next((m for m in store["mentors"] if m["mentor_id"] == mentor_id), None)
@@ -1080,7 +954,47 @@ class MentorshipService:
 
         return questions
 
-    def ask_question(
+    async def find_similar_answered_questions(
+        self,
+        query_text: str,
+        skill_tag: Optional[str] = None,
+        threshold: float = 0.75,
+        limit: int = 3,
+    ) -> List[Dict[str, Any]]:
+        """
+        Real-time semantic pre-flight lookup for existing verified mentor answers.
+        Returns top matching answered tickets to provide instant resolution for recurring student blockers.
+        """
+        store = self._ensure_store()
+        answered = [q for q in store.get("questions", []) if q.get("answers") and len(q["answers"]) > 0]
+        if not answered or not query_text.strip():
+            return []
+
+        await self._ensure_question_vectors(store)
+        try:
+            raw_q = query_text.strip()
+            formatted_q = f"{raw_q}. Skill: {skill_tag.strip()}." if skill_tag and skill_tag.strip() else raw_q
+            q_vecs = await self.embedding_service.get_embeddings_batch(
+                [raw_q, formatted_q] if formatted_q != raw_q else [raw_q]
+            )
+        except Exception:
+            return []
+
+        matches = []
+        for q in answered:
+            q_emb = q.get("embedding")
+            sim = max((_cosine_similarity(qv, q_emb) for qv in q_vecs), default=0.0)
+            if skill_tag and skill_tag.lower() in q.get("skill_tag", "").lower():
+                sim = min(1.0, sim + 0.05)
+            if sim >= threshold:
+                q_copy = {k: v for k, v in q.items() if k != "embedding"}
+                q_copy["similarity"] = round(sim, 3)
+                matches.append(q_copy)
+
+        matches.sort(key=lambda x: x["similarity"], reverse=True)
+        return matches[:limit]
+
+    async def ask_question(
         self,
         learner_id: str,
         title: str,
@@ -1091,6 +1005,33 @@ class MentorshipService:
     ) -> Dict[str, Any]:
         store = self._ensure_store()
         ctx = self._get_learner_context(learner_id)
+
+        # Compute vector representation for instant semantic discovery
+        embedding = None
+        try:
+            q_text = f"{title.strip()}. Skill: {skill_tag.strip()}. {body.strip()[:250]}"
+            embedding = await self.embedding_service.get_embedding(q_text)
+        except Exception as emb_err:
+            logger.debug(f"[MentorshipService] Question embedding skipped: {emb_err}")
+
+        # Check for instant duplicate resolutions among verified answered tickets (threshold >= 0.78)
+        suggested_matches = []
+        if embedding:
+            for existing_q in store.get("questions", []):
+                if existing_q.get("answers") and existing_q.get("embedding"):
+                    sim = _cosine_similarity(embedding, existing_q.get("embedding"))
+                    if sim >= 0.78:
+                        ans = existing_q["answers"][0]
+                        suggested_matches.append({
+                            "question_id": existing_q["id"],
+                            "title": existing_q["title"],
+                            "similarity": round(sim, 3),
+                            "top_answer": ans.get("body", ""),
+                            "mentor_name": ans.get("mentor_name", "Verified Mentor"),
+                            "mentor_headline": ans.get("mentor_headline", ""),
+                        })
+            suggested_matches.sort(key=lambda x: x["similarity"], reverse=True)
+
         q = {
             "id": f"qa-{uuid.uuid4().hex[:10]}",
             "learner_id": learner_id,
@@ -1103,9 +1044,22 @@ class MentorshipService:
             "status": "open",
             "created_at": _utc_now_iso(),
             "answers": [],
+            "embedding": embedding,
+            "suggested_answers": suggested_matches[:2],
         }
         store["questions"].insert(0, q)
         self._save_store(store)
+
+        # Dual-layer sync: persist question to Supabase mentor_qa when learner has valid UUID
+        try:
+            uuid.UUID(str(learner_id))
+            supabase_client.table("mentor_qa").insert({
+                "question": f"{title.strip()}\n\n{body.strip()}",
+                "answer": "",
+            }).execute()
+        except Exception as qa_err:
+            logger.debug(f"[MentorshipService] mentor_qa dual-sync skipped: {qa_err}")
+
         return q
 
     async def answer_question(
@@ -1152,6 +1106,11 @@ class MentorshipService:
         }
         q.setdefault("answers", []).append(ans)
         q["status"] = "answered"
+        try:
+            q["embedding"] = await self.embedding_service.get_embedding(self._format_question_embed_text(q))
+            q["answer_embedded"] = True
+        except Exception as emb_err:
+            logger.debug(f"[MentorshipService] Answer re-embedding skipped: {emb_err}")
         self._save_store(store)
         return q
 
@@ -1176,11 +1135,16 @@ class MentorshipService:
     # -----------------------------------------------------------------------
     # 5. 1-on-1 Session Booking, Anti-Double-Booking & Google Calendar / .ics
     # -----------------------------------------------------------------------
-    async def get_available_slots(self, mentor_id: str, days_ahead: int = 10) -> List[Dict[str, Any]]:
+    async def get_available_slots(
+        self,
+        mentor_id: str,
+        days_ahead: int = 10,
+        learner_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Generates concrete 45-minute bookable time slots over the next `days_ahead` days
         based on the mentor's `available_days` and `preferred_time_window`, automatically
-        excluding any slot already booked (Anti-Double-Booking).
+        excluding any slot already booked by either the mentor or the learner (Anti-Double-Booking).
         """
         store = self._ensure_store()
         mentor = next((m for m in store["mentors"] if m["mentor_id"] == mentor_id), None)
@@ -1199,7 +1163,9 @@ class MentorshipService:
         booked_starts = {
             s["slot_start_iso"]
             for s in store.get("sessions", [])
-            if s["mentor_id"] == mentor_id and s.get("status") != "cancelled"
+            if s.get("status") != "cancelled" and (
+                s["mentor_id"] == mentor_id or (learner_id and s.get("learner_id") == learner_id)
+            )
         }
 
         now = datetime.now(timezone.utc)
@@ -1342,6 +1308,30 @@ class MentorshipService:
 
         store["sessions"].insert(0, session_record)
         self._save_store(store)
+
+        # Dual-layer persistence: sync session booking to Supabase bookings table when valid UUIDs exist
+        try:
+            uuid.UUID(str(learner_id))
+            m_uuid = None
+            try:
+                m_uuid = str(uuid.UUID(str(mentor_id)))
+            except Exception:
+                pass
+
+            booking_payload: Dict[str, Any] = {
+                "user_id": learner_id,
+                "start_time": start_dt.isoformat(),
+                "end_time": end_dt.isoformat(),
+                "status": "confirmed",
+                "meeting_link": meeting_url,
+            }
+            if m_uuid:
+                booking_payload["mentor_id"] = m_uuid
+
+            supabase_client.table("bookings").insert(booking_payload).execute()
+        except Exception as db_sync_err:
+            logger.debug(f"[MentorshipService] Supabase bookings dual-sync skipped: {db_sync_err}")
+
         return session_record
 
     def get_sessions(self, user_id: str, role: str = "learner") -> List[Dict[str, Any]]:
@@ -1351,8 +1341,13 @@ class MentorshipService:
             seeded_ids = {m["mentor_id"] for m in SEEDED_MENTORS}
             if not direct and user_id not in seeded_ids:
                 direct = [s for s in store["sessions"] if s["mentor_id"] in seeded_ids]
-            return direct
-        return [s for s in store["sessions"] if s["learner_id"] == user_id]
+            sess_list = direct
+        else:
+            sess_list = [s for s in store["sessions"] if s["learner_id"] == user_id]
+
+        # Rank strictly by proximity in time (earliest/closest upcoming first)
+        sess_list.sort(key=lambda s: s.get("slot_start_iso", ""))
+        return sess_list
 
     def cancel_session(self, session_id: str, user_id: str) -> Dict[str, Any]:
         store = self._ensure_store()
@@ -1361,6 +1356,14 @@ class MentorshipService:
             raise ValueError("Session not found.")
         sess["status"] = "cancelled"
         self._save_store(store)
+
+        # Dual-layer sync: update Supabase bookings status
+        try:
+            uuid.UUID(str(user_id))
+            supabase_client.table("bookings").update({"status": "cancelled"}).eq("user_id", user_id).execute()
+        except Exception:
+            pass
+
         return sess
 
     def complete_session_and_endorse_skill(

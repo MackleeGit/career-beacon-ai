@@ -1,0 +1,338 @@
+{
+  "mentors": [
+    {
+      "mentor_id": "seed-mentor-swe",
+      "full_name": "Dr. Marcus Vance",
+      "primary_domain": "Software Architecture & Full-Stack",
+      "headline": "Principal Distributed Systems Architect | Ex-Cloud Infrastructure Lead",
+      "bio": "14+ years designing fault-tolerant microservices, PostgreSQL/SQL indexing strategies, REST/GraphQL APIs, and coaching software engineers through system design and production readiness.",
+      "expertise_skills": [
+        "Python",
+        "SQL",
+        "PostgreSQL",
+        "System Design",
+        "Docker",
+        "REST APIs",
+        "Software Architecture",
+        "Git",
+        "JavaScript",
+        "React"
+      ],
+      "weekly_hours": 6,
+      "available_days": [
+        "Mon",
+        "Wed",
+        "Fri"
+      ],
+      "preferred_time_window": "Evening",
+      "max_mentees": 5,
+      "active_mentees_count": 2,
+      "verified_sessions_count": 28,
+      "avg_rating": 4.9,
+      "is_seeded": true
+    },
+    {
+      "mentor_id": "seed-mentor-data",
+      "full_name": "Elena Rostova",
+      "primary_domain": "AI, Machine Learning & Data Science",
+      "headline": "Lead Machine Learning & Analytics Engineer | NLP & Predictive Modeling",
+      "bio": "Specializes in production ML pipelines, SQL/Pandas data wrangling, statistical hypothesis testing, vector embeddings, and helping data analysts transition into applied AI roles.",
+      "expertise_skills": [
+        "Machine Learning",
+        "Data Analysis",
+        "Python",
+        "SQL",
+        "Statistics",
+        "Pandas",
+        "Deep Learning",
+        "Data Visualization",
+        "NLP"
+      ],
+      "weekly_hours": 5,
+      "available_days": [
+        "Tue",
+        "Thu",
+        "Sat"
+      ],
+      "preferred_time_window": "Afternoon",
+      "max_mentees": 4,
+      "active_mentees_count": 1,
+      "verified_sessions_count": 19,
+      "avg_rating": 4.95,
+      "is_seeded": true
+    },
+    {
+      "mentor_id": "seed-mentor-fin",
+      "full_name": "Jonathan Sterling, CFA",
+      "primary_domain": "Finance, Accounting & Quantitative Analysis",
+      "headline": "VP of Corporate Finance & Risk Advisory | Chartered Financial Analyst",
+      "bio": "Mentors aspiring financial analysts, accountants, and auditors in 3-statement financial modeling, GAAP/IFRS compliance, budgeting, variance analysis, and valuation.",
+      "expertise_skills": [
+        "Financial Analysis",
+        "Accounting",
+        "Financial Modeling",
+        "Budgeting",
+        "Risk Management",
+        "Excel",
+        "Auditing",
+        "Corporate Finance",
+        "Economics"
+      ],
+      "weekly_hours": 4,
+      "available_days": [
+        "Tue",
+        "Thu"
+      ],
+      "preferred_time_window": "Evening",
+      "max_mentees": 5,
+      "active_mentees_count": 2,
+      "verified_sessions_count": 22,
+      "avg_rating": 4.85,
+      "is_seeded": true
+    },
+    {
+      "mentor_id": "seed-mentor-health",
+      "full_name": "Sarah Jenkins, RN, MSN",
+      "primary_domain": "Healthcare, Nursing & Clinical Practice",
+      "headline": "Clinical Nurse Educator & Patient Safety Director | Acute Care Specialist",
+      "bio": "12 years in acute clinical care, triage protocols, clinical documentation, pharmacology safety, and mentoring healthcare practitioners and clinical coordinators.",
+      "expertise_skills": [
+        "Patient Care",
+        "Clinical Assessment",
+        "Medical Terminology",
+        "Infection Control",
+        "Healthcare Compliance",
+        "Triage",
+        "Emergency Care"
+      ],
+      "weekly_hours": 5,
+      "available_days": [
+        "Mon",
+        "Thu",
+        "Sat"
+      ],
+      "preferred_time_window": "Morning",
+      "max_mentees": 4,
+      "active_mentees_count": 1,
+      "verified_sessions_count": 16,
+      "avg_rating": 5.0,
+      "is_seeded": true
+    },
+    {
+      "mentor_id": "seed-mentor-eng",
+      "full_name": "Engr. David Okafor, PE",
+      "primary_domain": "Civil, Mechanical & Petroleum Engineering",
+      "headline": "Senior Structural & Energy Systems Engineer | Project Management Professional",
+      "bio": "Guides civil, mechanical, and petroleum engineers in CAD/structural analysis, reservoir & fluid mechanics, OSHA field safety, and capital project execution.",
+      "expertise_skills": [
+        "Engineering Design",
+        "Project Management",
+        "AutoCAD",
+        "Structural Analysis",
+        "Fluid Mechanics",
+        "Quality Assurance",
+        "Operations Management",
+        "Safety Compliance"
+      ],
+      "weekly_hours": 4,
+      "available_days": [
+        "Wed",
+        "Sat"
+      ],
+      "preferred_time_window": "Afternoon",
+      "max_mentees": 4,
+      "active_mentees_count": 1,
+      "verified_sessions_count": 14,
+      "avg_rating": 4.88,
+      "is_seeded": true
+    },
+    {
+      "mentor_id": "seed-mentor-culinary",
+      "full_name": "Chef Antoine Moreau",
+      "primary_domain": "Culinary Arts, Hospitality & Skilled Trades",
+      "headline": "Executive Culinary Director & Multi-Unit Kitchen Operations Specialist",
+      "bio": "20 years leading commercial kitchens and quick-service food operations. Mentors cooks, chefs, and hospitality leads in HACCP food safety, prep station throughput, inventory cost control, and menu execution.",
+      "expertise_skills": [
+        "Food Safety & HACCP",
+        "Kitchen Operations",
+        "Food Preparation",
+        "Inventory Management",
+        "Menu Costing",
+        "Sanitation",
+        "Quality Control",
+        "Customer Service"
+      ],
+      "weekly_hours": 6,
+      "available_days": [
+        "Mon",
+        "Tue",
+        "Fri"
+      ],
+      "preferred_time_window": "Afternoon",
+      "max_mentees": 6,
+      "active_mentees_count": 2,
+      "verified_sessions_count": 31,
+      "avg_rating": 4.92,
+      "is_seeded": true
+    }
+  ],
+  "pulse_posts": [
+    {
+      "id": "pulse-seed-1",
+      "mentor_id": "seed-mentor-swe",
+      "mentor_name": "Dr. Marcus Vance",
+      "mentor_headline": "Principal Distributed Systems Architect",
+      "primary_domain": "Software Architecture & Full-Stack",
+      "post_type": "Industry Insight",
+      "title": "Why Composite B-Tree Indexes Fail Silently in High-Write PostgreSQL Workloads",
+      "body": "When optimizing slow SQL queries, junior engineers often add single-column indexes on every WHERE clause column. In production, column order inside a composite index (Leftmost Prefix Rule) dictates whether the query planner performs an Index Seek or falls back to a Sequential Scan.\n\nRule of thumb for your next architecture review: place equality predicates (=) first, and range predicates (>, <, BETWEEN) last.",
+      "skill_tags": [
+        "SQL",
+        "PostgreSQL",
+        "System Design",
+        "Software Architecture"
+      ],
+      "external_url": "https://use-the-index-luke.com/",
+      "likes_count": 18,
+      "liked_by": [],
+      "created_at": "2026-10-30T14:20:00+00:00"
+    },
+    {
+      "id": "pulse-seed-2",
+      "mentor_id": "seed-mentor-fin",
+      "mentor_name": "Jonathan Sterling, CFA",
+      "mentor_headline": "VP of Corporate Finance & Risk Advisory",
+      "primary_domain": "Finance, Accounting & Quantitative Analysis",
+      "post_type": "Career & Hiring Advice",
+      "title": "The #1 Working Capital Mistake in Entry-Level Financial Modeling Tests",
+      "body": "In 80% of financial analyst case interviews I grade, candidates link Net Income to the Cash Flow Statement properly but invert the cash impact of Accounts Receivable (AR) and Inventory.\n\nRemember: an increase in an operating asset (AR or Inventory) is a CASH OUTFLOW, while an increase in Accounts Payable (AP) is a CASH INFLOW. Always run a balance sheet check row (Assets - Liabilities - Equity = 0) before submitting!",
+      "skill_tags": [
+        "Financial Modeling",
+        "Accounting",
+        "Financial Analysis",
+        "Corporate Finance"
+      ],
+      "external_url": null,
+      "likes_count": 14,
+      "liked_by": [],
+      "created_at": "2026-10-30T18:00:00+00:00"
+    },
+    {
+      "id": "pulse-seed-3",
+      "mentor_id": "seed-mentor-culinary",
+      "mentor_name": "Chef Antoine Moreau",
+      "mentor_headline": "Executive Culinary Director & Kitchen Operations Specialist",
+      "primary_domain": "Culinary Arts, Hospitality & Skilled Trades",
+      "post_type": "Industry Insight",
+      "title": "Mastering the Two-Stage Cooling Protocol & Station Mise en Place Under Rush Load",
+      "body": "Whether you run a high-volume fast-food line or a brigade kitchen, two habits separate top operators from chaotic shifts:\n1. Strict Temperature Danger Zone control (cooling cooked batches from 135\u00b0F to 70\u00b0F within 2 hours, and down to 41\u00b0F within 4 hours).\n2. FIFO (First-In, First-Out) pan rotation so prep waste stays under 3.5%.",
+      "skill_tags": [
+        "Food Safety & HACCP",
+        "Kitchen Operations",
+        "Food Preparation",
+        "Sanitation"
+      ],
+      "external_url": null,
+      "likes_count": 21,
+      "liked_by": [],
+      "created_at": "2026-10-31T08:15:00+00:00"
+    },
+    {
+      "id": "pulse-seed-4",
+      "mentor_id": "seed-mentor-data",
+      "mentor_name": "Elena Rostova",
+      "mentor_headline": "Lead Machine Learning & Analytics Engineer",
+      "primary_domain": "AI, Machine Learning & Data Science",
+      "post_type": "Event / Webinar",
+      "title": "Live Workshop This Thursday: Preventing Data Leakage in Time-Series & Tabular ML",
+      "body": "Hosting a 45-minute open workshop this Thursday at 17:00 UTC covering target encoding pitfalls, temporal train/validation splits, and how to defend your evaluation metrics in technical interviews.",
+      "skill_tags": [
+        "Machine Learning",
+        "Data Analysis",
+        "Statistics",
+        "Python"
+      ],
+      "external_url": "https://scikit-learn.org/stable/common_pitfalls.html",
+      "likes_count": 25,
+      "liked_by": [],
+      "created_at": "2026-10-31T10:30:00+00:00"
+    }
+  ],
+  "questions": [
+    {
+      "id": "qa-seed-1",
+      "learner_id": "demo-learner-1",
+      "learner_name": "Alex Rivera",
+      "career_title": "Software Developer",
+      "skill_tag": "SQL",
+      "title": "When should I use a CTE (WITH clause) versus a temporary indexed table in PostgreSQL?",
+      "body": "While doing the SQL micro-learning sprint, I noticed CTEs make complex aggregations readable, but how do they behave on multi-million row joins?",
+      "source_lesson_title": "PostgreSQL Query Optimization & Indexing",
+      "status": "answered",
+      "created_at": "2026-10-29T16:00:00+00:00",
+      "answers": [
+        {
+          "id": "ans-seed-1",
+          "mentor_id": "seed-mentor-swe",
+          "mentor_name": "Dr. Marcus Vance",
+          "mentor_headline": "Principal Distributed Systems Architect",
+          "body": "Great question! Since PostgreSQL 12+, non-recursive CTEs referenced only once are inlined by default (acting like subqueries so index pushdown works). However, if a CTE is referenced multiple times and materialized in memory without indexes, a Temporary Table with an explicit CREATE INDEX on the join key is significantly faster for 5M+ rows.",
+          "upvotes": 12,
+          "upvoted_by": [],
+          "is_verified_mentor": true,
+          "created_at": "2026-10-29T17:15:00+00:00"
+        }
+      ]
+    },
+    {
+      "id": "qa-seed-2",
+      "learner_id": "demo-learner-2",
+      "learner_name": "Maya Lin",
+      "career_title": "Financial Analyst",
+      "skill_tag": "Financial Modeling",
+      "title": "How do you justify WACC terminal growth rate assumptions during an valuation defense?",
+      "body": "If a company is growing revenue at 18% over the 5-year forecast window, why must the perpetuity growth rate (g) in the Gordon Growth Model stay below 2.5%\u20133.0%?",
+      "source_lesson_title": "Discounted Cash Flow (DCF) & Terminal Value",
+      "status": "answered",
+      "created_at": "2026-10-30T11:10:00+00:00",
+      "answers": [
+        {
+          "id": "ans-seed-2",
+          "mentor_id": "seed-mentor-fin",
+          "mentor_name": "Jonathan Sterling, CFA",
+          "mentor_headline": "VP of Corporate Finance & Risk Advisory",
+          "body": "Because a terminal growth rate applies forever (to infinity). Mathematically, if a single firm grew faster than nominal global GDP (typically 2.5%\u20133.0%) forever, that single company would eventually become larger than the entire global economy. If the company still has high growth in Year 5, extend your explicit forecast to a 10-year two-stage DCF before applying terminal value.",
+          "upvotes": 9,
+          "upvoted_by": [],
+          "is_verified_mentor": true,
+          "created_at": "2026-10-30T12:05:00+00:00"
+        }
+      ]
+    },
+    {
+      "id": "qa-seed-3",
+      "learner_id": "demo-learner-3",
+      "learner_name": "Devon Brooks",
+      "career_title": "Cooks, Fast Food",
+      "skill_tag": "Food Safety & HACCP",
+      "title": "What is the exact corrective action if a hot-holding line drops below 135\u00b0F (57\u00b0C) during peak lunch?",
+      "body": "If our steam table thermometer reads 124\u00b0F during a rush check, can we just turn up the dial on the holding well, or do we have to reheat on the range?",
+      "source_lesson_title": "HACCP Critical Control Points in Commercial Kitchens",
+      "status": "answered",
+      "created_at": "2026-10-31T09:00:00+00:00",
+      "answers": [
+        {
+          "id": "ans-seed-3",
+          "mentor_id": "seed-mentor-culinary",
+          "mentor_name": "Chef Antoine Moreau",
+          "mentor_headline": "Executive Culinary Director & Kitchen Operations Specialist",
+          "body": "Never use a hot-holding steam table to reheat food! Holding wells are engineered only to maintain temperature, not bring food rapidly through the danger zone. Corrective action: If it has been under 135\u00b0F for less than 2 hours, rapidly reheat the batch on a stove/oven to 165\u00b0F (74\u00b0C) for at least 15 seconds before returning it to a verified 135\u00b0F+ holding well.",
+          "upvotes": 15,
+          "upvoted_by": [],
+          "is_verified_mentor": true,
+          "created_at": "2026-10-31T09:40:00+00:00"
+        }
+      ]
+    }
+  ]
+}

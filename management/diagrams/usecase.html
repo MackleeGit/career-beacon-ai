@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Use Case Diagram - Dual Semantic Recommendation Framework</title>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px;
+            margin: 0;
+        }
+        .figure-title {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #222;
+        }
+        .canvas-card {
+            background: #ffffff;
+            border: 1px solid #d0d7de;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            padding: 20px;
+        }
+        text {
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="figure-title">Figure 4.3: Use Case Diagram</div>
+
+    <div class="canvas-card">
+        <svg width="1050" height="720" viewBox="0 0 1050 720" xmlns="http://www.w3.org/2000/svg">
+            
+            <defs>
+                <!-- Solid Arrowhead -->
+                <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#333" />
+                </marker>
+                <!-- Dashed Dependency Arrowhead -->
+                <marker id="dashed-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#555" />
+                </marker>
+            </defs>
+
+            <!-- ================= SYSTEM BOUNDARY ================= -->
+            <rect x="200" y="20" width="620" height="680" rx="6" fill="#fafafa" stroke="#444" stroke-width="2" />
+            <text x="510" y="48" font-size="15" font-weight="bold" fill="#111" text-anchor="middle">Dual Semantic Recommendation Framework</text>
+
+            <!-- ================= ACTORS ================= -->
+            
+            <!-- LEARNER ACTOR (Left Top) -->
+            <g transform="translate(70, 160)">
+                <circle cx="30" cy="20" r="16" fill="#fff" stroke="#222" stroke-width="2"/> <!-- Head -->
+                <line x1="30" y1="36" x2="30" y2="75" stroke="#222" stroke-width="2"/> <!-- Body -->
+                <line x1="5" y1="48" x2="55" y2="48" stroke="#222" stroke-width="2"/> <!-- Arms -->
+                <line x1="30" y1="75" x2="10" y2="105" stroke="#222" stroke-width="2"/> <!-- Left Leg -->
+                <line x1="30" y1="75" x2="50" y2="105" stroke="#222" stroke-width="2"/> <!-- Right Leg -->
+                <text x="30" y="125" font-size="14" font-weight="bold" text-anchor="middle" fill="#222">Learner</text>
+            </g>
+
+            <!-- MENTOR ACTOR (Left Bottom) -->
+            <g transform="translate(70, 480)">
+                <circle cx="30" cy="20" r="16" fill="#fff" stroke="#222" stroke-width="2"/>
+                <line x1="30" y1="36" x2="30" y2="75" stroke="#222" stroke-width="2"/>
+                <line x1="5" y1="48" x2="55" y2="48" stroke="#222" stroke-width="2"/>
+                <line x1="30" y1="75" x2="10" y2="105" stroke="#222" stroke-width="2"/>
+                <line x1="30" y1="75" x2="50" y2="105" stroke="#222" stroke-width="2"/>
+                <text x="30" y="125" font-size="14" font-weight="bold" text-anchor="middle" fill="#222">Mentor</text>
+            </g>
+
+            <!-- GOOGLE GEMINI API (Right Center) -->
+            <g transform="translate(900, 140)">
+                <circle cx="30" cy="20" r="16" fill="#fff" stroke="#222" stroke-width="2"/>
+                <line x1="30" y1="36" x2="30" y2="75" stroke="#222" stroke-width="2"/>
+                <line x1="5" y1="48" x2="55" y2="48" stroke="#222" stroke-width="2"/>
+                <line x1="30" y1="75" x2="10" y2="105" stroke="#222" stroke-width="2"/>
+                <line x1="30" y1="75" x2="50" y2="105" stroke="#222" stroke-width="2"/>
+                <text x="30" y="125" font-size="13" font-weight="bold" text-anchor="middle" fill="#222">Google Gemini API</text>
+                <text x="30" y="140" font-size="11" fill="#666" text-anchor="middle">«System»</text>
+            </g>
+
+            <!-- ================= USE CASES (OVALS) ================= -->
+            
+            <!-- Column 1 (Left Side of System Boundary) -->
+            <!-- UC1: Register & Authenticate -->
+            <g transform="translate(240, 75)">
+                <ellipse cx="110" cy="25" rx="100" ry="24" fill="#e8f4f8" stroke="#2b6cb0" stroke-width="1.5"/>
+                <text x="110" y="29" font-size="12" text-anchor="middle" fill="#1a365d">Register & Authenticate Account</text>
+            </g>
+
+            <!-- UC2: Input Target Career Path -->
+            <g transform="translate(240, 150)">
+                <ellipse cx="110" cy="25" rx="100" ry="24" fill="#e8f4f8" stroke="#2b6cb0" stroke-width="1.5"/>
+                <text x="110" y="29" font-size="12" text-anchor="middle" fill="#1a365d">Input Target Career Path</text>
+            </g>
+
+            <!-- UC3: Receive Micro-Learning Feed -->
+            <g transform="translate(240, 240)">
+                <ellipse cx="110" cy="25" rx="105" ry="24" fill="#e8f4f8" stroke="#2b6cb0" stroke-width="1.5"/>
+                <text x="110" y="29" font-size="11.5" text-anchor="middle" fill="#1a365d">Receive Micro-Learning Feed</text>
+            </g>
+
+            <!-- UC4: Complete Adaptive Quizzes -->
+            <g transform="translate(240, 330)">
+                <ellipse cx="110" cy="25" rx="100" ry="24" fill="#e8f4f8" stroke="#2b6cb0" stroke-width="1.5"/>
+                <text x="110" y="29" font-size="12" text-anchor="middle" fill="#1a365d">Complete Adaptive Quizzes</text>
+            </g>
+
+            <!-- UC5: View Semantic Mentor Matches -->
+            <g transform="translate(240, 420)">
+                <ellipse cx="110" cy="25" rx="105" ry="24" fill="#e8f4f8" stroke="#2b6cb0" stroke-width="1.5"/>
+                <text x="110" y="29" font-size="11.5" text-anchor="middle" fill="#1a365d">View Semantic Mentor Matches</text>
+            </g>
+
+            <!-- UC6: Book Mentorship Session -->
+            <g transform="translate(240, 510)">
+                <ellipse cx="110" cy="25" rx="100" ry="24" fill="#e8f4f8" stroke="#2b6cb0" stroke-width="1.5"/>
+                <text x="110" y="29" font-size="12" text-anchor="middle" fill="#1a365d">Book Mentorship Session</text>
+            </g>
+
+            <!-- UC7: Submit Bio & Credentials -->
+            <g transform="translate(240, 600)">
+                <ellipse cx="110" cy="25" rx="100" ry="24" fill="#e8f4f8" stroke="#2b6cb0" stroke-width="1.5"/>
+                <text x="110" y="29" font-size="12" text-anchor="middle" fill="#1a365d">Submit Bio & Credentials</text>
+            </g>
+
+            <!-- Column 2 (Right Side of System Boundary - Targets for Includes) -->
+            <!-- UC8: Generate Skill Taxonomy -->
+            <g transform="translate(580, 150)">
+                <ellipse cx="105" cy="25" rx="95" ry="24" fill="#e6fffa" stroke="#234e52" stroke-width="1.5"/>
+                <text x="105" y="29" font-size="12" text-anchor="middle" fill="#124c5f">Generate Skill Taxonomy</text>
+            </g>
+
+            <!-- UC9: View Shared Skill Profile -->
+            <g transform="translate(580, 240)">
+                <ellipse cx="105" cy="25" rx="95" ry="24" fill="#e6fffa" stroke="#234e52" stroke-width="1.5"/>
+                <text x="105" y="29" font-size="12" text-anchor="middle" fill="#124c5f">View Shared Skill Profile</text>
+            </g>
+
+            <!-- UC10: Update Skill Weights -->
+            <g transform="translate(580, 330)">
+                <ellipse cx="105" cy="25" rx="100" ry="24" fill="#e6fffa" stroke="#234e52" stroke-width="1.5"/>
+                <text x="105" y="29" font-size="11.5" text-anchor="middle" fill="#124c5f">Update Skill Weights (20%-100%)</text>
+            </g>
+
+
+            <!-- ================= ASSOCIATION LINES (ACTORS TO USE CASES) ================= -->
+            
+            <!-- Learner Connections (Clean orthogonal/straight lines to Column 1) -->
+            <path d="M 130 210 L 240 100" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+            <path d="M 130 210 L 240 175" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+            <path d="M 130 210 L 235 265" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+            <path d="M 130 210 L 240 355" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+            <path d="M 130 210 L 170 210 L 170 445 L 235 445" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+            <path d="M 130 210 L 160 210 L 160 535 L 240 535" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+
+            <!-- Mentor Connections -->
+            <path d="M 130 530 L 180 530 L 180 100 L 240 100" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+            <path d="M 130 530 L 240 535" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+            <path d="M 130 530 L 240 625" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+
+            <!-- Google Gemini API Connection -->
+            <path d="M 900 190 L 785 175" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)" fill="none" />
+
+
+            <!-- ================= INCLUDE DEPENDENCIES (DASHED ARROWS) ================= -->
+
+            <!-- Input Career -> Generate Skill Taxonomy -->
+            <path d="M 440 175 L 575 175" stroke="#555" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#dashed-arrow)" fill="none"/>
+            <text x="507" y="167" font-size="10" fill="#444" text-anchor="middle">«include»</text>
+
+            <!-- Micro-Learning Feed -> Shared Skill Profile -->
+            <path d="M 450 265 L 575 265" stroke="#555" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#dashed-arrow)" fill="none"/>
+            <text x="512" y="257" font-size="10" fill="#444" text-anchor="middle">«include»</text>
+
+            <!-- Adaptive Quizzes -> Update Skill Weights -->
+            <path d="M 440 355 L 575 355" stroke="#555" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#dashed-arrow)" fill="none"/>
+            <text x="507" y="347" font-size="10" fill="#444" text-anchor="middle">«include»</text>
+
+            <!-- Mentor Matches -> Shared Skill Profile (Diagonal up-right clean path) -->
+            <path d="M 445 435 L 540 435 L 540 280 L 580 280" stroke="#555" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#dashed-arrow)" fill="none"/>
+            <text x="540" y="380" font-size="10" fill="#444" text-anchor="middle" transform="rotate(-90 535 380)">«include»</text>
+
+        </svg>
+    </div>
+
+</body>
+</html>

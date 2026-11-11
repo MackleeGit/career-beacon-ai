@@ -31,7 +31,7 @@ _jwks_cache: Optional[dict] = None
 _jwks_fetched_at: float = 0
 _JWKS_TTL = 3600  # seconds
 
-EXCLUDED_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/api/test/db-audit"}
+EXCLUDED_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/api/onboarding/fields"}
 
 
 def get_verified_user_id(request: Request) -> str:

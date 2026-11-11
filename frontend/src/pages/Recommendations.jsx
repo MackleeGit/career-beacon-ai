@@ -3,6 +3,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   getCurrentDailyDrop,
   rerollDailyDrop,
+  triggerDailyDropWorker,
+  getCompletedLibrary,
   recordContentOpen,
   submitQuiz,
   submitLessonFeedback,
@@ -84,6 +86,41 @@ const SOURCE_BADGE_META = {
     color: 'var(--accent)',
     border: 'var(--accent-border)',
   },
+  arxiv: {
+    Icon: GraduationCap,
+    label: 'arXiv Preprint',
+    bg: 'var(--status-info-bg)',
+    color: 'var(--status-info)',
+    border: 'var(--status-info-bd)',
+  },
+  owasp: {
+    Icon: Code2,
+    label: 'OWASP Security Standard',
+    bg: 'var(--status-warning-bg)',
+    color: 'var(--status-warning)',
+    border: 'var(--status-warning-bd)',
+  },
+  ecfr: {
+    Icon: FileText,
+    label: 'U.S. eCFR Regulatory',
+    bg: 'var(--surface-elevated)',
+    color: 'var(--text-secondary)',
+    border: 'var(--border)',
+  },
+  osha: {
+    Icon: Briefcase,
+    label: 'OSHA / Title 29 Safety',
+    bg: 'var(--status-warning-bg)',
+    color: 'var(--status-warning)',
+    border: 'var(--status-warning-bd)',
+  },
+  finance: {
+    Icon: Briefcase,
+    label: 'SEC / Corporate Finance',
+    bg: 'var(--status-info-bg)',
+    color: 'var(--status-info)',
+    border: 'var(--status-info-bd)',
+  },
   wikipedia: {
     Icon: Globe,
     label: 'Reference Overview',
@@ -128,6 +165,7 @@ export default function Recommendations({
   const [loadingDailyDrop, setLoadingDailyDrop] = useState(true);
   const [dailyDropError, setDailyDropError] = useState(null);
   const [rerollingDrop, setRerollingDrop] = useState(false);
+  const [runningWorker, setRunningWorker] = useState(false);
 
   const [completedLibrary, setCompletedLibrary] = useState([]);
   const [loadingCompleted, setLoadingCompleted] = useState(false);
@@ -240,19 +278,19 @@ export default function Recommendations({
     {
       phase: 1,
       title: 'Analyzing Skill Graph & Priority Deficits',
-      subtitle: `Prioritizing highest-yield competency gap for ${career?.title || 'your career path'}...`,
+      subtitle: `Prioritizing highest-yield competency gaps for ${career?.title || 'your career path'}...`,
       badge: 'Phase 1/3'
     },
     {
       phase: 2,
       title: 'Querying Verified Educational Repositories',
-      subtitle: 'Filtering domain literature across Europe PMC, MDN Web Docs & Open Courseware...',
+      subtitle: 'Filtering domain literature across YouTube Education, Europe PMC, MDN, arXiv & eCFR...',
       badge: 'Phase 2/3'
     },
     {
       phase: 3,
       title: 'Synthesizing Self-Contained Micro-Lessons',
-      subtitle: 'Calibrating 3 focused instructional modules and 5-question verified checkpoints...',
+      subtitle: 'Calibrating 5 focused instructional modules and 5-question verified checkpoints...',
       badge: 'Phase 3/3'
     }
   ];
@@ -314,12 +352,33 @@ export default function Recommendations({
       const res = await rerollDailyDrop();
       if (res?.drop) {
         setDailyDrop(res.drop);
-        setFeedbackToast('Daily drop shuffled to secondary deficit.');
+        setFeedbackToast('Daily drop shuffled to reserve 5-lesson set.');
       }
     } catch (err) {
       setFeedbackToast(err.message || 'Could not shuffle drop.');
     } finally {
       setRerollingDrop(false);
+    }
+  };
+
+  const handleTriggerDailyWorker = async () => {
+    if (runningWorker) return;
+    setRunningWorker(true);
+    setLoadingDailyDrop(true);
+    setDailyDropError(null);
+    try {
+      const res = await triggerDailyDropWorker();
+      if (res?.drop) {
+        setDailyDrop(res.drop);
+        setExpandedLessons(new Set());
+        setFeedbackToast('Daily Drop worker executed: curated 5 fresh lessons + 5 reserve lessons.');
+      }
+    } catch (err) {
+      console.error('Daily Drop worker error:', err);
+      setDailyDropError(err.message || 'Could not run Daily Drop worker.');
+    } finally {
+      setRunningWorker(false);
+      setLoadingDailyDrop(false);
     }
   };
 
@@ -375,7 +434,7 @@ export default function Recommendations({
           setDailyDrop((prev) => {
             if (!prev) return prev;
             const passedCount = (prev.passed_count || 0) + 1;
-            const isComplete = passedCount >= (prev.total_count || 3);
+            const isComplete = passedCount >= (prev.total_count || 5);
             const streak = isComplete
               ? { ...prev.streak, current_streak: (prev.streak?.current_streak || 0) + 1, completed_today: true }
               : prev.streak;
@@ -506,14 +565,19 @@ export default function Recommendations({
           <div>
             <h2 style={{ fontSize: '1.35rem', marginBottom: '6px' }}>
               {feedSubTab === 'daily'
-                ? `Daily Focus: ${dailyDrop?.target_skill_name || 'Assessed Priority Gap'}`
+                ? `Daily Focus: ${dailyDrop?.target_skill_name || 'Assessed Priority Gaps'}`
                 : feedSubTab === 'completed'
                 ? 'Completed & Reviewed Library'
                 : 'Saved Lessons'}
             </h2>
+            {feedSubTab === 'daily' && Array.isArray(dailyDrop?.focus_skill_names) && dailyDrop.focus_skill_names.length > 1 && (
+              <div className="mono" style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                Active skills covered today: {dailyDrop.focus_skill_names.join(' · ')}
+              </div>
+            )}
             <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', maxWidth: '620px', lineHeight: 1.55 }}>
               {feedSubTab === 'daily'
-                ? "Three verified modules calibrated to today's priority competency. Complete each 5-question checkpoint (60% to pass) to extend your daily streak."
+                ? 'Five curated modules calibrated to your priority skill gaps and proficiency history. Complete each 5-question checkpoint (60% to pass) to extend your daily streak.'
                 : feedSubTab === 'completed'
                 ? 'Archived micro-learning modules where you passed the 5-question checkpoint. Review concepts and re-take quizzes anytime.'
                 : 'Bookmarked lessons saved for reference during your study sessions.'}
@@ -521,13 +585,26 @@ export default function Recommendations({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {feedSubTab === 'daily' && (
+              <button
+                type="button"
+                className="btn btn--secondary btn--sm"
+                onClick={handleTriggerDailyWorker}
+                disabled={runningWorker || loadingDailyDrop}
+                title="Force-run the Daily Drop curation worker (curates 5 fresh lessons + 5 reserve lessons and resets daily shuffle)"
+              >
+                <RotateCcw size={13} />
+                <span>{runningWorker ? 'Running Worker...' : 'Run Daily Drop Worker'}</span>
+              </button>
+            )}
+
             {feedSubTab === 'daily' && dailyDrop?.can_reroll && (
               <button
                 type="button"
                 className="btn btn--secondary btn--sm"
                 onClick={handleRerollDailyDrop}
-                disabled={rerollingDrop}
-                title="Shuffle sprint to secondary deficit (1 per day)"
+                disabled={rerollingDrop || runningWorker}
+                title="Swap to your 5-lesson reserve set (1 free shuffle per day)"
               >
                 <Shuffle size={13} />
                 <span>{rerollingDrop ? 'Shuffling...' : 'Shuffle Drop (1 left today)'}</span>
@@ -584,7 +661,7 @@ export default function Recommendations({
           >
             <Sparkles size={14} />
             <span>Daily Drop</span>
-            <span className="segmented-tab__count">{dailyDrop?.lessons?.length || 3}</span>
+            <span className="segmented-tab__count">{dailyDrop?.lessons?.length || 5}</span>
           </button>
 
           <button
@@ -614,39 +691,24 @@ export default function Recommendations({
 
       </div>
 
-      {/* Loading State with Progressive Generation Pipeline */}
+      {/* Loading State with Real Progress Indicator */}
       {isCurrentTabLoading && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }} aria-busy="true" aria-label="Curating daily focus drop">
           <div
             className="card"
             style={{
-              padding: '24px',
-              border: '1px solid var(--accent-border)',
+              padding: '20px 24px',
+              border: '1px solid var(--border)',
               background: 'var(--surface)',
-              position: 'relative',
-              overflow: 'hidden',
               borderRadius: 'var(--r-lg)',
             }}
           >
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                height: '3px',
-                background: 'linear-gradient(90deg, var(--accent) 0%, var(--status-info) 50%, var(--accent) 100%)',
-                backgroundSize: '200% 100%',
-                animation: 'pulse 1.8s ease-in-out infinite',
-              }}
-            />
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div
                   style={{
-                    width: '42px',
-                    height: '42px',
+                    width: '38px',
+                    height: '38px',
                     borderRadius: 'var(--r-md)',
                     background: 'var(--accent-soft)',
                     color: 'var(--accent)',
@@ -656,50 +718,29 @@ export default function Recommendations({
                     flexShrink: 0,
                   }}
                 >
-                  <Compass size={22} className="spinning" />
+                  <Compass size={20} className="spinning" />
                 </div>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
-                    <span className="badge badge--accent" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
-                      {PIPELINE_STEPS[pipelinePhase].badge}
-                    </span>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Curating 3-Lesson Daily Drop</span>
-                  </div>
-                  <h4 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {PIPELINE_STEPS[pipelinePhase].title}
+                  <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Curating Daily Drop
                   </h4>
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                    Synthesizing 3 personalized micro-lessons for {career?.title || 'your target career'}...
+                  </p>
                 </div>
               </div>
-
-              {/* Stage Progress Pills */}
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', background: 'var(--surface-sunken)', padding: '5px 10px', borderRadius: 'var(--r-full)', border: '1px solid var(--border-subtle)' }}>
-                {PIPELINE_STEPS.map((step, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      width: idx === pipelinePhase ? '24px' : '8px',
-                      height: '8px',
-                      borderRadius: 'var(--r-full)',
-                      background: idx <= pipelinePhase ? 'var(--accent)' : 'var(--border-strong)',
-                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                    }}
-                    title={step.title}
-                  />
-                ))}
-              </div>
+              <span className="badge badge--accent" style={{ fontSize: '0.72rem', padding: '3px 8px' }}>
+                In Progress
+              </span>
             </div>
 
-            <p style={{ margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              {PIPELINE_STEPS[pipelinePhase].subtitle}
-            </p>
-
-            <div className="progress-bar" style={{ height: '4px' }}>
+            <div className="progress-bar" style={{ height: '3px', marginTop: '12px' }}>
               <div
                 className="progress-bar__fill"
                 style={{
-                  width: `${((pipelinePhase + 1) / 3) * 100}%`,
-                  transition: 'width 0.4s ease',
+                  width: '100%',
                   background: 'var(--accent)',
+                  animation: 'indeterminate 1.8s infinite linear',
                 }}
               />
             </div>
@@ -720,7 +761,7 @@ export default function Recommendations({
           <button
             type="button"
             className="btn btn--secondary btn--sm"
-            onClick={feedSubTab === 'daily' ? fetchDailyDrop : fetchFeed}
+            onClick={feedSubTab === 'daily' ? fetchDailyDrop : fetchCompleted}
           >
             <RotateCcw size={14} /> Try again
           </button>
@@ -771,7 +812,7 @@ export default function Recommendations({
             <>
               <h3 style={{ fontSize: '1.08rem', marginBottom: '6px' }}>Welcome to Career Beacon</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', maxWidth: '440px', margin: '0 auto 18px' }}>
-                Select your target career to calibrate your skill graph and unlock your daily 3-lesson learning drops.
+                Select your target career to calibrate your skill graph and unlock your daily 5-lesson learning drops.
               </p>
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
                 {onNavigateToGraph && (
@@ -1128,15 +1169,35 @@ export default function Recommendations({
                           )}
                         </div>
 
-                        <button
-                          type="button"
-                          className={`btn ${isPassed ? 'btn--secondary' : 'btn--primary'} btn--sm`}
-                          onClick={() => handleStartQuiz(lesson)}
-                        >
-                          {isPassed
-                            ? `Retake Quiz (${lesson.quizzes?.length || 0} questions)`
-                            : `Take Quiz (${lesson.quizzes?.length || 0} questions)`}
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {onAskMentorAboutLesson && (
+                            <button
+                              type="button"
+                              className="btn btn--secondary btn--sm"
+                              onClick={() => onAskMentorAboutLesson({
+                                skill_tag: lesson.skill_name || 'General Career',
+                                title: `Clarification on ${lesson.skill_name}: ${lesson.title}`,
+                                body: `I am studying the micro-learning lesson "${lesson.title}" (${lesson.skill_name}) and would appreciate mentorship guidance on the core trade-offs and edge cases.`,
+                                source_lesson_title: lesson.title,
+                              })}
+                              title="Post a question about this lesson to the Mentorship Wall"
+                            >
+                              <HelpCircle size={14} /> Ask Mentor
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            className={`btn ${isPassed ? 'btn--secondary' : 'btn--primary'} btn--sm`}
+                            onClick={() => handleStartQuiz(lesson)}
+                          >
+                            {isPassed
+                              ? `Retake Quiz (${lesson.quizzes?.length || 0} questions)`
+                              : lesson.lifecycle_state === 'retry_needed'
+                              ? `Retry Quiz (${lesson.quizzes?.length || 0} questions)`
+                              : `Take Quiz (${lesson.quizzes?.length || 0} questions)`}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>

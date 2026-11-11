@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Conceptual ER Diagram - Radial Layout</title>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            margin: 0;
+        }
+        .figure-title {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #222;
+        }
+        .canvas-card {
+            background: #ffffff;
+            border: 1px solid #d0d7de;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+            padding: 15px;
+            width: 100%;
+            max-width: 1050px;
+            box-sizing: border-box;
+        }
+        svg {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        text {
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            fill: #222;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="figure-title">Figure 4.2: Conceptual ER Diagram (Radial Schema)</div>
+
+    <div class="canvas-card">
+        <svg viewBox="0 0 1020 720" xmlns="http://www.w3.org/2000/svg">
+            
+            <!-- CONNECTOR LINES -->
+            <!-- Learners Attributes (Fanning Left) -->
+            <line x1="230" y1="345" x2="135" y2="245" stroke="#333" stroke-width="1.2"/>
+            <line x1="230" y1="355" x2="120" y2="310" stroke="#333" stroke-width="1.2"/>
+            <line x1="230" y1="365" x2="120" y2="380" stroke="#333" stroke-width="1.2"/>
+            <line x1="230" y1="375" x2="140" y2="445" stroke="#333" stroke-width="1.2"/>
+
+            <!-- Learners to Relationships -->
+            <line x1="300" y1="338" x2="300" y2="250" stroke="#333" stroke-width="1.2"/>
+            <line x1="345" y1="338" x2="470" y2="235" stroke="#333" stroke-width="1.2"/>
+            <line x1="370" y1="360" x2="470" y2="360" stroke="#333" stroke-width="1.2"/>
+            <line x1="340" y1="382" x2="400" y2="475" stroke="#333" stroke-width="1.2"/>
+
+            <!-- Relationships to Target Entities -->
+            <line x1="300" y1="210" x2="300" y2="144" stroke="#333" stroke-width="1.2"/>
+            <line x1="560" y1="205" x2="720" y2="140" stroke="#333" stroke-width="1.2"/>
+            <line x1="590" y1="360" x2="720" y2="360" stroke="#333" stroke-width="1.2"/>
+            <line x1="480" y1="505" x2="560" y2="580" stroke="#333" stroke-width="1.2"/>
+
+            <!-- Skill Profiles Attributes (Fanning Top) -->
+            <line x1="240" y1="100" x2="140" y2="50" stroke="#333" stroke-width="1.2"/>
+            <line x1="300" y1="100" x2="300" y2="40" stroke="#333" stroke-width="1.2"/>
+            <line x1="360" y1="100" x2="470" y2="50" stroke="#333" stroke-width="1.2"/>
+
+            <!-- Quiz Results Attributes (Fanning Top-Right) -->
+            <line x1="740" y1="110" x2="675" y2="45" stroke="#333" stroke-width="1.2"/>
+            <line x1="790" y1="110" x2="790" y2="40" stroke="#333" stroke-width="1.2"/>
+            <line x1="840" y1="110" x2="925" y2="55" stroke="#333" stroke-width="1.2"/>
+
+            <!-- Content Items Attributes (Fanning Right) -->
+            <line x1="840" y1="345" x2="915" y2="260" stroke="#333" stroke-width="1.2"/>
+            <line x1="860" y1="358" x2="945" y2="330" stroke="#333" stroke-width="1.2"/>
+            <line x1="860" y1="368" x2="945" y2="410" stroke="#333" stroke-width="1.2"/>
+            <line x1="840" y1="375" x2="910" y2="480" stroke="#333" stroke-width="1.2"/>
+
+            <!-- Mentor Profiles Attributes (Fanning Bottom) -->
+            <line x1="550" y1="624" x2="385" y2="670" stroke="#333" stroke-width="1.2"/>
+            <line x1="590" y1="624" x2="510" y2="680" stroke="#333" stroke-width="1.2"/>
+            <line x1="630" y1="624" x2="650" y2="680" stroke="#333" stroke-width="1.2"/>
+            <line x1="670" y1="615" x2="800" y2="660" stroke="#333" stroke-width="1.2"/>
+
+
+            <!-- ENTITIES (RECTANGLES) -->
+            <!-- Hub Entity -->
+            <rect x="230" y="338" width="140" height="44" rx="5" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+            <text x="300" y="365" font-weight="bold" text-anchor="middle">Learners</text>
+
+            <!-- Radial Entities -->
+            <rect x="230" y="100" width="140" height="44" rx="5" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+            <text x="300" y="127" font-weight="bold" text-anchor="middle">Skill Profiles</text>
+
+            <rect x="720" y="110" width="140" height="44" rx="5" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+            <text x="790" y="137" font-weight="bold" text-anchor="middle">Quiz Results</text>
+
+            <rect x="720" y="340" width="140" height="44" rx="5" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+            <text x="790" y="367" font-weight="bold" text-anchor="middle">Content Items</text>
+
+            <rect x="540" y="580" width="140" height="44" rx="5" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+            <text x="610" y="607" font-weight="bold" text-anchor="middle">Mentor Profiles</text>
+
+
+            <!-- RELATIONSHIPS (DIAMONDS) -->
+            <polygon points="300,210 350,230 300,250 250,230" fill="#ffffff" stroke="#222" stroke-width="1.2"/>
+            <text x="300" y="234" font-size="11" text-anchor="middle">maintains</text>
+
+            <polygon points="515,205 565,220 515,235 465,220" fill="#ffffff" stroke="#222" stroke-width="1.2"/>
+            <text x="515" y="224" font-size="11" text-anchor="middle">completes</text>
+
+            <polygon points="530,345 590,360 530,375 470,360" fill="#ffffff" stroke="#222" stroke-width="1.2"/>
+            <text x="530" y="364" font-size="11" text-anchor="middle">receives</text>
+
+            <polygon points="440,475 500,490 440,505 380,490" fill="#ffffff" stroke="#222" stroke-width="1.2"/>
+            <text x="440" y="494" font-size="11" text-anchor="middle">matched with</text>
+
+
+            <!-- ATTRIBUTES (OVALS) -->
+            <!-- Learners Attributes -->
+            <ellipse cx="95" cy="235" rx="42" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="95" y="239" font-size="11" text-anchor="middle">userId</text>
+
+            <ellipse cx="80" cy="310" rx="42" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="80" y="314" font-size="11" text-anchor="middle">fullName</text>
+
+            <ellipse cx="80" cy="380" rx="40" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="80" y="384" font-size="11" text-anchor="middle">email</text>
+
+            <ellipse cx="95" cy="455" rx="52" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="95" y="459" font-size="11" text-anchor="middle">targetCareer</text>
+
+            <!-- Skill Profiles Attributes -->
+            <ellipse cx="100" cy="40" rx="42" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="100" y="44" font-size="11" text-anchor="middle">profileId</text>
+
+            <ellipse cx="300" cy="32" rx="44" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="300" y="36" font-size="11" text-anchor="middle">skillName</text>
+
+            <ellipse cx="510" cy="45" rx="58" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="510" y="49" font-size="11" text-anchor="middle">proficiencyWeight</text>
+
+            <!-- Quiz Results Attributes -->
+            <ellipse cx="650" cy="38" rx="40" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="650" y="42" font-size="11" text-anchor="middle">quizId</text>
+
+            <ellipse cx="790" cy="32" rx="38" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="790" y="36" font-size="11" text-anchor="middle">score</text>
+
+            <ellipse cx="940" cy="50" rx="46" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="940" y="54" font-size="11" text-anchor="middle">timestamp</text>
+
+            <!-- Content Items Attributes -->
+            <ellipse cx="930" cy="245" rx="44" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="930" y="249" font-size="11" text-anchor="middle">contentId</text>
+
+            <ellipse cx="955" cy="330" rx="38" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="955" y="334" font-size="11" text-anchor="middle">title</text>
+
+            <ellipse cx="955" cy="410" rx="44" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="955" y="414" font-size="11" text-anchor="middle">sourceUrl</text>
+
+            <ellipse cx="925" cy="495" rx="60" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="925" y="499" font-size="11" text-anchor="middle">contentEmbedding</text>
+
+            <!-- Mentor Profiles Attributes -->
+            <ellipse cx="340" cy="675" rx="42" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="340" y="679" font-size="11" text-anchor="middle">mentorId</text>
+
+            <ellipse cx="490" cy="685" rx="44" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="490" y="689" font-size="11" text-anchor="middle">fullName</text>
+
+            <ellipse cx="650" cy="685" rx="46" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="650" y="689" font-size="11" text-anchor="middle">mentorBio</text>
+
+            <ellipse cx="830" cy="670" rx="60" ry="16" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+            <text x="830" y="674" font-size="11" text-anchor="middle">mentorEmbedding</text>
+
+        </svg>
+    </div>
+
+</body>
+</html>

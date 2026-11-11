@@ -9,6 +9,15 @@ import {
   verifyAdminMentor,
   getAdminFlaggedContent,
   takeAdminModerationAction,
+  getAdminIngestionOverview,
+  getAdminIngestionLessons,
+  triggerAdminIngestion,
+  getAdminIngestionPriorities,
+  runAdminNightlyBatch,
+  runAdminDailyDropBatch,
+  getAdminIngestionBatches,
+  updateAdminBatchStatus,
+  editAdminIngestionLesson,
 } from '../lib/api';
 import ThemeSelector from '../components/ThemeSelector';
 import Toast from '../components/Toast';
@@ -27,6 +36,9 @@ import {
   Check,
   Trash2,
   Award,
+  GitCommit,
+  Edit3,
+  ExternalLink,
 } from '../components/Icons';
 
 export default function AdminPortal({ user, onSignOut }) {
@@ -40,6 +52,29 @@ export default function AdminPortal({ user, onSignOut }) {
   const [toastMessage, setToastMessage] = useState(null);
   const [showLogoutToast, setShowLogoutToast] = useState(false);
   const [actionInProgress, setActionInProgress] = useState(false);
+
+  // Content Ingestion & Reservoir State
+  const [ingestionOverview, setIngestionOverview] = useState(null);
+  const [reservoirLessons, setReservoirLessons] = useState([]);
+  const [skillPriorities, setSkillPriorities] = useState([]);
+  const [ingestionBatches, setIngestionBatches] = useState([]);
+  const [selectedBatch, setSelectedBatch] = useState(null);
+  const [editingLesson, setEditingLesson] = useState(null);
+  const [editForm, setEditForm] = useState({
+    title: '',
+    summary: '',
+    concept_overview: '',
+    practice_scenario: '',
+    difficulty_level: 2,
+    quizzes: [],
+  });
+  const [savingLesson, setSavingLesson] = useState(false);
+  const [selectedCareer, setSelectedCareer] = useState('Backend Software Engineer');
+  const [selectedSkill, setSelectedSkill] = useState('RESTful API Design & Integration');
+  const [ingestionLogs, setIngestionLogs] = useState([]);
+  const [ingesting, setIngesting] = useState(false);
+  const [batchIngesting, setBatchIngesting] = useState(false);
+  const [batchPersonalizing, setBatchPersonalizing] = useState(false);
 
   const loadAdminData = async () => {
     setLoading(true);
@@ -59,6 +94,114 @@ export default function AdminPortal({ user, onSignOut }) {
       setToastMessage('Failed to load system metrics.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadIngestionData = async () => {
+    try {
+      const [overviewRes, lessonsRes, prioritiesRes, batchesRes] = await Promise.all([
+        getAdminIngestionOverview(),
+        getAdminIngestionLessons(50),
+        getAdminIngestionPriorities(),
+        getAdminIngestionBatches(),
+      ]);
+      setIngestionOverview(overviewRes);
+      setReservoirLessons(lessonsRes.lessons || []);
+      setSkillPriorities(prioritiesRes.priorities || []);
+      setIngestionBatches(batchesRes.batches || []);
+    } catch (err) {
+      console.error('Failed to load ingestion data:', err);
+    }
+  };
+
+  const handleBatchStatusChange = async (batchId, newStatus) => {
+    try {
+      const res = await updateAdminBatchStatus(batchId, newStatus);
+      setToastMessage(res.message || `Commit status updated to ${newStatus}.`);
+      await loadIngestionData();
+    } catch (err) {
+      setToastMessage(`Failed to update batch: ${err.message}`);
+    }
+  };
+
+  const handleOpenEditLesson = (lesson) => {
+    setEditingLesson(lesson);
+    setEditForm({
+      title: lesson.title || '',
+      summary: lesson.summary || '',
+      concept_overview: lesson.concept_overview || '',
+      practice_scenario: lesson.practice_scenario || '',
+      difficulty_level: lesson.difficulty_level || 2,
+      quizzes: lesson.quizzes || [],
+    });
+  };
+
+  const handleSaveEditLesson = async () => {
+    if (!editingLesson) return;
+    setSavingLesson(true);
+    try {
+      await editAdminIngestionLesson(editingLesson.id, editForm);
+      setToastMessage(`Lesson '${editForm.title}' successfully updated.`);
+      setEditingLesson(null);
+      await loadIngestionData();
+    } catch (err) {
+      setToastMessage(`Failed to save lesson: ${err.message}`);
+    } finally {
+      setSavingLesson(false);
+    }
+  };
+
+  const handleRunSingleIngestion = async () => {
+    if (!selectedCareer || !selectedSkill) return;
+    setIngesting(true);
+    setIngestionLogs([`[${new Date().toLocaleTimeString()}] Triggering Live Ingestion for '${selectedSkill}' (${selectedCareer})...`]);
+    try {
+      const res = await triggerAdminIngestion(selectedCareer, selectedSkill);
+      if (res.logs) setIngestionLogs(res.logs);
+      if (res.lesson) {
+        setReservoirLessons((prev) => [res.lesson, ...prev.filter((l) => l.id !== res.lesson.id)]);
+        setToastMessage(`Seeded lesson '${res.lesson.title}' into Supabase reservoir.`);
+      }
+      await loadIngestionData();
+    } catch (err) {
+      const msg = err.message || 'Ingestion failed.';
+      setIngestionLogs((prev) => [...prev, `[ERROR] ${msg}`]);
+      setToastMessage(msg);
+    } finally {
+      setIngesting(false);
+    }
+  };
+
+  const handleRunNightlyBatch = async () => {
+    setBatchIngesting(true);
+    setIngestionLogs([`[${new Date().toLocaleTimeString()}] Launching Nightly Autonomous Ingestion Worker sweep across deficit skills...`]);
+    try {
+      const res = await runAdminNightlyBatch(5, 3, false);
+      if (res.logs) setIngestionLogs(res.logs);
+      setToastMessage(`Nightly Ingestion sweep completed. Committed ${res.seeded_count || 0} lessons (${res.rejected_count || 0} rejected by quality gates).`);
+      await loadIngestionData();
+    } catch (err) {
+      const msg = err.message || 'Nightly batch ingestion failed.';
+      setIngestionLogs((prev) => [...prev, `[ERROR] ${msg}`]);
+      setToastMessage(msg);
+    } finally {
+      setBatchIngesting(false);
+    }
+  };
+
+  const handleRunDailyDropBatch = async () => {
+    setBatchPersonalizing(true);
+    setIngestionLogs([`[${new Date().toLocaleTimeString()}] Launching Daily Drop Personalization Worker for all registered learners...`]);
+    try {
+      const res = await runAdminDailyDropBatch();
+      if (res.logs) setIngestionLogs(res.logs);
+      setToastMessage(`Daily Drop Personalization completed for ${res.curated_count || 0} learners.`);
+    } catch (err) {
+      const msg = err.message || 'Daily Drop batch failed.';
+      setIngestionLogs((prev) => [...prev, `[ERROR] ${msg}`]);
+      setToastMessage(msg);
+    } finally {
+      setBatchPersonalizing(false);
     }
   };
 
@@ -215,6 +358,24 @@ export default function AdminPortal({ user, onSignOut }) {
             {flaggedItems.length > 0 && (
               <span className="nav-item__badge" style={{ background: 'var(--status-danger)' }}>
                 {flaggedItems.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            className={`nav-item ${activeTab === 'ingestion' ? 'nav-item--active' : ''}`}
+            onClick={() => {
+              setActiveTab('ingestion');
+              setMobileMenuOpen(false);
+              loadIngestionData();
+            }}
+          >
+            <RefreshCw size={17} className="nav-item__icon" />
+            <span style={{ flex: 1 }}>Content Ingestion</span>
+            {ingestionOverview?.total_lessons !== undefined && (
+              <span className="nav-item__badge" style={{ background: 'var(--surface-elevated)', color: 'var(--text-secondary)' }}>
+                {ingestionOverview.total_lessons}
               </span>
             )}
           </button>
@@ -607,8 +768,691 @@ export default function AdminPortal({ user, onSignOut }) {
               )}
             </div>
           )}
+
+          {/* TAB 5: CONTENT INGESTION & RESERVOIR */}
+          {activeTab === 'ingestion' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '22px', maxWidth: '1200px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h1 style={{ fontSize: '1.45rem', marginBottom: '4px' }}>Content Ingestion &amp; Curriculum Reservoir</h1>
+                  <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)' }}>
+                    Autonomous Offline Ingestion Plane: multi-source academic polling, pedagogical vector gates, and Supabase reservoir seeding.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn--secondary btn--sm"
+                  onClick={loadIngestionData}
+                  disabled={ingesting || batchIngesting || batchPersonalizing}
+                >
+                  <RefreshCw size={13} />
+                  <span>Refresh Reservoir</span>
+                </button>
+              </div>
+
+              {/* Reservoir Summary Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+                <div className="card" style={{ padding: '18px' }}>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Total Reservoir Lessons</div>
+                  <div style={{ fontSize: '1.75rem', fontWeight: 750, color: 'var(--text-primary)' }}>
+                    {ingestionOverview?.total_lessons ?? 0}
+                  </div>
+                  <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: '4px' }}>Verified in Supabase micro_content</div>
+                </div>
+
+                <div className="card" style={{ padding: '18px' }}>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Unique Enrolled Skills Stocked</div>
+                  <div style={{ fontSize: '1.75rem', fontWeight: 750, color: 'var(--accent)' }}>
+                    {ingestionOverview?.unique_skills_seeded ?? 0}
+                  </div>
+                  <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: '4px' }}>With active learner demand</div>
+                </div>
+
+                <div className="card" style={{ padding: '18px' }}>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Skills Needing Ingestion</div>
+                  <div style={{ fontSize: '1.75rem', fontWeight: 750, color: skillPriorities.filter((s) => s.needs_ingestion).length > 0 ? 'var(--status-warning)' : 'var(--status-success)' }}>
+                    {skillPriorities.filter((s) => s.needs_ingestion).length}
+                  </div>
+                  <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: '4px' }}>Fewer than 4 lessons in reservoir</div>
+                </div>
+
+                <div className="card" style={{ padding: '18px' }}>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Active Source Adapters</div>
+                  <div style={{ fontSize: '1.75rem', fontWeight: 750, color: 'var(--text-primary)' }}>
+                    {Object.keys(ingestionOverview?.adapter_breakdown || {}).length}
+                  </div>
+                  <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: '4px' }}>NCBI, MDN, YouTube, ArXiv, etc.</div>
+                </div>
+              </div>
+
+              {/* Action Controls: Nightly Ingestion Worker vs Daily Drop Worker */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '16px' }}>
+                {/* Panel 1: Nightly Autonomous Ingestion Worker */}
+                <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <span className="badge badge--primary" style={{ marginBottom: '6px', display: 'inline-block' }}>Autonomous Ingestion Plane</span>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 650, margin: '2px 0 6px 0' }}>Nightly Multi-Skill Ingestion Worker</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                      Iterates over enrolled skills with low lesson counts (&lt;4). Polls domain adapters, runs vector quality checks, and seeds Supabase without blocking learners.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--primary btn--sm"
+                    onClick={handleRunNightlyBatch}
+                    disabled={batchIngesting || ingesting}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    <RefreshCw size={13} className={batchIngesting ? 'spin' : ''} />
+                    <span>{batchIngesting ? 'Running Multi-Skill Ingestion Sweep...' : 'Run Nightly Ingestion Worker'}</span>
+                  </button>
+                </div>
+
+                {/* Panel 2: Daily Drop Personalization Worker */}
+                <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <span className="badge badge--secondary" style={{ marginBottom: '6px', display: 'inline-block' }}>Online Personalization Plane</span>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 650, margin: '2px 0 6px 0' }}>Daily Drop Personalization Worker</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                      Assembles personalized 5-primary + 5-reserve drops for all active learners from the pre-seeded reservoir, applying RRF ranking and impression cooldown.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--secondary btn--sm"
+                    onClick={handleRunDailyDropBatch}
+                    disabled={batchPersonalizing || ingesting}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    <RefreshCw size={13} className={batchPersonalizing ? 'spin' : ''} />
+                    <span>{batchPersonalizing ? 'Curating All Learner Drops...' : 'Run Daily Drop Personalization Worker'}</span>
+                  </button>
+                </div>
+
+                {/* Panel 3: Live Ingestion Probe (Supervisor Demo) */}
+                <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <span className="badge badge--warning" style={{ marginBottom: '6px', display: 'inline-block' }}>Supervisor Live Demo</span>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 650, margin: '2px 0 6px 0' }}>Single-Skill Ingestion Probe</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                      Execute the full live ingestion pipeline for an arbitrary career and skill, watching live adapter retrieval and vector gate decisions.
+                    </p>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <input
+                      type="text"
+                      className="input input--sm"
+                      value={selectedCareer}
+                      onChange={(e) => setSelectedCareer(e.target.value)}
+                      placeholder="Career Title"
+                      disabled={ingesting}
+                    />
+                    <input
+                      type="text"
+                      className="input input--sm"
+                      value={selectedSkill}
+                      onChange={(e) => setSelectedSkill(e.target.value)}
+                      placeholder="Skill Name"
+                      disabled={ingesting}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--secondary btn--sm"
+                    onClick={handleRunSingleIngestion}
+                    disabled={ingesting || !selectedCareer || !selectedSkill}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    <RefreshCw size={13} className={ingesting ? 'spin' : ''} />
+                    <span>{ingesting ? 'Executing Live Ingestion...' : 'Execute Live Ingestion Probe'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Execution Telemetry Stream */}
+              <div className="card" style={{ padding: '18px 20px', background: 'var(--surface-subtle)', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-primary)' }}>
+                      Ingestion Telemetry Stream &amp; Quality Audit
+                    </span>
+                    {(ingesting || batchIngesting || batchPersonalizing) && (
+                      <span className="badge badge--primary" style={{ fontSize: '0.68rem', animation: 'pulse 1.5s infinite' }}>
+                        ACTIVE STREAM
+                      </span>
+                    )}
+                  </div>
+                  {ingestionLogs.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      style={{ fontSize: '0.72rem', padding: '2px 8px' }}
+                      onClick={() => setIngestionLogs([])}
+                    >
+                      Clear Logs
+                    </button>
+                  )}
+                </div>
+                <div
+                  style={{
+                    minHeight: '120px',
+                    maxHeight: '260px',
+                    overflowY: 'auto',
+                    fontFamily: 'var(--font-mono, monospace)',
+                    fontSize: '0.76rem',
+                    lineHeight: '1.55',
+                    background: '#0d1117',
+                    color: '#c9d1d9',
+                    padding: '12px 14px',
+                    borderRadius: 'var(--r-sm)',
+                    border: '1px solid #30363d',
+                  }}
+                >
+                  {ingestionLogs.length === 0 ? (
+                    <div style={{ color: '#8b949e', fontStyle: 'italic' }}>
+                      Telemetry idle. Click "Run Nightly Ingestion Worker" or "Execute Live Ingestion Probe" to inspect real-time source retrieval, vector quality checks, and quiz grounding logs.
+                    </div>
+                  ) : (
+                    ingestionLogs.map((log, idx) => {
+                      const isErr = log.includes('FAILED') || log.includes('ERROR') || log.includes('REJECTED');
+                      const isSuccess = log.includes('SUCCESS') || log.includes('Committed');
+                      const color = isErr ? '#ff7b72' : isSuccess ? '#7ee787' : '#c9d1d9';
+                      return (
+                        <div key={idx} style={{ color, whiteSpace: 'pre-wrap' }}>
+                          {log}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Enrolled Skills Prioritization Table */}
+              <div className="card" style={{ padding: '20px' }}>
+                <div style={{ marginBottom: '14px' }}>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 650, marginBottom: '4px' }}>Enrolled Skills Reservoir Status</h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Ranked by learner deficit demand and current lesson coverage in Supabase. Low-coverage skills are automatically targeted by the nightly ingestion worker.
+                  </p>
+                </div>
+
+                {skillPriorities.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                    No enrolled skill demand recorded yet. Register learners or run onboarding to track skills.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                          <th style={{ padding: '8px 12px' }}>Skill Competency</th>
+                          <th style={{ padding: '8px 12px' }}>Career Discipline</th>
+                          <th style={{ padding: '8px 12px' }}>Enrolled</th>
+                          <th style={{ padding: '8px 12px' }}>Deficits (&le;50%)</th>
+                          <th style={{ padding: '8px 12px' }}>Reservoir Lessons</th>
+                          <th style={{ padding: '8px 12px' }}>Status</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {skillPriorities.map((item) => (
+                          <tr key={item.skill_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {item.skill_name}
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>
+                              {item.career_title}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>{item.enrolled_count}</td>
+                            <td style={{ padding: '10px 12px', color: item.deficit_count > 0 ? 'var(--status-warning)' : 'var(--text-secondary)' }}>
+                              {item.deficit_count}
+                            </td>
+                            <td style={{ padding: '10px 12px', fontWeight: 600 }}>
+                              {item.current_lesson_count} / 4
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              {item.needs_ingestion ? (
+                                <span className="badge badge--warning" style={{ fontSize: '0.7rem' }}>Needs Ingestion</span>
+                              ) : (
+                                <span className="badge badge--success" style={{ fontSize: '0.7rem' }}>Well Stocked</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="btn btn--secondary btn--sm"
+                                style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                                onClick={() => {
+                                  setSelectedCareer(item.career_title);
+                                  setSelectedSkill(item.skill_name);
+                                  handleRunSingleIngestion();
+                                }}
+                                disabled={ingesting}
+                              >
+                                Seed Lesson
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Git-Commit Style Ingestion Ledger & Governance */}
+              <div className="card" style={{ padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 650, marginBottom: '4px' }}>Ingestion Commit Ledger &amp; Source Governance</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      Auditable commit history of all autonomous and on-demand ingestion sweeps. Inspect sources, approve or disapprove batches, and fine-tune curriculum.
+                    </p>
+                  </div>
+                  <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                    {ingestionBatches.length} Commits
+                  </span>
+                </div>
+
+                {ingestionBatches.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                    No ingestion commits recorded yet.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                          <th style={{ padding: '8px 12px' }}>Commit</th>
+                          <th style={{ padding: '8px 12px' }}>Description / Message</th>
+                          <th style={{ padding: '8px 12px' }}>Target Domain</th>
+                          <th style={{ padding: '8px 12px' }}>Audited Sources</th>
+                          <th style={{ padding: '8px 12px' }}>Status</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'right' }}>Governance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ingestionBatches.map((b) => {
+                          const isApproved = b.status === 'approved';
+                          const isRejected = b.status === 'rejected';
+                          return (
+                            <tr key={b.id || b.commit_hash} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 650, color: 'var(--accent)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                  <GitCommit size={14} />
+                                  <span>{b.commit_hash}</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--text-primary)', maxWidth: '300px' }}>
+                                <div>{b.message}</div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                  {b.author || 'Admin / Ingestion Worker'} · {b.created_at ? new Date(b.created_at).toLocaleTimeString() : 'Recent'}
+                                </div>
+                              </td>
+                              <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>
+                                <div style={{ fontWeight: 550 }}>{b.career_title}</div>
+                                <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{b.skill_name}</div>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn--secondary btn--sm"
+                                  style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                                  onClick={() => setSelectedBatch(selectedBatch?.id === b.id ? null : b)}
+                                >
+                                  <span>{b.sources?.length || 1} Sources ({b.lesson_count || 1} Lessons)</span>
+                                </button>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                {isApproved && <span className="badge badge--success" style={{ fontSize: '0.7rem' }}>Approved</span>}
+                                {isRejected && <span className="badge badge--danger" style={{ fontSize: '0.7rem' }}>Disapproved</span>}
+                                {!isApproved && !isRejected && <span className="badge badge--warning" style={{ fontSize: '0.7rem' }}>Pending</span>}
+                              </td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                                  {isApproved ? (
+                                    <button
+                                      type="button"
+                                      className="btn btn--secondary btn--sm"
+                                      style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--status-danger)' }}
+                                      onClick={() => handleBatchStatusChange(b.id, 'rejected')}
+                                    >
+                                      Disapprove
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="btn btn--primary btn--sm"
+                                      style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                                      onClick={() => handleBatchStatusChange(b.id, 'approved')}
+                                    >
+                                      Approve
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Inspected Batch Sources & Traceability Drawer */}
+              {selectedBatch && (
+                <div className="card" style={{ padding: '20px', background: 'var(--surface-subtle)', border: '1px solid var(--accent)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <GitCommit size={16} style={{ color: 'var(--accent)' }} />
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 650 }}>
+                          Commit Audit: {selectedBatch.commit_hash} — {selectedBatch.message}
+                        </h3>
+                      </div>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        {selectedBatch.summary || 'Authoritative source audit and evidence grounding for this ingestion run.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn--secondary btn--sm"
+                      onClick={() => setSelectedBatch(null)}
+                    >
+                      Close Inspector
+                    </button>
+                  </div>
+
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 650, marginBottom: '8px', color: 'var(--text-primary)' }}>
+                    Audited Knowledge Sources &amp; Calibrated Trust Scores
+                  </h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px' }}>
+                    {(selectedBatch.sources || []).map((s, sIdx) => (
+                      <div
+                        key={sIdx}
+                        style={{
+                          background: 'var(--surface)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--r-sm)',
+                          padding: '12px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ fontWeight: 650, fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                            {s.name}
+                          </span>
+                          <span className="badge badge--secondary" style={{ fontSize: '0.65rem', textTransform: 'uppercase' }}>
+                            {s.adapter}
+                          </span>
+                        </div>
+                        {s.url && (
+                          <a
+                            href={s.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              fontSize: '0.74rem',
+                              color: 'var(--accent)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              marginBottom: '6px',
+                              wordBreak: 'break-all',
+                            }}
+                          >
+                            <span>Inspect Source URL</span>
+                            <ExternalLink size={12} />
+                          </a>
+                        )}
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          Calibrated Base Trust: <strong>{((s.trust_score || 0.95) * 100).toFixed(0)}%</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Seeded Curriculum Reservoir Lessons Table */}
+              <div className="card" style={{ padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 650, marginBottom: '4px' }}>Recently Ingested Curriculum Lessons</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      Lessons stored in Supabase micro_content available for instant Daily Drop curation.
+                    </p>
+                  </div>
+                  <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                    Showing {reservoirLessons.length} lessons
+                  </span>
+                </div>
+
+                {reservoirLessons.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                    Reservoir is currently empty. Run the Nightly Ingestion Worker above to seed lessons into Supabase.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                          <th style={{ padding: '8px 12px' }}>Lesson Title</th>
+                          <th style={{ padding: '8px 12px' }}>Skill Competency</th>
+                          <th style={{ padding: '8px 12px' }}>Adapter / Source</th>
+                          <th style={{ padding: '8px 12px' }}>Difficulty</th>
+                          <th style={{ padding: '8px 12px' }}>Checkpoints</th>
+                          <th style={{ padding: '8px 12px' }}>Ingested</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reservoirLessons.slice(0, 25).map((l) => (
+                          <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--text-primary)', maxWidth: '300px' }}>
+                              {l.title}
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>
+                              {l.skill_name || 'Core Skill'}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span className="badge badge--secondary" style={{ textTransform: 'uppercase', fontSize: '0.68rem' }}>
+                                {l.source_adapter || 'web'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              Level {l.difficulty_level || 2}
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--status-success)' }}>
+                              {l.quizzes?.length || 5} Qs
+                            </td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-muted)', fontSize: '0.74rem' }}>
+                              {l.created_at ? new Date(l.created_at).toLocaleDateString() : 'Active'}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="btn btn--secondary btn--sm"
+                                style={{ fontSize: '0.72rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleOpenEditLesson(l)}
+                              >
+                                <Edit3 size={11} />
+                                <span>Edit</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </main>
       </div>
+
+      {/* Lesson Edit Modal */}
+      {editingLesson && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '20px',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !savingLesson) setEditingLesson(null);
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: '720px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '24px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '4px' }}>
+                  Edit Ingested Lesson &amp; Checkpoint
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Refine lesson prose, practical scenario, difficulty, or multiple-choice questions.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn--secondary btn--sm"
+                onClick={() => setEditingLesson(null)}
+                disabled={savingLesson}
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 650, display: 'block', marginBottom: '4px' }}>
+                  Lesson Title
+                </label>
+                <input
+                  type="text"
+                  className="input input--sm"
+                  style={{ width: '100%' }}
+                  value={editForm.title}
+                  onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 650, display: 'block', marginBottom: '4px' }}>
+                    Associated Skill Competency
+                  </label>
+                  <input
+                    type="text"
+                    className="input input--sm"
+                    style={{ width: '100%' }}
+                    value={editingLesson.skill_name || 'Core Skill'}
+                    disabled
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 650, display: 'block', marginBottom: '4px' }}>
+                    Difficulty Level (1-5)
+                  </label>
+                  <select
+                    className="input input--sm"
+                    style={{ width: '100%' }}
+                    value={editForm.difficulty_level}
+                    onChange={(e) => setEditForm({ ...editForm, difficulty_level: parseInt(e.target.value) || 2 })}
+                  >
+                    <option value={1}>Level 1 - Introductory</option>
+                    <option value={2}>Level 2 - Foundational</option>
+                    <option value={3}>Level 3 - Intermediate / Professional</option>
+                    <option value={4}>Level 4 - Advanced Specialist</option>
+                    <option value={5}>Level 5 - Expert / Mastery</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 650, display: 'block', marginBottom: '4px' }}>
+                  Executive Summary / High-Yield Takeaway
+                </label>
+                <textarea
+                  className="input input--sm"
+                  rows={3}
+                  style={{ width: '100%', resize: 'vertical' }}
+                  value={editForm.summary}
+                  onChange={(e) => setEditForm({ ...editForm, summary: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 650, display: 'block', marginBottom: '4px' }}>
+                  Concept Overview (Mini-Lesson Text)
+                </label>
+                <textarea
+                  className="input input--sm"
+                  rows={4}
+                  style={{ width: '100%', resize: 'vertical' }}
+                  value={editForm.concept_overview}
+                  onChange={(e) => setEditForm({ ...editForm, concept_overview: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 650, display: 'block', marginBottom: '4px' }}>
+                  Applied Workplace Practice Scenario
+                </label>
+                <textarea
+                  className="input input--sm"
+                  rows={3}
+                  style={{ width: '100%', resize: 'vertical' }}
+                  value={editForm.practice_scenario}
+                  onChange={(e) => setEditForm({ ...editForm, practice_scenario: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+              <button
+                type="button"
+                className="btn btn--secondary btn--sm"
+                onClick={() => setEditingLesson(null)}
+                disabled={savingLesson}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                onClick={handleSaveEditLesson}
+                disabled={savingLesson || !editForm.title.trim()}
+              >
+                <span>{savingLesson ? 'Saving Updates...' : 'Save Lesson & Update Reservoir'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toastMessage && (
         <Toast

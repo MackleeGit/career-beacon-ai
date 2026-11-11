@@ -9,6 +9,7 @@ import {
   getMentorPulseFeed,
   toggleLikePulsePost,
   getMentorshipQuestions,
+  preflightMentorshipQuestion,
   askMentorshipQuestion,
   upvoteMentorshipAnswer,
   getMentorAvailableSlots,
@@ -43,6 +44,7 @@ import {
   Star,
   Check,
   Flag,
+  ArrowLeft,
 } from '../components/Icons';
 
 export default function LearnerMentorship({
@@ -50,11 +52,44 @@ export default function LearnerMentorship({
   career,
   skills = [],
   initialSubTab = 'matches',
+  initialConnectionId = null,
   prefillQuestion = null,
   onClearPrefillQuestion,
 }) {
   const [subTab, setSubTab] = useState(initialSubTab); // 'matches' | 'pulse' | 'qa' | 'sessions'
   const [matchData, setMatchData] = useState({ matches: [], filtered_out_by_anti_desperation: 0 });
+
+  const formatMsgTime = (isoString) => {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (isToday) return timeStr;
+    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${timeStr}`;
+  };
+
+  const getTimeUntilBadge = (slotStartIso) => {
+    if (!slotStartIso) return null;
+    const diffMs = new Date(slotStartIso) - new Date();
+    const diffHours = diffMs / (1000 * 60 * 60);
+    if (diffHours < 0 && diffHours > -0.75) {
+      return <span className="badge badge--danger" style={{ fontWeight: 650 }}>In Progress Now</span>;
+    }
+    if (diffHours < 0) {
+      return <span className="badge badge--neutral">Past Session</span>;
+    }
+    if (diffHours <= 2) {
+      const mins = Math.max(1, Math.round(diffMs / 60000));
+      return <span className="badge badge--danger" style={{ fontWeight: 650 }}>Starts in {mins}m</span>;
+    }
+    if (diffHours <= 24) {
+      return <span className="badge badge--accent">Starts in {Math.round(diffHours)}h</span>;
+    }
+    const days = Math.round(diffHours / 24);
+    return <span className="badge badge--neutral">In {days} day{days === 1 ? '' : 's'}</span>;
+  };
 
   // Google Account for Learner Booking
   const isGoogleProvider = user?.app_metadata?.providers?.includes('google') || user?.email?.endsWith('@gmail.com');
@@ -101,6 +136,28 @@ export default function LearnerMentorship({
   const [qSkillTag, setQSkillTag] = useState(skills[0]?.name || 'General Career');
   const [qSourceLesson, setQSourceLesson] = useState('');
   const [submittingQ, setSubmittingQ] = useState(false);
+  const [preflightMatches, setPreflightMatches] = useState([]);
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [expandedPreflightId, setExpandedPreflightId] = useState(null);
+
+  useEffect(() => {
+    if (!showAskModal || qTitle.trim().length < 8) {
+      setPreflightMatches([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setPreflightLoading(true);
+      try {
+        const res = await preflightMentorshipQuestion({ q: qTitle.trim(), skillTag: qSkillTag });
+        setPreflightMatches(res.matches || []);
+      } catch (err) {
+        console.debug('Preflight lookup skipped:', err);
+      } finally {
+        setPreflightLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [showAskModal, qTitle, qSkillTag]);
 
   // DMs & Session Booking state
   const [selectedConnId, setSelectedConnId] = useState(null);
@@ -120,6 +177,15 @@ export default function LearnerMentorship({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setSubTab(initialSubTab);
+    }
+    if (initialConnectionId) {
+      setSelectedConnId(initialConnectionId);
+    }
+  }, [initialSubTab, initialConnectionId]);
 
   useEffect(() => {
     if (prefillQuestion) {
@@ -147,12 +213,17 @@ export default function LearnerMentorship({
       const conns = cRes.connections || [];
       setConnections(conns);
       const accepted = conns.filter((c) => c.status === 'accepted');
-      if (accepted.length > 0 && !selectedConnId) {
+      if (initialConnectionId && conns.some((c) => c.id === initialConnectionId)) {
+        setSelectedConnId(initialConnectionId);
+      } else if (accepted.length > 0 && !selectedConnId) {
         setSelectedConnId(accepted[0].id);
       }
       setPulsePosts(pRes.posts || []);
       setQuestions(qRes.questions || []);
-      setSessions(sRes.sessions || []);
+      const sessList = (sRes.sessions || []).sort(
+        (a, b) => new Date(a.slot_start_iso) - new Date(b.slot_start_iso)
+      );
+      setSessions(sessList);
     } catch (err) {
       console.error('Failed to load learner mentorship hub:', err);
     } finally {
@@ -168,22 +239,21 @@ export default function LearnerMentorship({
 
   useEffect(() => {
     if (!selectedConnId || !activeConnection) return;
-    getConnectionMessages(selectedConnId)
-      .then((res) => setMessages(res.messages || []))
-      .catch((err) => console.error('Failed to load messages:', err));
-
-    if (activeConnection.mentor_id) {
-      setSlotsLoading(true);
-      getMentorAvailableSlots(activeConnection.mentor_id, 10)
+    let isMounted = true;
+    const fetchMsgs = () => {
+      getConnectionMessages(selectedConnId)
         .then((res) => {
-          const slots = res.slots || [];
-          setAvailableSlots(slots);
-          if (slots.length > 0) setSelectedSlotIso(slots[0].slot_start_iso);
+          if (isMounted) setMessages(res.messages || []);
         })
-        .catch((err) => console.error('Failed to load slots:', err))
-        .finally(() => setSlotsLoading(false));
-    }
-  }, [selectedConnId, activeConnection?.mentor_id]);
+        .catch(() => {});
+    };
+    fetchMsgs();
+    const interval = setInterval(fetchMsgs, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [selectedConnId, activeConnection?.id]);
 
   const handleSendConnectionRequest = async (e) => {
     e.preventDefault();
@@ -248,6 +318,8 @@ export default function LearnerMentorship({
       setQTitle('');
       setQBody('');
       setQSourceLesson('');
+      setPreflightMatches([]);
+      setExpandedPreflightId(null);
       setToastMessage('Your question has been routed to domain-matched mentors and added to the Q&A Hub.');
       const res = await getMentorshipQuestions();
       setQuestions(res.questions || []);
@@ -319,6 +391,7 @@ export default function LearnerMentorship({
       const newSlots = slotsRes.slots || [];
       setAvailableSlots(newSlots);
       setSelectedSlotIso(newSlots[0]?.slot_start_iso || '');
+      setSessionsSubView('chat');
     } catch (err) {
       setToastMessage(err.message || 'Failed to book session.');
     } finally {
@@ -401,22 +474,23 @@ export default function LearnerMentorship({
             onClick={() => setSubTab('sessions')}
           >
             <MessageSquare size={14} />
-            <span>Messages &amp; 1:1 Booking</span>
+            <span>Messages &amp; 1:1 Sessions</span>
             <span className="segmented-tab__count">{acceptedConnections.length}</span>
           </button>
         </div>
 
-        <button
-          type="button"
-          className="btn btn--secondary btn--sm"
-          onClick={() => {
-            setSubTab('qa');
-            setShowAskModal(true);
-          }}
-        >
-          <Plus size={14} />
-          <span>Ask a Question</span>
-        </button>
+        {subTab === 'qa' && (
+          <button
+            type="button"
+            className="btn btn--secondary btn--sm"
+            onClick={() => {
+              setShowAskModal(true);
+            }}
+          >
+            <Plus size={14} />
+            <span>Ask a Question</span>
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -954,6 +1028,85 @@ export default function LearnerMentorship({
                       />
                     </div>
 
+                    {preflightMatches.length > 0 && (
+                      <div
+                        style={{
+                          background: 'var(--surface-raised, #1f2937)',
+                          border: '1px solid var(--border-color, #374151)',
+                          borderRadius: 'var(--r-sm, 6px)',
+                          padding: '12px',
+                          marginBottom: '14px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent, #6366f1)' }}>
+                            Similar verified answers found in knowledge base
+                          </span>
+                          <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                            {preflightMatches.length} existing match{preflightMatches.length > 1 ? 'es' : ''}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {preflightMatches.map((match) => {
+                            const topAns = match.answers && match.answers[0];
+                            const isExpanded = expandedPreflightId === match.id;
+                            return (
+                              <div
+                                key={match.id}
+                                style={{
+                                  padding: '8px 10px',
+                                  borderRadius: 'var(--r-sm, 6px)',
+                                  background: 'var(--surface-ground, #111827)',
+                                  border: '1px solid var(--border-color, #2d3748)',
+                                  fontSize: '0.8rem',
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                                  <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                                    {match.title}
+                                  </div>
+                                  <span style={{ fontSize: '0.72rem', color: 'var(--accent)', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                                    {Math.round((match.similarity || 0) * 100)}% match
+                                  </span>
+                                </div>
+                                {topAns && (
+                                  <div style={{ marginTop: '6px' }}>
+                                    <p
+                                      style={{
+                                        color: 'var(--text-secondary)',
+                                        margin: 0,
+                                        fontSize: '0.78rem',
+                                        lineHeight: '1.4',
+                                        display: isExpanded ? 'block' : '-webkit-box',
+                                        WebkitLineClamp: isExpanded ? 'unset' : 2,
+                                        WebkitBoxOrient: 'vertical',
+                                        overflow: isExpanded ? 'visible' : 'hidden',
+                                      }}
+                                    >
+                                      {topAns.body}
+                                    </p>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                                      <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                                        Answered by {topAns.mentor_name || 'Verified Mentor'}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        className="btn btn--ghost btn--xs"
+                                        style={{ fontSize: '0.72rem', padding: '2px 6px' }}
+                                        onClick={() => setExpandedPreflightId(isExpanded ? null : match.id)}
+                                      >
+                                        {isExpanded ? 'Collapse' : 'Expand answer'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="form-group">
                       <label className="form-label">Context &amp; Details</label>
                       <textarea
@@ -1003,41 +1156,55 @@ export default function LearnerMentorship({
                   </button>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '18px', alignItems: 'start' }}>
-                  {/* Left: Direct Messages */}
+                /* Direct Messages & Scheduled Sessions (Sessions scheduled by mentors) */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                   <div className="card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                      <h3 style={{ fontSize: '1.02rem' }}>Direct Messages</h3>
-                      <select
-                        className="input"
-                        value={selectedConnId || ''}
-                        onChange={(e) => setSelectedConnId(e.target.value)}
-                        style={{ width: 'auto', padding: '5px 10px', fontSize: '0.82rem' }}
-                      >
-                        {acceptedConnections.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.mentor?.full_name || 'Connected Mentor'}
-                          </option>
-                        ))}
-                      </select>
+                    {/* Header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <h3 style={{ fontSize: '1.05rem', margin: 0 }}>Direct Messages</h3>
+                        {acceptedConnections.length > 1 ? (
+                          <select
+                            className="input"
+                            value={selectedConnId || ''}
+                            onChange={(e) => setSelectedConnId(e.target.value)}
+                            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.82rem' }}
+                          >
+                            {acceptedConnections.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.mentor?.full_name || 'Connected Mentor'}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="badge badge--accent" style={{ fontSize: '0.78rem' }}>
+                            {activeConnection?.mentor?.full_name || 'Connected Mentor'}
+                          </span>
+                        )}
+                      </div>
+
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        1-on-1 sessions are scheduled by mentors
+                      </span>
                     </div>
 
+                    {/* Messages Container */}
                     <div
                       style={{
-                        height: '270px',
+                        height: '380px',
                         overflowY: 'auto',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '8px',
-                        padding: '12px',
+                        gap: '10px',
+                        padding: '14px',
                         background: 'var(--surface-subtle)',
                         borderRadius: 'var(--r-sm)',
                         border: '1px solid var(--border)',
-                        marginBottom: '12px',
+                        marginBottom: '14px',
                       }}
                     >
                       {messages.length === 0 ? (
-                        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem', margin: 'auto', padding: '16px' }}>
+                        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem', margin: 'auto', padding: '24px' }}>
                           No messages yet. Say hello to {activeConnection?.mentor?.full_name || 'your mentor'}!
                         </div>
                       ) : (
@@ -1048,7 +1215,7 @@ export default function LearnerMentorship({
                               key={m.id}
                               style={{
                                 alignSelf: isMe ? 'flex-end' : 'flex-start',
-                                maxWidth: '82%',
+                                maxWidth: '78%',
                                 padding: '9px 12px',
                                 borderRadius: 'var(--r-sm)',
                                 background: isMe ? 'var(--accent-soft)' : 'var(--surface)',
@@ -1056,19 +1223,24 @@ export default function LearnerMentorship({
                                 borderColor: isMe ? 'var(--accent-border)' : 'var(--border)',
                               }}
                             >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '0.69rem', color: 'var(--text-muted)', marginBottom: '2px' }}>
-                                <span>{isMe ? 'You' : activeConnection?.mentor?.full_name || 'Mentor'}</span>
-                                {!isMe && (
-                                  <button
-                                    type="button"
-                                    className="btn btn--ghost btn--xs"
-                                    onClick={() => handleReportContent('message', m.id, m.text, 'Learner Direct Message')}
-                                    title="Report message to admin"
-                                    style={{ padding: '0 3px', color: 'var(--text-muted)' }}
-                                  >
-                                    <Flag size={10} />
-                                  </button>
-                                )}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '3px' }}>
+                                <span style={{ fontWeight: 600 }}>{isMe ? 'You' : activeConnection?.mentor?.full_name || 'Mentor'}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontSize: '0.67rem' }}>
+                                    {formatMsgTime(m.created_at)}
+                                  </span>
+                                  {!isMe && (
+                                    <button
+                                      type="button"
+                                      className="btn btn--ghost btn--xs"
+                                      onClick={() => handleReportContent('message', m.id, m.text, 'Learner Direct Message')}
+                                      title="Report message to admin"
+                                      style={{ padding: '0 3px', color: 'var(--text-muted)' }}
+                                    >
+                                      <Flag size={10} />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                               <div style={{ fontSize: '0.85rem', lineHeight: 1.48, color: 'var(--text-primary)' }}>{m.text}</div>
                             </div>
@@ -1078,233 +1250,136 @@ export default function LearnerMentorship({
                       <div ref={messagesEndRef} />
                     </div>
 
+                    {/* Send input */}
                     <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '8px' }}>
                       <input
                         type="text"
                         className="input"
-                        placeholder="Write a message..."
+                        placeholder={`Write a message to ${activeConnection?.mentor?.full_name || 'your mentor'}...`}
                         value={msgInput}
                         onChange={(e) => setMsgInput(e.target.value)}
                         style={{ flex: 1 }}
                       />
                       <button type="submit" className="btn btn--primary btn--sm" disabled={sendingMsg || !msgInput.trim()}>
                         <Send size={13} />
-                        <span>Send</span>
+                        <span>{sendingMsg ? 'Sending...' : 'Send'}</span>
                       </button>
                     </form>
                   </div>
 
-                  {/* Right: 1-on-1 Session Scheduler */}
-                  <form className="card" onSubmit={handleBookSession}>
-                    <h3 style={{ fontSize: '1.02rem', marginBottom: '4px' }}>
-                      Book 1-on-1 Session with {activeConnection?.mentor?.full_name}
-                    </h3>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-                      45-minute slots from your mentor&apos;s availability. Booked times lock immediately across both calendars.
-                    </p>
-
-                    {!learnerGoogleEmail && (
-                      <div
-                        style={{
-                          padding: '12px 14px',
-                          background: 'var(--surface-subtle)',
-                          border: '1px solid var(--border)',
-                          borderRadius: 'var(--r-sm)',
-                          marginBottom: '14px',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent)', fontWeight: 600, fontSize: '0.84rem', marginBottom: '3px' }}>
-                          <Calendar size={14} />
-                          <span>Google Calendar Sync (Optional)</span>
-                        </div>
-                        <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.4 }}>
-                          Jitsi video call links and .ics calendar invites are generated automatically. If you want direct Google Calendar sync, add your Google address:
+                  {/* Scheduled Sessions List below chat (Ranked by proximity in time) */}
+                  <div className="card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                      <div>
+                        <h3 style={{ fontSize: '1.02rem', margin: 0 }}>
+                          Scheduled 1-on-1 Sessions ({sessions.length})
+                        </h3>
+                        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                          Sessions scheduled by your mentors, ranked by proximity in time.
                         </p>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <input
-                            type="email"
-                            className="input"
-                            placeholder="your.email@gmail.com"
-                            value={learnerGoogleEmail}
-                            onChange={(e) => setLearnerGoogleEmail(e.target.value)}
-                            style={{ height: '32px', fontSize: '0.82rem' }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn--secondary btn--xs"
-                            onClick={handleSaveLearnerGoogle}
-                            disabled={savingLearnerGoogle || !learnerGoogleEmail.trim()}
-                          >
-                            Save
-                          </button>
-                        </div>
                       </div>
-                    )}
-
-                    <div className="form-group">
-                      <label className="form-label">Available 45-Minute Slot</label>
-                      {slotsLoading ? (
-                        <div style={{ fontSize: '0.83rem', color: 'var(--text-muted)' }}>Checking calendar availability...</div>
-                      ) : availableSlots.length === 0 ? (
-                        <div style={{ fontSize: '0.83rem', color: 'var(--text-muted)' }}>No open slots in the next 10 days.</div>
-                      ) : (
-                        <select
-                          className="input"
-                          value={selectedSlotIso}
-                          onChange={(e) => setSelectedSlotIso(e.target.value)}
-                        >
-                          {availableSlots.map((sl) => (
-                            <option key={sl.slot_start_iso} value={sl.slot_start_iso}>
-                              {sl.display_label} ({sl.duration_minutes} mins)
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                      <span className="badge badge--neutral" style={{ fontSize: '0.72rem' }}>
+                        Ranked by proximity
+                      </span>
                     </div>
 
-                    <div className="form-group">
-                      <label className="form-label">Session Topic</label>
-                      <input
-                        type="text"
-                        className="input"
-                        value={sessionTopic}
-                        onChange={(e) => setSessionTopic(e.target.value)}
-                        required
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Primary Skill to Practice (Verified Mentor Endorsement)</label>
-                      <select
-                        className="input"
-                        value={sessionFocusSkill}
-                        onChange={(e) => setSessionFocusSkill(e.target.value)}
-                      >
-                        {skills.map((s) => (
-                          <option key={s.id || s.name} value={s.name}>
-                            {s.name} ({s.proficiency}%)
-                          </option>
-                        ))}
-                        {skills.length === 0 && <option value="Career Strategy">Career Strategy</option>}
-                      </select>
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Agenda Notes (Optional)</label>
-                      <input
-                        type="text"
-                        className="input"
-                        placeholder="Questions or links to review..."
-                        value={sessionNotes}
-                        onChange={(e) => setSessionNotes(e.target.value)}
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="btn btn--primary btn--full"
-                      disabled={bookingSession || !selectedSlotIso}
-                    >
-                      {bookingSession ? 'Confirming Slot...' : 'Confirm 1-on-1 Session'}
-                    </button>
-                  </form>
-                </div>
-              )}
-
-              {/* Scheduled Sessions List */}
-              <div className="card">
-                <h3 style={{ fontSize: '1.02rem', marginBottom: '12px' }}>
-                  Scheduled 1-on-1 Sessions ({sessions.length})
-                </h3>
-                {sessions.length === 0 ? (
-                  <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
-                    No sessions booked yet.
-                  </p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {sessions.map((sess) => (
-                      <div
-                        key={sess.id}
-                        style={{
-                          padding: '14px 16px',
-                          background: 'var(--surface-subtle)',
-                          border: '1px solid var(--border)',
-                          borderRadius: 'var(--r-sm)',
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
-                              {sess.topic} · with <span style={{ color: 'var(--accent)' }}>{sess.mentor_name}</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '3px', flexWrap: 'wrap' }}>
-                              <Clock size={12} />
-                              <span>{sess.display_label || new Date(sess.slot_start_iso).toLocaleString()}</span>
-                              <span>· ID:</span>
-                              <code>{sess.meeting_code}</code>
-                            </div>
-                            {sess.focus_skill && (
-                              <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-                                Focus skill: <strong>{sess.focus_skill}</strong>
-                                {sess.endorsed_skill && (
-                                  <span style={{ color: 'var(--status-success)', marginLeft: '8px', fontWeight: 600 }}>
-                                    Endorsed (+15% Proficiency)
-                                  </span>
+                    {sessions.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--text-secondary)' }}>
+                        <Calendar size={28} style={{ color: 'var(--text-muted)', marginBottom: '8px', opacity: 0.7 }} />
+                        <h4 style={{ margin: '0 0 4px', fontSize: '0.94rem', color: 'var(--text-primary)' }}>
+                          No upcoming 1-on-1 sessions scheduled
+                        </h4>
+                        <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: '440px', marginLeft: 'auto', marginRight: 'auto' }}>
+                          Your mentor will schedule 1-on-1 review sessions with you based on your skill gaps. Message them above to coordinate availability.
+                        </p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {sessions.map((sess) => (
+                          <div
+                            key={sess.id}
+                            style={{
+                              padding: '14px 16px',
+                              background: 'var(--surface-subtle)',
+                              border: '1px solid var(--border)',
+                              borderRadius: 'var(--r-sm)',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                              <div>
+                                <div style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
+                                  {sess.topic} · with <span style={{ color: 'var(--accent)' }}>{sess.mentor_name}</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '3px', flexWrap: 'wrap' }}>
+                                  <Clock size={12} />
+                                  <span>{sess.display_label || new Date(sess.slot_start_iso).toLocaleString()}</span>
+                                  <span>· ID:</span>
+                                  <code>{sess.meeting_code}</code>
+                                </div>
+                                {sess.focus_skill && (
+                                  <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                                    Focus skill: <strong>{sess.focus_skill}</strong>
+                                    {sess.endorsed_skill && (
+                                      <span style={{ color: 'var(--status-success)', marginLeft: '8px', fontWeight: 600 }}>
+                                        Endorsed (+15% Proficiency)
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-                            )}
-                          </div>
-                          <span className="badge badge--accent" style={{ textTransform: 'capitalize' }}>
-                            {sess.status}
-                          </span>
-                        </div>
+                              <div>
+                                {getTimeUntilBadge(sess.slot_start_iso)}
+                              </div>
+                            </div>
 
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
-                          {sess.meeting_url && sess.status === 'confirmed' && (
-                            <a
-                              href={sess.meeting_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn btn--primary btn--xs"
-                            >
-                              <Video size={13} />
-                              <span>Join Video Room ({sess.meeting_code})</span>
-                            </a>
-                          )}
-                          {sess.google_calendar_url && (
-                            <a
-                              href={sess.google_calendar_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn btn--secondary btn--xs"
-                            >
-                              <Calendar size={13} />
-                              <span>Google Calendar</span>
-                            </a>
-                          )}
-                          <a
-                            href={getSessionIcsDownloadUrl(sess.id)}
-                            download
-                            className="btn btn--secondary btn--xs"
-                          >
-                            <Download size={13} />
-                            <span>Download .ics</span>
-                          </a>
-                          {sess.status === 'confirmed' && (
-                            <button
-                              type="button"
-                              className="btn btn--ghost btn--xs"
-                              onClick={() => handleCancelSession(sess.id)}
-                            >
-                              Cancel Slot
-                            </button>
-                          )}
-                        </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
+                              {sess.meeting_url && sess.status === 'confirmed' && (
+                                <a
+                                  href={sess.meeting_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="btn btn--primary btn--xs"
+                                >
+                                  <Video size={13} />
+                                  <span>Join Video Room ({sess.meeting_code})</span>
+                                </a>
+                              )}
+                              {sess.google_calendar_url && (
+                                <a
+                                  href={sess.google_calendar_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="btn btn--secondary btn--xs"
+                                >
+                                  <Calendar size={13} />
+                                  <span>Google Calendar</span>
+                                </a>
+                              )}
+                              <a
+                                href={getSessionIcsDownloadUrl(sess.id)}
+                                download
+                                className="btn btn--secondary btn--xs"
+                              >
+                                <Download size={13} />
+                                <span>Download .ics</span>
+                              </a>
+                              {sess.status === 'confirmed' && (
+                                <button
+                                  type="button"
+                                  className="btn btn--ghost btn--xs"
+                                  onClick={() => handleCancelSession(sess.id)}
+                                >
+                                  Cancel Slot
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
         </>

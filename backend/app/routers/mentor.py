@@ -185,12 +185,14 @@ async def mentor_onboarding(request: MentorOnboardingRequest, http_req: Request)
             detail="Embedding service unavailable. Please try again.",
         )
 
-    # 3. Persist into `mentors` table using live schema columns (id, profile_id, bio, expertise)
+    # 3. Persist into `mentors` table using live schema columns (id, profile_id, bio, expertise, mentor_vector)
     mentor_db_payload = {
         "profile_id": user_id,
         "bio": request.bio.strip(),
         "expertise": f"{request.primary_domain.strip()} | {request.headline.strip()} | {expertise_names}",
+        "mentor_vector": mentor_vector,
     }
+    existing_m = None
     try:
         existing_m = (
             supabase_client.table("mentors")
@@ -204,11 +206,19 @@ async def mentor_onboarding(request: MentorOnboardingRequest, http_req: Request)
         else:
             supabase_client.table("mentors").insert({"id": user_id, **mentor_db_payload}).execute()
     except Exception as db_err:
-        print(f"[mentor-onboarding] mentors persistence error: {db_err}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to save mentor profile. Please try again.",
-        )
+        print(f"[mentor-onboarding] mentors persistence error with vector: {db_err}, attempting without mentor_vector...")
+        try:
+            fallback_payload = {k: v for k, v in mentor_db_payload.items() if k != "mentor_vector"}
+            if existing_m and existing_m.data:
+                supabase_client.table("mentors").update(fallback_payload).eq("profile_id", user_id).execute()
+            else:
+                supabase_client.table("mentors").insert({"id": user_id, **fallback_payload}).execute()
+        except Exception as fallback_err:
+            print(f"[mentor-onboarding] mentors persistence fallback failed: {fallback_err}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to save mentor profile. Please try again.",
+            )
 
     # 4. Sync profile table (`bio`) & fetch mentor's full name
     full_name = "Industry Mentor"
@@ -474,6 +484,13 @@ async def get_connection_messages(connection_id: str, http_req: Request):
     return {"messages": msgs}
 
 
+@router.post("/messages/{connection_id}/read")
+async def mark_connection_messages_read(connection_id: str, http_req: Request):
+    user_id = get_verified_user_id(http_req)
+    count = mentorship_service.mark_messages_read(connection_id=connection_id, user_id=user_id)
+    return {"status": "success", "marked_read": count}
+
+
 @router.post("/messages")
 async def send_connection_message(payload: DirectMessagePayload, http_req: Request):
     user_id = get_verified_user_id(http_req)
@@ -528,6 +545,28 @@ async def toggle_pulse_like(post_id: str, http_req: Request):
 # Q&A Knowledge Base & Matched Mentor Inbox
 # ---------------------------------------------------------------------------
 
+@router.get("/questions/preflight")
+async def preflight_question_check(
+    q: Optional[str] = None,
+    skill_tag: Optional[str] = None,
+    http_req: Request = None,
+):
+    get_verified_user_id(http_req)
+    if not q or not q.strip():
+        return {"matches": []}
+    matches = await mentorship_service.find_similar_answered_questions(
+        query_text=q.strip(),
+        skill_tag=skill_tag,
+        threshold=0.75,
+        limit=3,
+    )
+    clean_matches = []
+    for m in matches:
+        clean = {k: v for k, v in m.items() if k != "embedding"}
+        clean_matches.append(clean)
+    return {"matches": clean_matches}
+
+
 @router.get("/questions")
 async def list_questions(
     q: Optional[str] = None,
@@ -547,7 +586,7 @@ async def list_questions(
 @router.post("/questions")
 async def ask_mentor_question(payload: QuestionCreatePayload, http_req: Request):
     user_id = get_verified_user_id(http_req)
-    question = mentorship_service.ask_question(
+    question = await mentorship_service.ask_question(
         learner_id=user_id,
         title=payload.title,
         body=payload.body,
@@ -599,10 +638,20 @@ async def upvote_question_answer(
 # ---------------------------------------------------------------------------
 
 @router.get("/{mentor_id}/slots")
-async def get_mentor_available_slots(mentor_id: str, days_ahead: int = 10, http_req: Request = None):
-    get_verified_user_id(http_req)
+async def get_mentor_available_slots(
+    mentor_id: str,
+    days_ahead: int = 10,
+    learner_id: Optional[str] = None,
+    http_req: Request = None,
+):
+    user_id = get_verified_user_id(http_req)
+    eff_learner = learner_id or user_id
     try:
-        slots = await mentorship_service.get_available_slots(mentor_id=mentor_id, days_ahead=days_ahead)
+        slots = await mentorship_service.get_available_slots(
+            mentor_id=mentor_id,
+            days_ahead=days_ahead,
+            learner_id=eff_learner,
+        )
         return {"mentor_id": mentor_id, "slots": slots}
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
@@ -611,15 +660,23 @@ async def get_mentor_available_slots(mentor_id: str, days_ahead: int = 10, http_
 @router.post("/sessions/book")
 async def book_mentorship_session(payload: SessionBookPayload, http_req: Request):
     user_id = get_verified_user_id(http_req)
-    if payload.learner_id and (user_id == payload.mentor_id or not payload.mentor_id):
+    if payload.learner_id:
         effective_learner = payload.learner_id
-        effective_mentor = user_id
-    elif payload.learner_id:
-        effective_learner = payload.learner_id
-        effective_mentor = payload.mentor_id
+        effective_mentor = payload.mentor_id or user_id
     else:
-        effective_learner = user_id
-        effective_mentor = payload.mentor_id
+        raise HTTPException(
+            status_code=400,
+            detail="Learner ID must be specified when scheduling a 1-on-1 mentorship session.",
+        )
+
+    from app.services.mentorship_service import SEEDED_MENTORS
+    seeded_ids = {m["mentor_id"] for m in SEEDED_MENTORS}
+    if user_id != effective_mentor and user_id not in seeded_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: 1-on-1 sessions can only be scheduled by mentors.",
+        )
+
     try:
         session = await mentorship_service.book_session(
             learner_id=effective_learner,
@@ -632,7 +689,7 @@ async def book_mentorship_session(payload: SessionBookPayload, http_req: Request
         return {"status": "booked", "session": session}
     except ValueError as ve:
         # Conflict or validation failure
-        status_code = 409 if "Double-booking" in str(ve) or "already has a session" in str(ve) else 400
+        status_code = 409 if "Double-booking" in str(ve) or "already has a session" in str(ve) or "unavailable" in str(ve) else 400
         raise HTTPException(status_code=status_code, detail=str(ve))
 
 

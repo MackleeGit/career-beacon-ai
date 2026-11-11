@@ -20,11 +20,15 @@ from app.services.recommendation_service import (
     RecommendationService,
     _is_adapter_compatible_with_career,
     _lesson_matches_career,
+    _source_quality_multiplier,
     _cosine_similarity
 )
-from app.services.content_service import classify_source_adapter
+from app.services.content_service import classify_source_adapter, hydrate_micro_content_row
 
 logger = logging.getLogger("career_beacon.daily_drop_service")
+
+DAILY_DROP_SIZE = 3
+RESERVE_DROP_SIZE = 3
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 DAILY_SPRINTS_FILE = os.path.join(DATA_DIR, "daily_sprints.json")
@@ -145,7 +149,8 @@ class DailyDropService:
         lesson: Dict[str, Any],
         skill_name: str,
         skill_id: str,
-        career_title: str
+        career_title: str,
+        onet_soc_code: Optional[str] = None,
     ) -> bool:
         """
         Guarantees the lesson is genuinely relevant to the targeted skill:
@@ -154,11 +159,13 @@ class DailyDropService:
         3. Sufficient text substance and valid checkpoint quizzes.
         """
         # 1. Adapter compatibility check
-        if not _is_adapter_compatible_with_career(lesson, career_title):
+        if not _is_adapter_compatible_with_career(lesson, career_title, onet_soc_code=onet_soc_code):
             return False
 
-        # 1B. Strict Career Boundary check: Reject lessons explicitly branded for another career
-        if not _lesson_matches_career(lesson, career_title):
+        # 1B. Career & Domain Boundary check: Allow shared canonical skills across sibling careers in the same domain
+        if not _lesson_matches_career(
+            lesson, career_title, onet_soc_code=onet_soc_code, enrolled_skill_ids={skill_id}
+        ):
             return False
 
         # 1C. Anti-Spurious Topical Gate: Reject ancient history/mythology lessons for modern workplace skills
@@ -200,7 +207,7 @@ class DailyDropService:
 
     async def get_or_create_daily_drop(self, user_id: str) -> Dict[str, Any]:
         """
-        Returns today's 3-lesson drop. If not pre-computed, curates it instantly.
+        Returns today's 5-lesson Daily Drop. If not pre-computed, curates it and records impressions.
         """
         today = _today_str()
         sprints = _load_json_file(DAILY_SPRINTS_FILE)
@@ -210,7 +217,6 @@ class DailyDropService:
         )
 
         if existing:
-            # Check if existing drop was a valid calibrated drop
             has_target = existing.get("target_skill_id") is not None
             has_enough = len(existing.get("lesson_ids", [])) >= 3
             if has_target and has_enough:
@@ -218,26 +224,65 @@ class DailyDropService:
                 if hydrated.get("lessons") and len(hydrated["lessons"]) >= 3:
                     prof_res = supabase_client.table("profiles").select("target_career_id").eq("id", user_id).execute()
                     cid = prof_res.data[0]["target_career_id"] if prof_res.data else None
-                    c_title = self.rec_service.get_cached_career(cid).get("title", "") if cid else ""
-                    if all(_lesson_matches_career(l, c_title) for l in hydrated["lessons"]):
+                    career_obj = self.rec_service.get_cached_career(cid) if cid else {}
+                    c_title = career_obj.get("title", "")
+                    c_soc = career_obj.get("onet_soc_code")
+                    if all(
+                        _lesson_matches_career(
+                            l,
+                            c_title,
+                            onet_soc_code=c_soc,
+                            enrolled_skill_ids={l.get("skill_id") or l.get("associated_skill_id")},
+                        )
+                        for l in hydrated["lessons"]
+                    ):
                         return hydrated
 
-            # If existing drop was an empty onboarding stub (< 3) or contaminated, purge it from cache
             sprints = [s for s in sprints if not (s.get("user_id") == user_id and s.get("sprint_date") == today)]
             _save_json_file(DAILY_SPRINTS_FILE, sprints)
 
-        # Curate fresh daily drop
         new_drop = await self._curate_daily_drop(user_id=user_id, sprint_date=today, priority_index=0)
-        # ONLY cache to disk if it contains calibrated lessons for a real skill
         if new_drop.get("target_skill_id") and len(new_drop.get("lesson_ids", [])) > 0:
             sprints.append(new_drop)
             _save_json_file(DAILY_SPRINTS_FILE, sprints)
+            self.rec_service.history_service.record_impressions(user_id, new_drop.get("lesson_ids", []))
+        return await self._hydrate_drop(new_drop, user_id)
+
+    async def trigger_daily_worker(self, user_id: str, force_fresh: bool = True) -> Dict[str, Any]:
+        """
+        Debug & On-Demand Daily Update Worker:
+        Clears today's cached sprint for the user, resets the daily reroll lock (`rerolls_used = 0`),
+        runs the multi-skill 5-primary + 5-reserve ingestion & ranking pipeline, and returns the hydrated drop.
+        """
+        today = _today_str()
+        sprints = _load_json_file(DAILY_SPRINTS_FILE)
+        old_sprint = next(
+            (s for s in sprints if s.get("user_id") == user_id and s.get("sprint_date") == today),
+            None,
+        )
+        prev_ids = list(old_sprint.get("active_lesson_ids", [])) if old_sprint else []
+
+        sprints = [s for s in sprints if not (s.get("user_id") == user_id and s.get("sprint_date") == today)]
+        _save_json_file(DAILY_SPRINTS_FILE, sprints)
+
+        new_drop = await self._curate_daily_drop(
+            user_id=user_id,
+            sprint_date=today,
+            priority_index=0,
+            excluded_ids=prev_ids if not force_fresh else [],
+            rerolls_used=0,
+            force_worker_topup=force_fresh,
+        )
+        if new_drop.get("target_skill_id") and len(new_drop.get("lesson_ids", [])) > 0:
+            sprints.append(new_drop)
+            _save_json_file(DAILY_SPRINTS_FILE, sprints)
+            self.rec_service.history_service.record_impressions(user_id, new_drop.get("lesson_ids", []))
         return await self._hydrate_drop(new_drop, user_id)
 
     async def reroll_daily_drop(self, user_id: str) -> Dict[str, Any]:
         """
-        Shuffles today's drop to the pre-loaded 3 reserve lessons for the SAME focus skill (1-shot mulligan).
-        Executes instantaneously in 0ms without re-querying or invoking LLMs.
+        Shuffles today's drop to the 5 reserve lessons (1-shot free reroll).
+        If the pre-cached reserve set has fewer than 5 lessons, tops up from secondary priority skills.
         Raises ValueError if re-roll was already used today.
         """
         today = _today_str()
@@ -248,7 +293,6 @@ class DailyDropService:
         )
 
         if drop_idx is None:
-            # Generate initial drop first
             drop = await self.get_or_create_daily_drop(user_id)
             return drop
 
@@ -256,13 +300,53 @@ class DailyDropService:
         if existing.get("rerolls_used", 0) >= 1:
             raise ValueError("You have already used your daily shuffle. Complete today's drop to unlock tomorrow's sprint.")
 
-        # Swap active lessons with the pre-cached reserve lessons for the exact same focus skill
-        reserve_ids = existing.get("reserve_lesson_ids", [])
+        active_ids = list(existing.get("active_lesson_ids") or existing.get("lesson_ids") or [])
+        reserve_ids = [lid for lid in existing.get("reserve_lesson_ids", []) if lid not in active_ids]
+
+        # If reserve pool is smaller than DAILY_DROP_SIZE, curate a fresh second set excluding the first set
+        if len(reserve_ids) < DAILY_DROP_SIZE:
+            second_drop = await self._curate_daily_drop(
+                user_id=user_id,
+                sprint_date=today,
+                priority_index=1,
+                excluded_ids=active_ids,
+                rerolls_used=1,
+            )
+            for lid in second_drop.get("active_lesson_ids", []):
+                if lid not in reserve_ids and lid not in active_ids:
+                    reserve_ids.append(lid)
+                    if len(reserve_ids) >= DAILY_DROP_SIZE:
+                        break
+            if second_drop.get("target_skill_name"):
+                existing["target_skill_name"] = second_drop["target_skill_name"]
+                existing["target_skill_id"] = second_drop.get("target_skill_id")
+                existing["focus_skill_names"] = second_drop.get("focus_skill_names", [])
+
+        # If still fewer than DAILY_DROP_SIZE, find any compatible domain lessons in reservoir excluding active_ids
+        if len(reserve_ids) < DAILY_DROP_SIZE:
+            prof_res = supabase_client.table("profiles").select("target_career_id").eq("id", user_id).execute()
+            cid = prof_res.data[0]["target_career_id"] if prof_res.data else None
+            career_obj = self.rec_service.get_cached_career(cid) if cid else {}
+            c_title = career_obj.get("title", "")
+            c_soc = career_obj.get("onet_soc_code")
+
+            all_res = supabase_client.table("micro_content").select("*").order("source_trust_score", desc=True).limit(60).execute()
+            for cand in (all_res.data or []):
+                cand_id = cand.get("id")
+                if not cand_id or cand_id in active_ids or cand_id in reserve_ids:
+                    continue
+                if _lesson_matches_career(cand, c_title, onet_soc_code=c_soc):
+                    reserve_ids.append(cand_id)
+                    if len(reserve_ids) >= DAILY_DROP_SIZE:
+                        break
+
         if reserve_ids:
-            existing["active_lesson_ids"] = reserve_ids
-            existing["lesson_ids"] = reserve_ids
+            existing["active_lesson_ids"] = reserve_ids[:DAILY_DROP_SIZE]
+            existing["lesson_ids"] = reserve_ids[:DAILY_DROP_SIZE]
+            self.rec_service.history_service.record_impressions(user_id, existing["lesson_ids"])
+
         existing["rerolls_used"] = 1
-        existing["passed_lesson_ids"] = []  # Reset passed status for the fresh reserve batch
+        existing["passed_lesson_ids"] = []
         existing["is_completed"] = False
 
         sprints[drop_idx] = existing
@@ -288,7 +372,7 @@ class DailyDropService:
         drop["passed_lesson_ids"] = list(passed_set)
 
         lesson_ids = drop.get("lesson_ids", [])
-        is_now_completed = all(lid in passed_set for lid in lesson_ids)
+        is_now_completed = bool(lesson_ids) and all(lid in passed_set for lid in lesson_ids)
         was_completed = drop.get("is_completed", False)
 
         if is_now_completed and not was_completed:
@@ -316,9 +400,13 @@ class DailyDropService:
         sprint_date: str,
         priority_index: int = 0,
         excluded_ids: Optional[List[str]] = None,
-        rerolls_used: int = 0
+        rerolls_used: int = 0,
+        force_worker_topup: bool = False,
     ) -> Dict[str, Any]:
-        """Synthesizes or selects 3 verified lessons for the prioritized deficit."""
+        """
+        Synthesizes and ranks 5 primary + 5 reserve verified lessons interleaved across
+        the learner's top priority skill gaps, adjusted for proficiency and learning history.
+        """
         excluded = set(excluded_ids or [])
 
         # 1. Fetch user target career
@@ -331,6 +419,7 @@ class DailyDropService:
                 "sprint_date": sprint_date,
                 "target_skill_id": None,
                 "target_skill_name": "General Career Foundations",
+                "focus_skill_names": [],
                 "lesson_ids": [],
                 "passed_lesson_ids": [],
                 "rerolls_used": rerolls_used,
@@ -340,6 +429,7 @@ class DailyDropService:
 
         career = self.rec_service.get_cached_career(career_id)
         career_title = career.get("title", "Target Career")
+        onet_soc_code = career.get("onet_soc_code")
         career_skills_map = self.rec_service.get_cached_career_skills(career_id)
 
         # 2. Fetch user's enrolled skills
@@ -370,7 +460,6 @@ class DailyDropService:
             sid for sid, meta in career_skills_map.items()
             if meta.get("importance") == "essential" and sid not in enrolled_ids
         ]
-        # Fallback if no essential skills exist for this career: take top 5 by importance score
         if not missing_essential_ids and not enrolled_ids and career_skills_map:
             sorted_career_skills = sorted(
                 career_skills_map.items(),
@@ -400,9 +489,7 @@ class DailyDropService:
             except Exception as e:
                 logger.warning(f"Auto-backfill essential skills in daily drop notice: {e}")
 
-        # 2B. Adaptive Daily Rotation & Interleaving
-        # Inspect user's recent daily sprints so we rotate topics daily across the career's
-        # essential competency pillars rather than redundantly sticking to a single skill.
+        # 2B. Adaptive Daily Rotation & Multi-Skill Priority Ordering
         sprints = _load_json_file(DAILY_SPRINTS_FILE)
         past_sprints = [s for s in sprints if s.get("user_id") == user_id]
         past_sprints.sort(key=lambda s: s.get("sprint_date", ""), reverse=True)
@@ -413,124 +500,274 @@ class DailyDropService:
         ]
 
         def rotation_priority(s):
-            # Recency penalty: if focused on recently, rotate to fresh career pillars
             recency_penalty = 0
             if s["id"] in recent_focused_skill_ids:
                 recency_index = recent_focused_skill_ids.index(s["id"])
                 recency_penalty = max(10, 100 - (recency_index * 20))
-
             mastery_penalty = 50 if s["proficiency"] >= 80 else 0
             return (recency_penalty, not s["essential"], s["tier"], mastery_penalty, s["proficiency"])
 
         skills.sort(key=rotation_priority)
+        if priority_index > 0 and len(skills) > 1:
+            skills = skills[priority_index:] + skills[:priority_index]
 
-        target_skill = skills[priority_index] if len(skills) > priority_index else (skills[0] if skills else None)
+        focus_skills = skills[:5] if skills else []
+        target_skill = focus_skills[0] if focus_skills else None
         target_skill_id = target_skill["id"] if target_skill else None
         target_skill_name = target_skill["name"] if target_skill else "Core Competency"
+        focus_skill_ids = [s["id"] for s in focus_skills if s.get("id")]
+        skill_by_id = {s["id"]: s for s in skills if s.get("id")}
 
-        # 3. Fetch candidate lessons for target_skill_id from micro_content
+        # 3. Fetch existing verified candidate lessons across the learner's focus skills
         candidates = []
-        if target_skill_id:
-            table_res = supabase_client.table("micro_content").select("*").eq(
-                "associated_skill_id", target_skill_id
-            ).limit(20).execute()
+        seen_cand_ids = set()
+        if focus_skill_ids:
+            table_res = supabase_client.table("micro_content").select("*").in_(
+                "associated_skill_id", focus_skill_ids
+            ).limit(60).execute()
 
             for item in (table_res.data or []):
-                if item["id"] in excluded:
+                lid = item.get("id")
+                sid = item.get("associated_skill_id")
+                sk_obj = skill_by_id.get(sid)
+                if not lid or lid in excluded or lid in seen_cand_ids or not sk_obj:
                     continue
-                if self._verify_lesson_relevance(item, target_skill_name, target_skill_id, career_title):
+                # Never re-serve a lesson the learner has already passed
+                if self.rec_service.history_service.has_passed_lesson(user_id, lid):
+                    continue
+                if self._verify_lesson_relevance(item, sk_obj["name"], sid, career_title, onet_soc_code=onet_soc_code):
                     candidates.append(item)
+                    seen_cand_ids.add(lid)
 
-        # 3B. JIT Dynamic Generation for Target Skill: If candidate pool has < 3,
-        # prioritize synthesizing lessons specifically for the focused deficit skill first.
-        if len(candidates) < 3 and target_skill and target_skill_id:
-            needed = 3 - len(candidates)
-            for _ in range(needed):
-                try:
-                    jit_lesson = await asyncio.wait_for(
-                        self.rec_service.content_service.generate_dynamic_lesson_for_skill(
-                            skill_id=target_skill_id,
-                            skill_name=target_skill_name,
-                            category=target_skill.get("category", "Core"),
-                            career_title=career_title,
-                            target_proficiency=target_skill.get("proficiency", 20),
-                            career_skill_context=career_skills_map.get(target_skill_id, {})
-                        ),
-                        timeout=14.0
-                    )
-                    if jit_lesson and isinstance(jit_lesson, dict) and jit_lesson.get("id"):
-                        if self._verify_lesson_relevance(jit_lesson, target_skill_name, target_skill_id, career_title):
-                            if jit_lesson["id"] not in [c["id"] for c in candidates]:
-                                candidates.append(jit_lesson)
-                except Exception as e:
-                    logger.warning(f"JIT live source ingestion notice for {target_skill_name}: {e}")
+        # 3B. Multi-Source Worker / Ingestion Acceleration
+        # Ensure we have a rich pool across the learner's focus skills using strict domain-compatible adapters
+        target_pool_size = (DAILY_DROP_SIZE + RESERVE_DROP_SIZE) if force_worker_topup else DAILY_DROP_SIZE
+        if len(candidates) < target_pool_size and focus_skills:
+            by_skill_count: Dict[str, int] = {}
+            for c in candidates:
+                sid = c.get("associated_skill_id")
+                by_skill_count[sid] = by_skill_count.get(sid, 0) + 1
 
-        # 3B. Soft Exclusion Fallback: If library was too sparse to satisfy exclusions (e.g. after re-roll),
-        # recycle earlier career-relevant lessons rather than stranding learner with 0 or < 3 cards.
-        if len(candidates) < 3 and excluded:
-            if target_skill_id:
-                table_res = supabase_client.table("micro_content").select("*").eq(
-                    "associated_skill_id", target_skill_id
-                ).limit(20).execute()
-                for item in (table_res.data or []):
-                    if item["id"] not in [c["id"] for c in candidates]:
-                        if self._verify_lesson_relevance(item, target_skill_name, target_skill_id, career_title):
-                            candidates.append(item)
-                            if len(candidates) >= 6:
-                                break
+            # Domain-strict adapter mapping (zero cross-domain contamination)
+            from app.services.recommendation_service import resolve_career_domain_standard
+            user_domain = resolve_career_domain_standard(career_title, onet_soc_code)
+            if user_domain == "tech":
+                non_video_adapters = ["structured_tutorial", "owasp", "open_textbook", "mdn", "arxiv"]
+            elif user_domain in ("healthcare", "science"):
+                non_video_adapters = ["clinical_science", "open_textbook", "structured_tutorial"]
+            elif user_domain in ("business_finance", "business_admin"):
+                non_video_adapters = ["finance", "structured_tutorial", "open_textbook"]
+            elif user_domain == "engineering":
+                non_video_adapters = ["structured_tutorial", "open_textbook", "arxiv", "osha"]
+            else:
+                non_video_adapters = ["structured_tutorial", "open_textbook"]
 
-            if len(candidates) < 3 and len(skills) > 1:
-                for alt_skill in skills:
-                    alt_res = supabase_client.table("micro_content").select("*").eq(
-                        "associated_skill_id", alt_skill["id"]
-                    ).limit(10).execute()
-                    for item in (alt_res.data or []):
-                        if item["id"] not in [c["id"] for c in candidates]:
-                            if self._verify_lesson_relevance(item, alt_skill["name"], alt_skill["id"], career_title):
-                                candidates.append(item)
-                                if len(candidates) >= 6:
-                                    break
-                    if len(candidates) >= 6:
+            gen_specs = []
+            for idx, sk in enumerate(focus_skills):
+                sid = sk["id"]
+                have = by_skill_count.get(sid, 0)
+                want = 2 if idx < 3 else 1
+                for slot in range(max(0, want - have)):
+                    pref = ["youtube"] if (idx + slot) % 2 == 0 else non_video_adapters
+                    gen_specs.append((sk, pref))
+                if len(gen_specs) >= (6 if force_worker_topup else 2):
+                    break
+
+            sem = asyncio.Semaphore(2)
+
+            async def _gen_one(sk_item: Dict[str, Any], pref_adapters: List[str]):
+                async with sem:
+                    try:
+                        return await asyncio.wait_for(
+                            self.rec_service.content_service.generate_dynamic_lesson_for_skill(
+                                skill_id=sk_item["id"],
+                                skill_name=sk_item["name"],
+                                category=sk_item.get("category", "Core"),
+                                career_title=career_title,
+                                target_proficiency=sk_item.get("proficiency", 20),
+                                career_skill_context=career_skills_map.get(sk_item["id"], {}),
+                                preferred_adapters=pref_adapters,
+                                onet_soc_code=onet_soc_code,
+                            ),
+                            timeout=8.0 if force_worker_topup else 4.0,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Daily Drop worker ingestion notice for {sk_item.get('name')}: {e}")
+                        return None
+
+            if gen_specs:
+                gen_results = await asyncio.gather(*(_gen_one(sk, pr) for sk, pr in gen_specs), return_exceptions=True)
+                for res_lesson in gen_results:
+                    if isinstance(res_lesson, dict) and res_lesson.get("id"):
+                        lid = res_lesson["id"]
+                        sid = res_lesson.get("associated_skill_id")
+                        sk_obj = skill_by_id.get(sid) or target_skill
+                        if lid not in seen_cand_ids and sk_obj:
+                            if self._verify_lesson_relevance(res_lesson, sk_obj["name"], sid, career_title, onet_soc_code=onet_soc_code):
+                                candidates.append(res_lesson)
+                                seen_cand_ids.add(lid)
+
+        # 3C. Soft Exclusion Fallback if pool is still sparse (< DAILY_DROP_SIZE)
+        if len(candidates) < DAILY_DROP_SIZE and excluded and focus_skill_ids:
+            table_res = supabase_client.table("micro_content").select("*").in_(
+                "associated_skill_id", focus_skill_ids
+            ).limit(40).execute()
+            for item in (table_res.data or []):
+                lid = item.get("id")
+                sid = item.get("associated_skill_id")
+                sk_obj = skill_by_id.get(sid)
+                if not lid or lid in seen_cand_ids or not sk_obj:
+                    continue
+                if self.rec_service.history_service.has_passed_lesson(user_id, lid):
+                    continue
+                if self._verify_lesson_relevance(item, sk_obj["name"], sid, career_title, onet_soc_code=onet_soc_code):
+                    candidates.append(item)
+                    seen_cand_ids.add(lid)
+                    if len(candidates) >= (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
                         break
 
-        # 3C. JIT Dynamic Generation: If candidate pool is insufficient (< 3),
-        # dynamically synthesize real domain-grounded lessons across the learner's essential skills.
-        if len(candidates) < 3 and skills:
-            skills_to_try = [target_skill] + [s for s in skills if s.get("id") != target_skill_id]
-            for sk in skills_to_try:
-                if len(candidates) >= 3:
-                    break
-                s_id = sk.get("id")
-                s_name = sk.get("name")
-                if not s_id or not s_name:
+        # 3C-2. Multi-Competency Career Reservoir Top-up: strictly guarantee DAILY_DROP_SIZE (5 lessons)
+        if len(candidates) < (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
+            other_skill_ids = [s["id"] for s in skills if s.get("id") and s["id"] not in seen_cand_ids]
+            if other_skill_ids:
+                other_res = supabase_client.table("micro_content").select("*").in_(
+                    "associated_skill_id", other_skill_ids
+                ).order("source_trust_score", desc=True).limit(30).execute()
+                all_skills_map = self.rec_service.get_cached_all_skills()
+                for item in (other_res.data or []):
+                    lid = item.get("id")
+                    sid = item.get("associated_skill_id")
+                    sk_obj = skill_by_id.get(sid) or all_skills_map.get(sid)
+                    if not lid or lid in seen_cand_ids or not sk_obj:
+                        continue
+                    if self.rec_service.history_service.has_passed_lesson(user_id, lid):
+                        continue
+                    if not self._verify_lesson_relevance(item, sk_obj.get("name", ""), sid, career_title, onet_soc_code=onet_soc_code):
+                        continue
+                    candidates.append(item)
+                    seen_cand_ids.add(lid)
+                    if len(candidates) >= (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
+                        break
+
+        # 3C-3. Sibling Career In Same Cognitive Field: NEVER allow cross-domain contamination
+        if len(candidates) < (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
+            from app.services.recommendation_service import resolve_career_domain_standard
+            user_domain = resolve_career_domain_standard(career_title, onet_soc_code)
+            all_skills_map = self.rec_service.get_cached_all_skills()
+
+            field_res = supabase_client.table("micro_content").select("*").order("source_trust_score", desc=True).limit(60).execute()
+            for item in (field_res.data or []):
+                lid = item.get("id")
+                sid = item.get("associated_skill_id")
+                sk_name = (all_skills_map.get(sid) or {}).get("name", "")
+                if not lid or lid in seen_cand_ids or lid in excluded:
                     continue
-                try:
-                    jit_lesson = await asyncio.wait_for(
-                        self.rec_service.content_service.generate_dynamic_lesson_for_skill(
-                            skill_id=s_id,
-                            skill_name=s_name,
-                            category=sk.get("category", "Core"),
-                            career_title=career_title,
-                            target_proficiency=sk.get("proficiency", 20),
-                            career_skill_context=career_skills_map.get(s_id, {})
-                        ),
-                        timeout=14.0
-                    )
-                    if jit_lesson and isinstance(jit_lesson, dict) and jit_lesson.get("id"):
-                        if self._verify_lesson_relevance(jit_lesson, s_name, s_id, career_title):
-                            if jit_lesson["id"] not in [c["id"] for c in candidates]:
-                                candidates.append(jit_lesson)
-                except Exception as e:
-                    logger.warning(f"JIT live source ingestion notice for {s_name}: {e}")
+                if self.rec_service.history_service.has_passed_lesson(user_id, lid):
+                    continue
+                # Strict domain boundary verification
+                if not _is_adapter_compatible_with_career(item, career_title, onet_soc_code=onet_soc_code):
+                    continue
+                if not _lesson_matches_career(item, career_title, onet_soc_code=onet_soc_code, enrolled_skill_ids=set(s["id"] for s in skills)):
+                    continue
+                # Fail-safe anti-contamination guard
+                title_lower = (item.get("title") or "").lower()
+                url_lower = (item.get("source_url") or "").lower()
+                med_flags = ("vital signs", "pharmacology", "nclex", "nursing", "patient care", "specimen collection", "clinical diagnosis", "dosages", "hospital")
+                if user_domain != "healthcare" and any(m in title_lower or m in url_lower for m in med_flags):
+                    continue
+                candidates.append(item)
+                seen_cand_ids.add(lid)
+                if len(candidates) >= (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
+                    break
 
-        # Partition into 3 active + 3 reserve lessons for the SAME topic
-        active_candidates = candidates[:3]
-        reserve_candidates = candidates[3:6]
-        if not reserve_candidates and len(active_candidates) > 0:
-            reserve_candidates = list(reversed(active_candidates))
+        # 3D. Stage 2 Hybrid RRF + Proficiency Difficulty Fit + History Cooldown Re-Ranking
+        if len(candidates) > 1 and focus_skills:
+            try:
+                all_skills_map = self.rec_service.get_cached_all_skills()
+                for item in candidates:
+                    if not item.get("skill_name"):
+                        sid = item.get("associated_skill_id")
+                        item["skill_name"] = (all_skills_map.get(sid) or skill_by_id.get(sid) or {}).get("name", "")
 
+                per_skill_queries = [
+                    f"Lesson: {s['name']}. Target Skill: {s['name']} ({s.get('category') or 'Core'}). Career: {career_title}."
+                    for s in focus_skills
+                ]
+                skill_vecs = await self.rec_service.embedding_service.get_embeddings_batch(per_skill_queries)
+                skill_vec_map = {s["id"]: v for s, v in zip(focus_skills, skill_vecs)}
+
+                for item in candidates:
+                    sid = item.get("associated_skill_id")
+                    q_v = skill_vec_map.get(sid) or (skill_vecs[0] if skill_vecs else None)
+                    sim = _cosine_similarity(q_v, item.get("embedding")) if q_v else None
+                    item["similarity"] = float(sim) if sim is not None else 0.72
+
+                frontier_q = f"Curriculum and practical instructional concepts for {career_title}."
+                candidates = self.rec_service._apply_reciprocal_rank_fusion(
+                    candidates, frontier_q, [s["name"] for s in focus_skills]
+                )
+                user_activity_map = self.rec_service.history_service.get_user_activity_map(user_id)
+
+                def _daily_drop_rank_score(item: Dict[str, Any]) -> float:
+                    base_sim = float(item.get("hybrid_score") or item.get("similarity") or 0.72)
+                    sid = item.get("associated_skill_id")
+                    sk_obj = skill_by_id.get(sid) or target_skill or {}
+                    s_prof = int(sk_obj.get("proficiency", 20))
+                    expected_diff = max(1, min(5, round(s_prof / 22.0) + 1))
+                    item_diff = int(item.get("difficulty_level") or 2)
+                    if item_diff > (expected_diff + 1):
+                        diff_mult = max(0.45, 1.0 - 0.25 * (item_diff - expected_diff))
+                    elif item_diff <= expected_diff:
+                        diff_mult = 1.08
+                    else:
+                        diff_mult = 1.0
+
+                    src_mult = _source_quality_multiplier(item, career_title)
+
+                    # History cooldown: penalize lessons seen on previous days that were ignored
+                    act = user_activity_map.get(item.get("id"), {})
+                    times_rec = int(act.get("times_recommended") or 0)
+                    opened = bool(act.get("opened_at"))
+                    if opened:
+                        act_mult = 1.10  # Boost in-progress lessons opened by learner
+                    elif times_rec >= 1:
+                        act_mult = max(0.50, 0.82 ** min(times_rec, 4))
+                    else:
+                        act_mult = 1.05  # Fresh unseen lesson bonus
+
+                    return base_sim * diff_mult * src_mult * act_mult
+
+                candidates.sort(key=_daily_drop_rank_score, reverse=True)
+            except Exception as rank_err:
+                logger.debug(f"Daily drop candidate ranking fallback: {rank_err}")
+
+        # 3E. Interleaved Multi-Skill & Source-Diverse Partitioning (3 Active + 3 Reserve)
+        # Prevent any single skill from monopolizing active slots (1 per skill when multiple skills exist)
+        active_candidates: List[Dict[str, Any]] = []
+        reserve_candidates: List[Dict[str, Any]] = []
+        skill_counts_active: Dict[str, int] = {}
+        max_per_skill = 1 if len({c.get("associated_skill_id") for c in candidates}) >= 3 else 2
+
+        for cand in candidates:
+            sid = cand.get("associated_skill_id")
+            if len(active_candidates) < DAILY_DROP_SIZE and skill_counts_active.get(sid, 0) < max_per_skill:
+                active_candidates.append(cand)
+                skill_counts_active[sid] = skill_counts_active.get(sid, 0) + 1
+            else:
+                reserve_candidates.append(cand)
+
+        # If active_candidates still has < DAILY_DROP_SIZE, top up from reserve_candidates
+        while len(active_candidates) < DAILY_DROP_SIZE and reserve_candidates:
+            active_candidates.append(reserve_candidates.pop(0))
+
+        reserve_candidates = reserve_candidates[:RESERVE_DROP_SIZE]
         active_lesson_ids = [c["id"] for c in active_candidates]
         reserve_lesson_ids = [c["id"] for c in reserve_candidates]
+        active_skill_names = []
+        for c in active_candidates:
+            sname = (skill_by_id.get(c.get("associated_skill_id")) or {}).get("name")
+            if sname and sname not in active_skill_names:
+                active_skill_names.append(sname)
 
         return {
             "id": str(uuid.uuid4()),
@@ -538,6 +775,7 @@ class DailyDropService:
             "sprint_date": sprint_date,
             "target_skill_id": target_skill_id,
             "target_skill_name": target_skill_name,
+            "focus_skill_names": active_skill_names or ([target_skill_name] if target_skill_name else []),
             "active_lesson_ids": active_lesson_ids,
             "reserve_lesson_ids": reserve_lesson_ids,
             "lesson_ids": active_lesson_ids,
@@ -548,7 +786,7 @@ class DailyDropService:
         }
 
     async def _hydrate_drop(self, drop: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-        """Fetches full lesson details for the IDs in the daily drop."""
+        """Fetches full lesson details for the IDs in the daily drop using unified JSON + column hydration."""
         lesson_ids = drop.get("active_lesson_ids") or drop.get("lesson_ids", [])
         lessons = []
 
@@ -562,50 +800,38 @@ class DailyDropService:
                 raw = lesson_map.get(lid)
                 if not raw:
                     continue
-                assoc_skill_id = raw.get("associated_skill_id")
-                skill_info = all_skills_map.get(assoc_skill_id, {})
-
-                quizzes = raw.get("quizzes")
-                if isinstance(quizzes, str):
-                    try:
-                        quizzes = json.loads(quizzes)
-                    except Exception:
-                        quizzes = []
-
-                lessons.append({
-                    "id": raw["id"],
-                    "title": raw["title"],
-                    "source_url": raw.get("source_url", ""),
-                    "source_name": raw.get("source_name") or raw.get("source") or "",
-                    "source_adapter": classify_source_adapter(raw.get("source_url", ""), raw.get("source_name", "")),
-                    "video_id": raw.get("video_id"),
-                    "summary_bullets": raw.get("summary_bullets") or raw.get("summary") or "",
-                    "concept_overview": raw.get("concept_overview") or "",
-                    "practice_scenario": raw.get("practice_scenario") or "",
-                    "difficulty_level": int(raw.get("difficulty_level") or 2),
-                    "quizzes": quizzes or [],
-                    "skill_id": assoc_skill_id,
-                    "skill_name": skill_info.get("name") or drop.get("target_skill_name") or "Core Skill",
-                    "skill_category": skill_info.get("category") or "Technical",
-                    "has_passed": raw["id"] in passed_set,
-                })
+                hydrated_item = hydrate_micro_content_row(
+                    raw,
+                    all_skills_map=all_skills_map,
+                    fallback_skill_name=drop.get("target_skill_name") or "Core Skill",
+                    passed_set=passed_set,
+                )
+                lessons.append(hydrated_item)
 
         streak_info = self.get_streak_info(user_id)
         now = _now_utc()
         tomorrow = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) + timedelta(days=1)
         seconds_until_next = int((tomorrow - now).total_seconds())
 
+        focus_names = drop.get("focus_skill_names") or []
+        if not focus_names and lessons:
+            for l in lessons:
+                if l.get("skill_name") and l["skill_name"] not in focus_names:
+                    focus_names.append(l["skill_name"])
+
         return {
             "id": drop.get("id"),
             "sprint_date": drop.get("sprint_date"),
             "target_skill_id": drop.get("target_skill_id"),
             "target_skill_name": drop.get("target_skill_name"),
+            "focus_skill_names": focus_names,
             "lessons": lessons,
+            "reserve_count": len(drop.get("reserve_lesson_ids", [])),
             "passed_count": len(drop.get("passed_lesson_ids", [])),
             "total_count": len(lessons),
             "is_completed": drop.get("is_completed", False),
             "rerolls_used": drop.get("rerolls_used", 0),
-            "can_reroll": drop.get("rerolls_used", 0) < 1 and not drop.get("is_completed", False) and len(drop.get("reserve_lesson_ids", [])) > 0,
+            "can_reroll": drop.get("rerolls_used", 0) < 1 and not drop.get("is_completed", False),
             "streak": streak_info,
             "seconds_until_next_drop": seconds_until_next,
         }

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Activity Diagram – Career Beacon</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #ffffff;
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px 20px 60px;
+        }
+        .fig-caption {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            margin-top: 16px;
+            text-align: center;
+        }
+        svg text { font-family: "Segoe UI", Arial, sans-serif; }
+    </style>
+</head>
+<body>
+
+<svg width="1000" height="1600" viewBox="0 0 1000 1600" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#444"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="500" y="28" text-anchor="middle" font-size="18" font-weight="700" fill="#111">Activity Diagram – Learner Workflow</text>
+    <text x="500" y="48" text-anchor="middle" font-size="12" fill="#666">End-to-end learner journey from authentication to skill mastery</text>
+
+    <!-- ===== SWIMLANE HEADERS ===== -->
+    <rect x="30" y="65" width="290" height="38" rx="5" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="89" text-anchor="middle" font-size="13" font-weight="700" fill="#1a73e8">React Frontend (Client)</text>
+
+    <rect x="350" y="65" width="300" height="38" rx="5" fill="#e6f4ea" stroke="#2e7d32" stroke-width="1.5"/>
+    <text x="500" y="89" text-anchor="middle" font-size="13" font-weight="700" fill="#2e7d32">FastAPI Backend (AI Engine)</text>
+
+    <rect x="680" y="65" width="290" height="38" rx="5" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+    <text x="825" y="89" text-anchor="middle" font-size="13" font-weight="700" fill="#5e35b1">Supabase (PostgreSQL + pgvector)</text>
+
+    <!-- Swimlane dividers -->
+    <line x1="335" y1="65" x2="335" y2="1560" stroke="#ddd" stroke-width="1" stroke-dasharray="6 4"/>
+    <line x1="665" y1="65" x2="665" y2="1560" stroke="#ddd" stroke-width="1" stroke-dasharray="6 4"/>
+
+    <!-- ===== START NODE ===== -->
+    <circle cx="175" cy="130" r="14" fill="#333"/>
+    <line x1="175" y1="144" x2="175" y2="170" stroke="#444" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+    <!-- A1: Open Application -->
+    <rect x="75" y="175" width="200" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="200" text-anchor="middle" font-size="12" font-weight="600" fill="#111">Open Career Beacon App</text>
+    <line x1="175" y1="215" x2="175" y2="240" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- D1: Decision – Authenticated? -->
+    <polygon points="175,245 240,275 175,305 110,275" fill="#fff3e0" stroke="#ef6c00" stroke-width="1.5"/>
+    <text x="175" y="279" text-anchor="middle" font-size="10" font-weight="600" fill="#333">Session</text>
+    <text x="175" y="291" text-anchor="middle" font-size="10" font-weight="600" fill="#333">exists?</text>
+
+    <!-- No → A2: Login -->
+    <line x1="110" y1="275" x2="60" y2="275" stroke="#444" stroke-width="1.5"/>
+    <line x1="60" y1="275" x2="60" y2="330" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="80" y="268" font-size="10" fill="#c41e3a" font-weight="600">No</text>
+
+    <rect x="-15" y="335" width="150" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="60" y="360" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Login / Register</text>
+
+    <!-- Login → Supabase Auth -->
+    <line x1="135" y1="355" x2="700" y2="355" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <rect x="700" y="335" width="200" height="40" rx="20" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+    <text x="800" y="360" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Verify Credentials (JWT)</text>
+
+    <!-- Return JWT → rejoin -->
+    <line x1="800" y1="375" x2="800" y2="405" stroke="#444" stroke-width="1.5"/>
+    <line x1="800" y1="405" x2="175" y2="405" stroke="#444" stroke-width="1.5"/>
+    <line x1="175" y1="395" x2="175" y2="430" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Yes → Check onboarding -->
+    <line x1="240" y1="275" x2="280" y2="275" stroke="#444" stroke-width="1.5"/>
+    <line x1="280" y1="275" x2="280" y2="405" stroke="#444" stroke-width="1.5"/>
+    <line x1="280" y1="405" x2="175" y2="405" stroke="#444" stroke-width="1.5"/>
+    <text x="255" y="268" font-size="10" fill="#2e7d32" font-weight="600">Yes</text>
+
+    <!-- D2: Decision – Onboarding Complete? -->
+    <polygon points="175,435 240,465 175,495 110,465" fill="#fff3e0" stroke="#ef6c00" stroke-width="1.5"/>
+    <text x="175" y="462" text-anchor="middle" font-size="10" font-weight="600" fill="#333">Career</text>
+    <text x="175" y="474" text-anchor="middle" font-size="10" font-weight="600" fill="#333">set?</text>
+
+    <!-- Yes → Dashboard (skip onboarding) -->
+    <line x1="240" y1="465" x2="290" y2="465" stroke="#444" stroke-width="1.5"/>
+    <text x="255" y="458" font-size="10" fill="#2e7d32" font-weight="600">Yes</text>
+    <line x1="290" y1="465" x2="290" y2="1100" stroke="#444" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="296" y="780" font-size="9" fill="#888" writing-mode="tb">Skip to Dashboard</text>
+
+    <!-- No → A3: Input Career Query -->
+    <line x1="175" y1="495" x2="175" y2="530" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="148" y="516" font-size="10" fill="#c41e3a" font-weight="600">No</text>
+
+    <rect x="75" y="535" width="200" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="560" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Input Target Career Query</text>
+    <line x1="275" y1="555" x2="370" y2="555" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A4: Backend – Generate Vector -->
+    <rect x="370" y="535" width="240" height="40" rx="20" fill="#e6f4ea" stroke="#2e7d32" stroke-width="1.5"/>
+    <text x="490" y="560" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Generate 384-dim Embedding</text>
+    <line x1="610" y1="555" x2="700" y2="555" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A5: Supabase – match_careers RPC -->
+    <rect x="700" y="535" width="210" height="40" rx="20" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+    <text x="805" y="555" text-anchor="middle" font-size="11" font-weight="600" fill="#111">match_careers RPC</text>
+    <text x="805" y="567" text-anchor="middle" font-size="11" font-weight="600" fill="#111">(Cosine Distance Search)</text>
+    <line x1="805" y1="575" x2="805" y2="600" stroke="#444" stroke-width="1.5"/>
+    <line x1="805" y1="600" x2="500" y2="600" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- D3: Decision – Similarity >= 0.85? -->
+    <polygon points="500,605 565,635 500,665 435,635" fill="#fff3e0" stroke="#ef6c00" stroke-width="1.5"/>
+    <text x="500" y="632" text-anchor="middle" font-size="10" font-weight="600" fill="#333">Sim</text>
+    <text x="500" y="644" text-anchor="middle" font-size="10" font-weight="600" fill="#333">≥ 0.85?</text>
+
+    <!-- Yes → Return matched career + skills -->
+    <line x1="565" y1="635" x2="630" y2="635" stroke="#444" stroke-width="1.5"/>
+    <line x1="630" y1="635" x2="630" y2="690" stroke="#444" stroke-width="1.5"/>
+    <line x1="630" y1="690" x2="175" y2="690" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="580" y="628" font-size="10" fill="#2e7d32" font-weight="600">Yes</text>
+    <text x="400" y="683" font-size="9" fill="#888" font-style="italic">Return matched career + skills</text>
+
+    <!-- No → A6: LLM Fallback -->
+    <line x1="500" y1="665" x2="500" y2="700" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="475" y="685" font-size="10" fill="#c41e3a" font-weight="600">No</text>
+
+    <rect x="380" y="705" width="240" height="50" rx="20" fill="#e6f4ea" stroke="#2e7d32" stroke-width="1.5"/>
+    <text x="500" y="725" text-anchor="middle" font-size="11" font-weight="600" fill="#111">LLM Taxonomy Fallback</text>
+    <text x="500" y="740" text-anchor="middle" font-size="10" fill="#555">(Groq → Gemini Multi-Provider)</text>
+
+    <line x1="380" y1="730" x2="275" y2="700" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="310" y="722" font-size="9" fill="#888" font-style="italic">Return generated career + skills</text>
+
+    <!-- A7: Display Skill Sliders -->
+    <rect x="55" y="700" width="240" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="720" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Display Skill Sliders (20/50/80%)</text>
+    <line x1="175" y1="740" x2="175" y2="780" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A8: Calibrate Proficiency -->
+    <rect x="55" y="785" width="240" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="810" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Calibrate Skill Proficiency Tiers</text>
+    <line x1="175" y1="825" x2="175" y2="855" stroke="#444" stroke-width="1.5"/>
+    <line x1="175" y1="855" x2="500" y2="855" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A9: Backend – Atomic Persist -->
+    <rect x="380" y="835" width="240" height="40" rx="20" fill="#e6f4ea" stroke="#2e7d32" stroke-width="1.5"/>
+    <text x="500" y="855" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Persist Career + Skills</text>
+    <text x="500" y="867" text-anchor="middle" font-size="10" fill="#555">(Atomic Transaction)</text>
+
+    <line x1="620" y1="855" x2="700" y2="855" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="700" y="835" width="210" height="40" rx="20" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+    <text x="805" y="860" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Write to DB Tables</text>
+
+    <line x1="805" y1="875" x2="805" y2="910" stroke="#444" stroke-width="1.5"/>
+    <line x1="805" y1="910" x2="175" y2="910" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A10: Dashboard Render -->
+    <rect x="55" y="920" width="240" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="945" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Render Skill Graph Dashboard</text>
+    <line x1="175" y1="960" x2="175" y2="995" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A11: Navigate to Recommendations -->
+    <rect x="55" y="1000" width="240" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="1025" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Request Recommendations Feed</text>
+    <line x1="295" y1="1020" x2="370" y2="1020" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Rejoin line from skip -->
+    <line x1="290" y1="1100" x2="290" y2="1020" stroke="#444" stroke-width="1.5"/>
+    <line x1="290" y1="1020" x2="295" y2="1020" stroke="#444" stroke-width="1.5"/>
+
+    <!-- A12: Backend – Two-Stage Pipeline -->
+    <rect x="370" y="1000" width="280" height="55" rx="20" fill="#e6f4ea" stroke="#2e7d32" stroke-width="1.5"/>
+    <text x="510" y="1022" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Two-Stage Hybrid Ranking</text>
+    <text x="510" y="1038" text-anchor="middle" font-size="10" fill="#555">Stage 1: pgvector → 30 | Stage 2: Re-rank → 5</text>
+
+    <line x1="370" y1="1030" x2="275" y2="1080" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A13: Display Micro-Learning Feed -->
+    <rect x="55" y="1080" width="240" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="1105" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Display Micro-Learning Feed</text>
+    <line x1="175" y1="1120" x2="175" y2="1155" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A14: Take Quiz -->
+    <rect x="55" y="1160" width="240" height="40" rx="20" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+    <text x="175" y="1185" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Take 5-Question Quiz</text>
+    <line x1="295" y1="1180" x2="390" y2="1180" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- A15: Backend – Evaluate Quiz -->
+    <rect x="390" y="1160" width="220" height="40" rx="20" fill="#e6f4ea" stroke="#2e7d32" stroke-width="1.5"/>
+    <text x="500" y="1185" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Evaluate Quiz Submission</text>
+    <line x1="500" y1="1200" x2="500" y2="1240" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- D4: Decision – Score >= 60%? -->
+    <polygon points="500,1245 565,1275 500,1305 435,1275" fill="#fff3e0" stroke="#ef6c00" stroke-width="1.5"/>
+    <text x="500" y="1272" text-anchor="middle" font-size="10" font-weight="600" fill="#333">Score</text>
+    <text x="500" y="1284" text-anchor="middle" font-size="10" font-weight="600" fill="#333">≥ 60%?</text>
+
+    <!-- Yes → +10% XP -->
+    <line x1="565" y1="1275" x2="700" y2="1275" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="615" y="1268" font-size="10" fill="#2e7d32" font-weight="600">Yes</text>
+
+    <rect x="700" y="1255" width="220" height="40" rx="20" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+    <text x="810" y="1275" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Update proficiency +10%</text>
+    <text x="810" y="1288" text-anchor="middle" font-size="10" fill="#555">(user_skills table)</text>
+
+    <line x1="810" y1="1295" x2="810" y2="1330" stroke="#444" stroke-width="1.5"/>
+
+    <!-- D5: Decision – Proficiency == 100%? -->
+    <polygon points="810,1335 875,1365 810,1395 745,1365" fill="#fff3e0" stroke="#ef6c00" stroke-width="1.5"/>
+    <text x="810" y="1362" text-anchor="middle" font-size="10" font-weight="600" fill="#333">Prof</text>
+    <text x="810" y="1374" text-anchor="middle" font-size="10" font-weight="600" fill="#333">= 100%?</text>
+
+    <!-- Yes → Mastered -->
+    <line x1="875" y1="1365" x2="950" y2="1365" stroke="#444" stroke-width="1.5"/>
+    <line x1="950" y1="1365" x2="950" y2="1430" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="905" y="1358" font-size="10" fill="#2e7d32" font-weight="600">Yes</text>
+
+    <rect x="860" y="1435" width="130" height="35" rx="17" fill="#d4edda" stroke="#2e7d32" stroke-width="2"/>
+    <text x="925" y="1457" text-anchor="middle" font-size="12" font-weight="700" fill="#2e7d32">MASTERED ✓</text>
+
+    <!-- No → Loop back to Feed -->
+    <line x1="745" y1="1365" x2="680" y2="1365" stroke="#444" stroke-width="1.5"/>
+    <line x1="680" y1="1365" x2="680" y2="1105" stroke="#444" stroke-width="1.5"/>
+    <line x1="680" y1="1105" x2="295" y2="1105" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="720" y="1358" font-size="10" fill="#c41e3a" font-weight="600">No</text>
+    <text x="490" y="1098" font-size="9" fill="#888" font-style="italic">Continue learning loop</text>
+
+    <!-- No on Quiz → Ask MENTOR -->
+    <line x1="500" y1="1305" x2="500" y2="1350" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="475" y="1330" font-size="10" fill="#c41e3a" font-weight="600">No</text>
+
+    <rect x="370" y="1355" width="260" height="50" rx="20" fill="#fef3c7" stroke="#b45309" stroke-width="1.5"/>
+    <text x="500" y="1377" text-anchor="middle" font-size="11" font-weight="600" fill="#111">Display "Ask MENTOR" Prompt</text>
+    <text x="500" y="1393" text-anchor="middle" font-size="10" fill="#555">(Contextual Mentorship Hook)</text>
+
+    <!-- Ask MENTOR → either retry or go to mentor -->
+    <line x1="370" y1="1380" x2="175" y2="1380" stroke="#444" stroke-width="1.5"/>
+    <line x1="175" y1="1380" x2="175" y2="1200" stroke="#444" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="260" y="1373" font-size="9" fill="#888" font-style="italic">Retry quiz or seek mentor</text>
+
+</svg>
+
+<p class="fig-caption">Figure 4.3: Activity Diagram – Learner Workflow from Authentication to Skill Mastery</p>
+
+</body>
+</html>

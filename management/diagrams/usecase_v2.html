@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Use Case Diagram – Career Beacon</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #ffffff;
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px 20px 60px;
+        }
+        .fig-caption {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            margin-top: 16px;
+            text-align: center;
+        }
+        svg text { font-family: "Segoe UI", Arial, sans-serif; }
+    </style>
+</head>
+<body>
+
+<svg width="1100" height="880" viewBox="0 0 1100 880" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#444"/>
+        </marker>
+        <marker id="open-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9" fill="none" stroke="#666" stroke-width="1.5"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="550" y="30" text-anchor="middle" font-size="18" font-weight="700" fill="#111">Use Case Diagram – Dual Semantic Recommendation Framework</text>
+
+    <!-- ===== SYSTEM BOUNDARY ===== -->
+    <rect x="200" y="55" width="700" height="790" rx="16" fill="none" stroke="#222" stroke-width="2" stroke-dasharray="none"/>
+    <text x="550" y="82" text-anchor="middle" font-size="14" font-weight="700" fill="#222">Career Beacon System Boundary</text>
+
+    <!-- ===== ACTORS ===== -->
+    <!-- Learner (Left) -->
+    <g transform="translate(80, 280)">
+        <circle cx="0" cy="0" r="14" fill="none" stroke="#1a73e8" stroke-width="2.5"/>
+        <line x1="0" y1="14" x2="0" y2="44" stroke="#1a73e8" stroke-width="2.5"/>
+        <line x1="-18" y1="26" x2="18" y2="26" stroke="#1a73e8" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="-14" y2="66" stroke="#1a73e8" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="14" y2="66" stroke="#1a73e8" stroke-width="2.5"/>
+        <text x="0" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#1a73e8">Learner</text>
+    </g>
+
+    <!-- Mentor (Left, lower) -->
+    <g transform="translate(80, 620)">
+        <circle cx="0" cy="0" r="14" fill="none" stroke="#e8710a" stroke-width="2.5"/>
+        <line x1="0" y1="14" x2="0" y2="44" stroke="#e8710a" stroke-width="2.5"/>
+        <line x1="-18" y1="26" x2="18" y2="26" stroke="#e8710a" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="-14" y2="66" stroke="#e8710a" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="14" y2="66" stroke="#e8710a" stroke-width="2.5"/>
+        <text x="0" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#e8710a">Mentor</text>
+    </g>
+
+    <!-- AI Engine / System (Right) -->
+    <g transform="translate(1020, 280)">
+        <circle cx="0" cy="0" r="14" fill="none" stroke="#0d652d" stroke-width="2.5"/>
+        <line x1="0" y1="14" x2="0" y2="44" stroke="#0d652d" stroke-width="2.5"/>
+        <line x1="-18" y1="26" x2="18" y2="26" stroke="#0d652d" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="-14" y2="66" stroke="#0d652d" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="14" y2="66" stroke="#0d652d" stroke-width="2.5"/>
+        <text x="0" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#0d652d">AI Engine</text>
+    </g>
+
+    <!-- Supabase (Right, lower) -->
+    <g transform="translate(1020, 560)">
+        <circle cx="0" cy="0" r="14" fill="none" stroke="#6d28d9" stroke-width="2.5"/>
+        <line x1="0" y1="14" x2="0" y2="44" stroke="#6d28d9" stroke-width="2.5"/>
+        <line x1="-18" y1="26" x2="18" y2="26" stroke="#6d28d9" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="-14" y2="66" stroke="#6d28d9" stroke-width="2.5"/>
+        <line x1="0" y1="44" x2="14" y2="66" stroke="#6d28d9" stroke-width="2.5"/>
+        <text x="0" y="86" text-anchor="middle" font-size="13" font-weight="700" fill="#6d28d9">Supabase DB</text>
+    </g>
+
+    <!-- ===== USE CASE ELLIPSES ===== -->
+    <!-- UC1: Authenticate & Manage Account -->
+    <ellipse cx="550" cy="130" rx="160" ry="28" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.8"/>
+    <text x="550" y="135" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC1: Authenticate &amp; Manage Account</text>
+
+    <!-- UC2: Input Target Career -->
+    <ellipse cx="430" cy="210" rx="145" ry="28" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.8"/>
+    <text x="430" y="215" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC2: Input Target Career Query</text>
+
+    <!-- UC3: Execute Semantic Vector Search -->
+    <ellipse cx="660" cy="290" rx="160" ry="28" fill="#e6f4ea" stroke="#0d652d" stroke-width="1.8"/>
+    <text x="660" y="295" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC3: Execute Semantic Vector Search</text>
+
+    <!-- UC4: Synthesize Career Taxonomy (extends UC3) -->
+    <ellipse cx="660" cy="370" rx="170" ry="28" fill="#fef7e0" stroke="#e8710a" stroke-width="1.8"/>
+    <text x="660" y="367" text-anchor="middle" font-size="11" font-weight="600" fill="#1a1a1a">UC4: Synthesize Career &amp; Skill</text>
+    <text x="660" y="381" text-anchor="middle" font-size="11" font-weight="600" fill="#1a1a1a">Taxonomy via LLM Fallback</text>
+
+    <!-- UC5: Declare Skill Proficiency -->
+    <ellipse cx="400" cy="440" rx="155" ry="28" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.8"/>
+    <text x="400" y="445" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC5: Declare Skill Proficiency Tiers</text>
+
+    <!-- UC6: View Skill Graph Dashboard -->
+    <ellipse cx="400" cy="520" rx="158" ry="28" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.8"/>
+    <text x="400" y="525" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC6: View Skill Graph Dashboard</text>
+
+    <!-- UC7: Consume Micro-Learning Feed -->
+    <ellipse cx="550" cy="600" rx="170" ry="28" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.8"/>
+    <text x="550" y="605" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC7: Consume Micro-Learning Feed</text>
+
+    <!-- UC8: Complete Assessment Quiz -->
+    <ellipse cx="420" cy="680" rx="155" ry="28" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.8"/>
+    <text x="420" y="685" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC8: Complete Assessment Quiz</text>
+
+    <!-- UC9: Match with Mentors -->
+    <ellipse cx="650" cy="750" rx="155" ry="28" fill="#fef7e0" stroke="#e8710a" stroke-width="1.8"/>
+    <text x="650" y="755" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC9: Match with Mentors</text>
+
+    <!-- UC10: Book Mentorship Session -->
+    <ellipse cx="400" cy="790" rx="155" ry="28" fill="#fef7e0" stroke="#e8710a" stroke-width="1.8"/>
+    <text x="400" y="795" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC10: Book Mentorship Session</text>
+
+    <!-- UC11: Answer Q&A Repository -->
+    <ellipse cx="680" cy="680" rx="155" ry="28" fill="#fef7e0" stroke="#e8710a" stroke-width="1.8"/>
+    <text x="680" y="685" text-anchor="middle" font-size="12" font-weight="600" fill="#1a1a1a">UC11: Respond to Q&amp;A Board</text>
+
+
+    <!-- ===== ASSOCIATION LINES (Actor to Use Case) ===== -->
+    <!-- Learner to UC1 -->
+    <line x1="105" y1="275" x2="395" y2="140" stroke="#1a73e8" stroke-width="1.5"/>
+    <!-- Learner to UC2 -->
+    <line x1="105" y1="280" x2="290" y2="215" stroke="#1a73e8" stroke-width="1.5"/>
+    <!-- Learner to UC5 -->
+    <line x1="105" y1="310" x2="250" y2="440" stroke="#1a73e8" stroke-width="1.5"/>
+    <!-- Learner to UC6 -->
+    <line x1="105" y1="320" x2="245" y2="520" stroke="#1a73e8" stroke-width="1.5"/>
+    <!-- Learner to UC7 -->
+    <line x1="105" y1="330" x2="385" y2="595" stroke="#1a73e8" stroke-width="1.5"/>
+    <!-- Learner to UC8 -->
+    <line x1="105" y1="340" x2="268" y2="675" stroke="#1a73e8" stroke-width="1.5"/>
+    <!-- Learner to UC9 -->
+    <line x1="105" y1="345" x2="498" y2="748" stroke="#1a73e8" stroke-width="1.5"/>
+
+    <!-- Mentor to UC1 -->
+    <line x1="105" y1="615" x2="395" y2="145" stroke="#e8710a" stroke-width="1.5"/>
+    <!-- Mentor to UC11 -->
+    <line x1="105" y1="625" x2="528" y2="683" stroke="#e8710a" stroke-width="1.5"/>
+    <!-- Mentor to UC10 -->
+    <line x1="105" y1="640" x2="248" y2="788" stroke="#e8710a" stroke-width="1.5"/>
+
+    <!-- AI Engine to UC3 -->
+    <line x1="1000" y1="280" x2="820" y2="290" stroke="#0d652d" stroke-width="1.5"/>
+    <!-- AI Engine to UC4 -->
+    <line x1="1000" y1="290" x2="830" y2="365" stroke="#0d652d" stroke-width="1.5"/>
+    <!-- AI Engine to UC7 (recommendation generation) -->
+    <line x1="1000" y1="310" x2="720" y2="597" stroke="#0d652d" stroke-width="1.5"/>
+
+    <!-- Supabase to UC3 -->
+    <line x1="1000" y1="555" x2="820" y2="295" stroke="#6d28d9" stroke-width="1.5"/>
+    <!-- Supabase to UC5 -->
+    <line x1="1000" y1="560" x2="555" y2="445" stroke="#6d28d9" stroke-width="1.5"/>
+    <!-- Supabase to UC8 -->
+    <line x1="1000" y1="570" x2="575" y2="682" stroke="#6d28d9" stroke-width="1.5"/>
+
+    <!-- ===== INCLUDE/EXTEND STEREOTYPES ===== -->
+    <!-- UC2 --<<include>>--> UC3 -->
+    <line x1="540" y1="230" x2="570" y2="265" stroke="#555" stroke-width="1.4" stroke-dasharray="7 4" marker-end="url(#open-arrow)"/>
+    <text x="515" y="252" text-anchor="middle" font-size="10" font-style="italic" fill="#555">«include»</text>
+
+    <!-- UC3 --<<extend>>--> UC4 (if similarity < 0.85) -->
+    <line x1="660" y1="318" x2="660" y2="342" stroke="#555" stroke-width="1.4" stroke-dasharray="7 4" marker-end="url(#open-arrow)"/>
+    <text x="735" y="335" text-anchor="middle" font-size="10" font-style="italic" fill="#555">«extend» [sim &lt; 0.85]</text>
+
+    <!-- UC7 --<<include>>--> UC8 -->
+    <line x1="500" y1="625" x2="450" y2="656" stroke="#555" stroke-width="1.4" stroke-dasharray="7 4" marker-end="url(#open-arrow)"/>
+    <text x="440" y="640" text-anchor="middle" font-size="10" font-style="italic" fill="#555">«include»</text>
+
+    <!-- UC8 --<<extend>>--> UC9 (on repeated failure) -->
+    <line x1="540" y1="700" x2="580" y2="728" stroke="#555" stroke-width="1.4" stroke-dasharray="7 4" marker-end="url(#open-arrow)"/>
+    <text x="605" y="718" text-anchor="middle" font-size="10" font-style="italic" fill="#555">«extend» [quiz failed]</text>
+
+    <!-- Legend -->
+    <rect x="220" y="98" width="180" height="14" rx="3" fill="#e8f0fe" stroke="#1a73e8" stroke-width="0.8"/>
+    <text x="310" y="109" text-anchor="middle" font-size="9" fill="#333">Learner Use Cases</text>
+    <rect x="420" y="98" width="180" height="14" rx="3" fill="#fef7e0" stroke="#e8710a" stroke-width="0.8"/>
+    <text x="510" y="109" text-anchor="middle" font-size="9" fill="#333">Mentor / Marketplace Use Cases</text>
+    <rect x="620" y="98" width="180" height="14" rx="3" fill="#e6f4ea" stroke="#0d652d" stroke-width="0.8"/>
+    <text x="710" y="109" text-anchor="middle" font-size="9" fill="#333">AI Engine Use Cases</text>
+
+</svg>
+
+<p class="fig-caption">Figure 4.1: Use Case Diagram – Dual Semantic Recommendation Framework</p>
+
+</body>
+</html>

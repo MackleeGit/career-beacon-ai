@@ -64,11 +64,11 @@ export default function App() {
       if (!navigator.onLine) {
         setIsOffline(true);
       } else {
-        const ping = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/admin/stats`, {
-          method: 'HEAD',
+        const ping = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/health`, {
+          method: 'GET',
           cache: 'no-store',
         }).catch(() => null);
-        if (ping) {
+        if (ping && ping.ok) {
           setIsOffline(false);
           setShowOnlineToast(true);
           setTimeout(() => setShowOnlineToast(false), 4000);

@@ -1,7 +1,10 @@
 # Project Management
-management/
+management/*.pdf
+management/*.docx
 !management/Chapter_5_Implementation_and_Testing.docx
-!management/DEMO_PRESENTATION_SCRIPT.md
+management/Doc Refs/
+management/archive/
+management/onet_data/
 pdf-forge-exports/
 
 # Frontend (Node.js / React / Vite)
@@ -39,7 +42,9 @@ ehthumbs.db
 Thumbs.db
 
 # Local learner history and exported project bundles
-/backend/data/
+/backend/data/*.log
+/backend/data/ch5_extracted_raw.txt
+backend/data/youtube_search_cache.json
 /backend_clean.zip
 /codebase_clean.zip
 /frontend_clean.zip
@@ -49,3 +54,6 @@ frontend/__preview.html
 frontend/src/__preview.jsx
 backend/.test-tmp/
 management/log.txt
+backend/scratch/
+management/credentials/
+

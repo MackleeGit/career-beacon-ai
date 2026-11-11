@@ -1,19 +1,27 @@
 """
-----------------------------------------------
-Two-Stage Hybrid Recommendation Engine
+-------------------------------------------------------------------------------
+Career Beacon Pedagogical Recommendation & Quiz Grading Service
+-------------------------------------------------------------------------------
+Core Responsibilities:
+1. Server-Side Checkpoint Grading:
+   - Evaluates 5-question multiple choice quizzes server-side against stored answer keys.
+   - Enforces pass thresholds (>= 60%), applies difficulty gain ceilings (Diff 1 caps at 50%,
+     Diff 5 unlocks 100%), and atomically increments user skill proficiency in user_skills.
 
+2. Taxonomy & Dependency Caching:
+   - In-memory caching for career standards (O*NET/ESCO), skill importance tiers, and DAG dependencies.
 
-Architecture:
-  STAGE 1: DATABASE COARSE FILTER (Supabase / pgvector)
-    - Constructs user skill-gap frontier embedding.
-    - Uses pgvector cosine similarity (<=>) to retrieve top 30 candidate items.
-    - Gracefully falls back to relational fetch if stored procedure is pending.
+3. Pedagogical Re-Ranking Foundation (Shared with DailyDropService):
+   - Hybrid Reciprocal Rank Fusion (Dense vector + Sparse lexical terms).
+   - Cognitive Load Gating: Matches lesson difficulty level (1-5) against user proficiency (0-100%).
+   - Deficit weighting, prerequisite unblocking, and source trust multipliers.
 
-  STAGE 2: PYTHON RE-RANKING ENGINE (FastAPI / Graph Weights)
-    - Priority in Difficulty: Penalizes high-difficulty content for low-proficiency nodes.
-    - Career Context: Carries occupation and O*NET/ESCO skill metadata into retrieval.
-    - Source Diversity: Retrieves additional validated sources when a skill has only one domain.
-    - Sorts and delivers final Top 5 micro-learning feed.
+Note on Architecture Evolution:
+- The production learner habit loop operates via the Daily Focus Drop (`DailyDropService`),
+  which packages 3 daily verified lessons with streak tracking and a 1-shot re-roll.
+- The open continuous feed generator (`get_recommendations_for_user`) below is maintained
+  for on-demand exploration, deep-dive curriculum generation, and backwards compatibility.
+-------------------------------------------------------------------------------
 """
 
 import asyncio
@@ -64,14 +72,36 @@ def _explicit_lesson_career(item: Dict[str, Any]) -> Optional[str]:
     return match.group(1).strip() if match else None
 
 
-def _lesson_matches_career(item: Dict[str, Any], career_title: str) -> bool:
-    """Keep generic lessons, but reject lessons explicitly made for another career."""
+def _lesson_matches_career(
+    item: Dict[str, Any],
+    career_title: str,
+    onet_soc_code: Optional[str] = None,
+    enrolled_skill_ids: Optional[set] = None,
+) -> bool:
+    """
+    Keep generic lessons and canonical skill lessons shared across sibling careers in the same
+    occupational domain, while rejecting lessons explicitly branded for an incompatible career/domain.
+    """
     lesson_career = _explicit_lesson_career(item)
     if not lesson_career:
         return True
     expected = _normalized_career_label(career_title)
     actual = _normalized_career_label(lesson_career)
-    return not expected or actual == expected
+    if not expected or actual == expected:
+        return True
+
+    # Allow sharing across sibling occupations within the same occupational domain.
+    learner_domain = resolve_career_domain_standard(career_title, onet_soc_code)
+    lesson_domain = resolve_career_domain_standard(lesson_career, None)
+    if learner_domain != "general" and learner_domain == lesson_domain:
+        return True
+
+    # If the lesson teaches one of the learner's explicitly enrolled canonical skills,
+    # allow sharing across occupations.
+    skill_id = item.get("associated_skill_id")
+    if enrolled_skill_ids and skill_id in enrolled_skill_ids:
+        return True
+    return False
 
 
 SOC_MAJOR_GROUP_DOMAINS: Dict[str, str] = {
@@ -103,54 +133,115 @@ SOC_MAJOR_GROUP_DOMAINS: Dict[str, str] = {
 RESTRICTED_ADAPTER_DOMAINS: Dict[str, set] = {
     "clinical_science": {"healthcare", "science"},
     "mdn": {"tech"},
+    "structured_tutorial": {"tech", "business_admin", "business_finance", "legal", "education", "creative_media", "general"},
     "owasp": {"tech", "protective_service"},
-    "osha": {"trades_industrial", "engineering", "healthcare", "transportation"},
+    "osha": {"trades_industrial", "engineering", "healthcare", "transportation", "protective_service", "hospitality_food"},
+    "ecfr": {"trades_industrial", "engineering", "healthcare", "transportation", "business_finance", "protective_service", "hospitality_food"},
+    "arxiv": {"tech", "science", "engineering", "business_finance"},
     "finance": {"business_finance", "business_admin"},
 }
+
+
+SOC_CLUSTER_ANCHORS: Dict[str, str] = {
+    "tech": (
+        "Computer and Information Technology: Software engineer, full-stack engineer, backend developer, frontend developer, "
+        "data scientist, machine learning engineer, devops engineer, cloud architect, cybersecurity analyst, database administrator, "
+        "web development, algorithms, programming, distributed systems."
+    ),
+    "protective_service": (
+        "Protective Service and Public Safety: Police officer, firefighter, correctional officer, security specialist, "
+        "criminal investigator, emergency dispatch, law enforcement."
+    ),
+    "engineering": (
+        "Architecture and Engineering: Mechanical engineer, civil engineer, electrical engineer, aerospace engineer, "
+        "chemical engineer, industrial engineer, CAD drafting, structural analysis, thermodynamics, robotics hardware."
+    ),
+    "healthcare": (
+        "Healthcare and Medical: Registered nurse, physician, dentist, pharmacist, physical therapist, clinical diagnosis, "
+        "patient care, oral surgery, medical therapy, surgical treatment."
+    ),
+    "science": (
+        "Life, Physical and Social Sciences: Biochemist, geneticist, microbiologist, physicist, chemist, environmental scientist, "
+        "epidemiologist, scientific research, laboratory methodology, molecular biology."
+    ),
+    "business_finance": (
+        "Financial Specialists: Accountant, auditor, financial analyst, actuary, investment banker, quantitative analyst, "
+        "tax advisor, credit counselor, investment valuation, portfolio management."
+    ),
+    "business_admin": (
+        "Business Operations and Management: Operations manager, project manager, supply chain manager, logistician, "
+        "human resources specialist, marketing manager, management analyst, organizational coordination."
+    ),
+    "trades_industrial": (
+        "Skilled Trades, Construction and Culinary: Electrician, plumber, HVAC technician, carpenter, welder, machinist, "
+        "cook, chef, industrial equipment maintenance, building codes."
+    ),
+    "transportation": (
+        "Aviation and Transportation: Commercial pilot, air traffic controller, flight crew, marine captain, "
+        "railroad conductor, flight navigation."
+    ),
+}
+
+_SOC_ANCHOR_VECTORS: Optional[Dict[str, List[float]]] = None
+_CAREER_DOMAIN_RESOLUTION_CACHE: Dict[str, str] = {}
 
 
 def resolve_career_domain_standard(career_title: str, onet_soc_code: Optional[str] = None) -> str:
     """
     Standard BLS SOC taxonomy domain resolution.
-    1. Checks the 2-digit Major Group prefix if onet_soc_code is present.
-    2. Fallback for the ~15 non-standard or custom AI occupations.
+    1. Checks the 2-digit Major Group prefix if onet_soc_code is present (covering all 855 catalog occupations).
+    2. For novel, frontier, or user-custom titles lacking an O*NET code, computes vector cosine similarity
+       against authoritative BLS SOC cluster occupational centroids. Zero hardcoded substring matching.
     """
+    global _SOC_ANCHOR_VECTORS
+
     if onet_soc_code:
         prefix = str(onet_soc_code).strip()[:2]
         if prefix in SOC_MAJOR_GROUP_DOMAINS:
             return SOC_MAJOR_GROUP_DOMAINS[prefix]
 
-    title_low = (career_title or "").lower()
-    if any(k in title_low for k in ("health", "medic", "dent", "doctor", "nurs", "physic", "pharm", "therap", "surg", "clinical")):
-        return "healthcare"
-    if any(k in title_low for k in ("software", "develop", "program", "data", "web", "computer", "cloud", "devops", "cyber", "ai")):
-        return "tech"
-    if any(k in title_low for k in ("engineer", "aerospace", "mechanical", "electrical", "civil", "architect")):
-        return "engineering"
-    if any(k in title_low for k in ("secretar", "administrat", "office", "clerk", "reception", "assistant", "coordinator")):
-        return "business_admin"
-    if any(k in title_low for k in ("finance", "account", "bank", "invest", "audit", "tax", "budget")):
-        return "business_finance"
-    if any(k in title_low for k in ("pilot", "flight", "driver", "transport", "aviation", "maritime", "cargo")):
-        return "transportation"
-    if any(k in title_low for k in ("welder", "plumb", "electrician", "carpent", "mechanic", "machin", "construct")):
-        return "trades_industrial"
-    return "general"
+    title_key = (career_title or "").strip().lower()
+    if not title_key:
+        return "general"
+
+    if title_key in _CAREER_DOMAIN_RESOLUTION_CACHE:
+        return _CAREER_DOMAIN_RESOLUTION_CACHE[title_key]
+
+    try:
+        from app.services.embedding_service import EmbeddingService
+        emb_svc = EmbeddingService()
+        if _SOC_ANCHOR_VECTORS is None:
+            _SOC_ANCHOR_VECTORS = {
+                d: emb_svc.get_embedding_sync(text)
+                for d, text in SOC_CLUSTER_ANCHORS.items()
+            }
+
+        q_vec = emb_svc.get_embedding_sync(title_key)
+        scores = {
+            d: sum(a * b for a, b in zip(q_vec, anchor_vec))
+            for d, anchor_vec in _SOC_ANCHOR_VECTORS.items()
+        }
+        ranked_domains = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        best_domain, best_score = ranked_domains[0]
+        second_score = ranked_domains[1][1] if len(ranked_domains) > 1 else 0.0
+        margin = best_score - second_score
+
+        # Calibrated above FastEmbed 0.535 noise floor with top-1 vs top-2 margin guard
+        resolved = best_domain if (best_score >= 0.60 and margin >= 0.005) else "general"
+        _CAREER_DOMAIN_RESOLUTION_CACHE[title_key] = resolved
+        return resolved
+    except Exception as e:
+        logger.debug(f"[recommendation_service] Vector domain resolution fallback: {e}")
+        return "general"
 
 
 def _is_adapter_compatible_with_career(item: Dict[str, Any], career_title: str, onet_soc_code: Optional[str] = None) -> bool:
     """Taxonomy-driven adapter capability gate across all 855 careers."""
+    from app.services.content_service import classify_source_adapter
     adapter = (item.get("source_adapter") or "").lower()
     url = (item.get("source_url") or "").lower()
-    if not adapter:
-        if "developer.mozilla.org" in url or "w3schools.com" in url or "geeksforgeeks.org" in url:
-            adapter = "mdn"
-        elif "europepmc.org" in url or "ncbi.nlm.nih.gov" in url or "pubmed" in url:
-            adapter = "clinical_science"
-        elif "owasp.org" in url:
-            adapter = "owasp"
-        elif "osha.gov" in url:
-            adapter = "osha"
+    if not adapter and url:
+        adapter = classify_source_adapter(url, str(item.get("source_name") or item.get("source") or ""))
 
     domain = resolve_career_domain_standard(career_title, onet_soc_code)
     allowed_domains = RESTRICTED_ADAPTER_DOMAINS.get(adapter)
@@ -159,11 +250,17 @@ def _is_adapter_compatible_with_career(item: Dict[str, Any], career_title: str, 
     return True
 
 
-def _filter_candidates_for_career(items: List[Dict[str, Any]], career_title: str) -> List[Dict[str, Any]]:
+def _filter_candidates_for_career(
+    items: List[Dict[str, Any]],
+    career_title: str,
+    onet_soc_code: Optional[str] = None,
+    enrolled_skill_ids: Optional[set] = None,
+) -> List[Dict[str, Any]]:
     """Drop cross-career lessons, domain-incompatible adapters, and generic/Wikipedia copies when better-fit material exists."""
     career_items = [
         item for item in items
-        if _lesson_matches_career(item, career_title) and _is_adapter_compatible_with_career(item, career_title)
+        if _lesson_matches_career(item, career_title, onet_soc_code=onet_soc_code, enrolled_skill_ids=enrolled_skill_ids)
+        and _is_adapter_compatible_with_career(item, career_title, onet_soc_code=onet_soc_code)
     ]
     career_specific_skills = {
         item.get("associated_skill_id")
@@ -352,6 +449,99 @@ class RecommendationService:
             logger.warning(f"Failed to fetch skills catalog: {e}")
         return _skills_lookup_cache
 
+    @staticmethod
+    def _apply_reciprocal_rank_fusion(
+        candidates: List[Dict[str, Any]],
+        query_text: str,
+        priority_skill_names: List[str],
+        k: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """
+        Applies Reciprocal Rank Fusion (RRF) to merge Dense Semantic Recall with Sparse Lexical Precision.
+        Formula: RRF_Score(d) = 1 / (k + rank_dense(d)) + 1 / (k + rank_sparse(d))
+        Ensures lessons containing exact technical identifiers (e.g. 'OAuth 2.0', 'HACCP', 'Docker', 'DCF')
+        receive proper rank promotion without losing dense conceptual discovery.
+        """
+        if not candidates:
+            return []
+
+        # 1. Rank Dense Stream (descending by cosine similarity)
+        dense_sorted = sorted(
+            candidates,
+            key=lambda x: float(x.get("similarity") or 0.0),
+            reverse=True,
+        )
+        dense_ranks = {item["id"]: idx + 1 for idx, item in enumerate(dense_sorted) if item.get("id")}
+
+        # 2. Rank Sparse Stream (descending by lexical token relevance, preserving technical symbols & versions)
+        stop_words = {
+            "and", "the", "for", "with", "from", "into", "using", "basic", "basics",
+            "applied", "concepts", "key", "skill", "skills", "curriculum", "instructional",
+            "practical", "technical"
+        }
+        token_pattern = r"[a-z0-9]+(?:[.#+-][a-z0-9+#]*)*"
+        query_combined = f"{query_text} {' '.join(priority_skill_names)}".lower()
+        raw_tokens = re.findall(token_pattern, query_combined)
+        lexical_query_tokens = {
+            t for t in raw_tokens
+            if t not in stop_words and (len(t) >= 3 or any(ch in t for ch in ".#+-0123456789"))
+        }
+        priority_tokens = {
+            t for t in re.findall(token_pattern, " ".join(priority_skill_names).lower())
+            if t not in stop_words and (len(t) >= 2)
+        }
+
+        def sparse_score(item: Dict[str, Any]) -> float:
+            text_corpus = " ".join([
+                str(item.get("title") or ""),
+                str(item.get("skill_name") or ""),
+                str(item.get("summary_bullets") or item.get("summary") or ""),
+                str(item.get("concept_overview") or ""),
+            ]).lower()
+            corpus_tokens = set(re.findall(token_pattern, text_corpus))
+            score = 0.0
+            for tok in lexical_query_tokens:
+                if tok in corpus_tokens:
+                    score += 3.0 if tok in priority_tokens else 1.5
+                elif tok in text_corpus:
+                    score += 1.0
+            return score
+
+        # 2B. Rank Sparse Stream (descending by lexical token relevance for items with matches)
+        sparse_scores_map = {item["id"]: sparse_score(item) for item in candidates if item.get("id")}
+        items_with_hits = [(item_id, sc) for item_id, sc in sparse_scores_map.items() if sc > 0]
+        items_with_hits.sort(key=lambda x: x[1], reverse=True)
+        sparse_ranks = {item_id: idx + 1 for idx, (item_id, _) in enumerate(items_with_hits)}
+
+        # 3. Fuse RRF Scores while preserving calibrated dense similarity magnitude
+        max_rrf = (1.0 / (k + 1)) + (1.0 / (k + 1))
+        max_sparse_raw = max((sc for _, sc in items_with_hits), default=0.0)
+        for item in candidates:
+            i_id = item.get("id")
+            r_dense = dense_ranks.get(i_id, len(candidates))
+            dense_rrf = 1.0 / (k + r_dense)
+
+            if i_id in sparse_ranks:
+                r_sparse = sparse_ranks[i_id]
+                sparse_rrf = 1.0 / (k + r_sparse)
+            else:
+                sparse_rrf = 0.0
+
+            rrf = dense_rrf + sparse_rrf
+            item["rrf_score"] = rrf
+            rrf_normalized = min(1.0, rrf / max_rrf)
+            raw_sim = float(item.get("similarity") or 0.0)
+            sparse_ratio = (sparse_scores_map.get(i_id, 0.0) / max_sparse_raw) if max_sparse_raw > 0 else 0.0
+
+            # Magnitude-preserving hybrid fusion:
+            # Rewards exact technical identifier overlap (+up to 0.12) and rank agreement without
+            # artificially inflating low-similarity items in small candidate pools.
+            lexical_bonus = (0.08 * sparse_ratio) + (0.06 * rrf_normalized if i_id in sparse_ranks else -0.03)
+            item["hybrid_score"] = round(max(0.0, min(1.0, raw_sim + lexical_bonus)), 4)
+
+        candidates.sort(key=lambda x: x.get("hybrid_score", 0.0), reverse=True)
+        return candidates
+
     async def get_recommendations_for_user(
         self,
         user_id: str,
@@ -360,7 +550,9 @@ class RecommendationService:
         exclude_ids: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Executes the Two-Stage Hybrid Recommendation Pipeline for a given user.
+        [Continuous Feed Pipeline - Retained for On-Demand Curriculum Exploration]
+        Executes Two-Stage Hybrid retrieval for a user. Note: The primary daily
+        learner loop is handled by DailyDropService.get_or_create_daily_drop.
         """
         # 1. Fetch user's profile and target career
         profile_res = supabase_client.table("profiles").select("target_career_id").eq("id", user_id).execute()
@@ -371,6 +563,7 @@ class RecommendationService:
         career_id = profile_res.data[0]["target_career_id"]
         career = self.get_cached_career(career_id)
         career_title = career.get("title", "General Career")
+        onet_soc_code = career.get("onet_soc_code")
 
         # 2. Fetch user's enrolled skills and current proficiencies (Skill Graph Coordinates)
         user_skills_res = supabase_client.table("user_skills").select(
@@ -445,24 +638,32 @@ class RecommendationService:
             return (not essential, tier, -importance_score, -gap_to_target, rank, skill["proficiency"])
 
         priority_skills = sorted(user_skills, key=career_priority)[:4]
-        career_tags = [
-            f"{s['name']} [category: {s['category'] or 'General'}; "
-            f"career importance: {career_skills_map.get(s['id'], {}).get('importance') or 'unclassified'}; "
-            f"tier: {career_skills_map.get(s['id'], {}).get('tier') or 'unspecified'}; "
-            f"importance score: {career_skills_map.get(s['id'], {}).get('importance_score') or 'unspecified'}; "
-            f"learner estimate: {s['proficiency']}%; "
-            f"target: {career_skills_map.get(s['id'], {}).get('expected_proficiency') or 'unspecified'}%]"
+        priority_skill_names = [s["name"] for s in priority_skills]
+        skills_str = ", ".join(priority_skill_names) if priority_skill_names else "Core foundational concepts"
+        # Isomorphic instructional query conforming to VECTOR_ARCHITECTURE_SPEC (15-40 words):
+        # Aligns directly with stored content embedding: "{title}. Skill: {skill_name} ({category}). Summary: {summary}"
+        frontier_query_text = (
+            f"Curriculum and practical instructional concepts for {career_title}. "
+            f"Key technical skills: {skills_str}."
+        )
+        per_skill_queries = [
+            f"Lesson: {s['name']}. Target Skill: {s['name']} ({s.get('category') or 'Core'}). Career: {career_title}."
             for s in priority_skills
         ]
-        frontier_query_text = (
-            f"Target occupation: {career_title}. {career.get('description') or ''}. "
-            f"Occupation provenance: {career.get('source_origin') or 'unspecified'}; "
-            f"O*NET code: {career.get('onet_soc_code') or 'unspecified'}; "
-            f"ESCO URI: {career.get('esco_occupation_uri') or 'unspecified'}. "
-            f"Career skill priorities: {'; '.join(career_tags)}."
-        )
+        all_query_vecs = await self.embedding_service.get_embeddings_batch([frontier_query_text] + per_skill_queries)
+        query_embedding = all_query_vecs[0]
+        skill_query_embeddings = all_query_vecs[1:]
 
-        query_embedding = await self.embedding_service.get_embedding(frontier_query_text)
+        def _best_query_similarity(doc_vec: Any, base_sim: Optional[float] = None) -> Optional[float]:
+            best = base_sim
+            if doc_vec:
+                for q_v in all_query_vecs:
+                    sim = _cosine_similarity(q_v, doc_vec)
+                    if sim is not None and (best is None or sim > best):
+                        best = sim
+            return best
+
+        STAGE1_COSINE_FLOOR = 0.55
 
         # 4. STAGE 1: DATABASE COARSE FILTER (pgvector Semantic Recall)
         candidates: List[Dict[str, Any]] = []
@@ -471,7 +672,7 @@ class RecommendationService:
                 "match_micro_content",
                 {
                     "query_embedding": query_embedding,
-                    "match_threshold": 0.25,
+                    "match_threshold": STAGE1_COSINE_FLOOR,
                     "match_count": 100,
                 }
             ).execute()
@@ -482,7 +683,9 @@ class RecommendationService:
             logger.warning(f"match_micro_content RPC call failed ({e}); falling back to relational fetch.")
 
         # Filter explicit cross-career records before deciding whether recall is sufficient.
-        candidates = _filter_candidates_for_career(candidates, career_title)
+        candidates = _filter_candidates_for_career(
+            candidates, career_title, onet_soc_code=onet_soc_code, enrolled_skill_ids=user_skill_ids
+        )
 
         # If the global semantic top set is too small after career/source filtering,
         # supplement it with a wider pool tied to the learner's enrolled skills.
@@ -493,15 +696,18 @@ class RecommendationService:
                 ).limit(200).execute()
                 seen_ids = {item.get("id") for item in candidates if item.get("id")}
                 for item in (table_res.data or []):
-                    if item.get("id") in seen_ids or not _lesson_matches_career(item, career_title):
+                    if item.get("id") in seen_ids or not _lesson_matches_career(
+                        item, career_title, onet_soc_code=onet_soc_code, enrolled_skill_ids=user_skill_ids
+                    ):
                         continue
-                    if item.get("similarity") is None:
-                        item["similarity"] = _cosine_similarity(query_embedding, item.get("embedding"))
-                    if item.get("similarity") is not None and item["similarity"] >= 0.25:
+                    item["similarity"] = _best_query_similarity(item.get("embedding"), item.get("similarity"))
+                    if item.get("similarity") is not None and item["similarity"] >= STAGE1_COSINE_FLOOR:
                         candidates.append(item)
                         if item.get("id"):
                             seen_ids.add(item["id"])
-                candidates = _filter_candidates_for_career(candidates, career_title)
+                candidates = _filter_candidates_for_career(
+                    candidates, career_title, onet_soc_code=onet_soc_code, enrolled_skill_ids=user_skill_ids
+                )
                 logger.info(f"Career-filtered candidate pool contains {len(candidates)} lessons.")
             except Exception as e:
                 logger.error(f"Failed to supplement targeted career candidate pool: {e}")
@@ -583,19 +789,31 @@ class RecommendationService:
                     new_lessons = await asyncio.gather(*tasks, return_exceptions=True)
                     for lesson in new_lessons:
                         if isinstance(lesson, dict) and lesson.get("id"):
-                            lesson["similarity"] = _cosine_similarity(query_embedding, lesson.get("embedding"))
-                            if lesson["similarity"] is not None and lesson["similarity"] >= 0.25:
+                            lesson["similarity"] = _best_query_similarity(lesson.get("embedding"))
+                            if lesson["similarity"] is not None and lesson["similarity"] >= STAGE1_COSINE_FLOOR:
                                 candidates.insert(0, lesson)
                                 logger.info(f"Just-In-Time delivered tailored lesson: '{lesson.get('title')}'")
                 except Exception as e:
                     logger.error(f"Error during Just-In-Time dynamic lesson generation: {e}")
 
-        candidates = _filter_candidates_for_career(candidates, career_title)
+        candidates = _filter_candidates_for_career(
+            candidates, career_title, onet_soc_code=onet_soc_code, enrolled_skill_ids=user_skill_ids
+        )
         if not candidates:
             return []
 
-        # Build skill details lookup for all skills in DB
+        # Build skill details lookup for all skills in DB BEFORE RRF so sparse_score has skill_name
         all_skills_map = self.get_cached_all_skills()
+        for item in candidates:
+            if not item.get("skill_name"):
+                sk_id = item.get("associated_skill_id")
+                if sk_id and sk_id in all_skills_map:
+                    item["skill_name"] = all_skills_map[sk_id].get("name", "")
+                elif sk_id and sk_id in skill_name_map:
+                    item["skill_name"] = skill_name_map[sk_id]
+
+        # 4C. HYBRID RECIPROCAL RANK FUSION (Dense Semantic + Sparse Lexical)
+        candidates = self._apply_reciprocal_rank_fusion(candidates, frontier_query_text, priority_skill_names)
 
         # 5. STAGE 2: PYTHON GRAPH & PEDAGOGICAL RE-RANKER
         # Fetch user content activity history (impressions, opens, completions)
@@ -603,9 +821,9 @@ class RecommendationService:
 
         ranked_items = []
         for item in candidates:
-            # Missing semantic evidence must not be replaced with an invented baseline.
+            # Baseline similarity utilizes RRF hybrid score merging dense vector similarity and sparse exact terms
             try:
-                base_sim = float(item.get("similarity", 0.0) or 0.0)
+                base_sim = float(item.get("hybrid_score") or item.get("similarity", 0.0) or 0.0)
             except (TypeError, ValueError):
                 base_sim = 0.0
             base_sim = max(0.0, min(1.0, base_sim))
@@ -883,60 +1101,15 @@ class RecommendationService:
                 sk_res = supabase_client.table("skills").select("id, name, category").in_("id", skill_ids).execute()
                 skill_map = {s["id"]: s for s in (sk_res.data or [])}
 
-            from app.services.content_service import classify_source_adapter
-            adapter_labels = {
-                "youtube": "YouTube Lecture",
-                "structured_tutorial": "Structured Tutorial",
-                "open_textbook": "Open Textbook",
-                "clinical_science": "NCBI / Europe PMC",
-                "mdn": "MDN Web Docs",
-                "openalex": "OpenAlex Academic",
-                "wikipedia": "Wikipedia Reference",
-            }
+            from app.services.content_service import hydrate_micro_content_row
             library = []
             for item in rows:
-                sid = item.get("associated_skill_id")
-                sk = skill_map.get(sid, {})
-                source_url = item.get("source_url", "")
-                c_raw = item.get("content")
-                c_data = {}
-                if isinstance(c_raw, dict):
-                    c_data = c_raw
-                elif isinstance(c_raw, str) and c_raw.strip().startswith("{"):
-                    try:
-                        c_data = json.loads(c_raw)
-                    except Exception:
-                        c_data = {}
-                quizzes = item.get("quizzes") or c_data.get("quizzes") or []
-                if isinstance(quizzes, str):
-                    try:
-                        quizzes = json.loads(quizzes)
-                    except Exception:
-                        quizzes = []
-                source_name = item.get("source_name") or c_data.get("source_name") or ""
-                source_adapter = classify_source_adapter(source_url, source_name)
-                if not source_name:
-                    source_name = adapter_labels.get(source_adapter, "Instructional Guide")
-                library.append({
-                    "id": item["id"],
-                    "title": item.get("title", "Lesson"),
-                    "summary_bullets": item.get("summary_bullets") or item.get("summary") or c_data.get("summary_bullets") or "",
-                    "concept_overview": item.get("concept_overview") or c_data.get("concept_overview") or "",
-                    "practice_scenario": item.get("practice_scenario") or c_data.get("practice_scenario") or "",
-                    "video_id": item.get("video_id") or c_data.get("video_id"),
-                    "source_url": source_url,
-                    "source_name": source_name,
-                    "source_adapter": source_adapter,
-                    "quizzes": quizzes,
-                    "associated_skill_id": sid,
-                    "skill_id": sid,
-                    "skill_name": sk.get("name", "Core Skill"),
-                    "skill_category": sk.get("category", "General"),
-                    "has_passed": True,
-                    "completed": True,
-                    "lifecycle_state": "passed_complete",
-                    "learning_status": "completed",
-                })
+                hydrated = hydrate_micro_content_row(item, all_skills_map=skill_map)
+                hydrated["has_passed"] = True
+                hydrated["completed"] = True
+                hydrated["lifecycle_state"] = "passed_complete"
+                hydrated["learning_status"] = "completed"
+                library.append(hydrated)
             return library
         except Exception as e:
             logger.warning(f"Failed to load completed library for {user_id}: {e}")
@@ -958,13 +1131,9 @@ class RecommendationService:
         if not lesson_res.data:
             return {"error": "Lesson not found"}
 
-        lesson = lesson_res.data[0]
+        from app.services.content_service import hydrate_micro_content_row
+        lesson = hydrate_micro_content_row(lesson_res.data[0])
         quizzes = lesson.get("quizzes", [])
-        if isinstance(quizzes, str):
-            try:
-                quizzes = json.loads(quizzes)
-            except Exception:
-                quizzes = []
 
         total_questions = len(quizzes)
         if total_questions == 0:

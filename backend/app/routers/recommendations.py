@@ -37,8 +37,8 @@ async def submit_lesson_feedback(payload: RecommendationFeedbackPayload, http_re
     # If flagged as irrelevant or disliked with a reason, route directly to Admin Moderation Desk
     if payload.feedback == "irrelevant" or (payload.feedback == "dislike" and payload.reason):
         try:
-            from app.routers.admin import _FLAGGED_ITEMS
-            _FLAGGED_ITEMS.insert(0, {
+            from app.routers.admin import record_flagged_item
+            record_flagged_item({
                 "id": f"flag-recom-{uuid.uuid4().hex[:8]}",
                 "item_type": "recommendation",
                 "sender_name": f"Learner ({user_id[:8]}...)",
@@ -75,11 +75,30 @@ async def reroll_daily_drop(http_req: Request):
     caller_id = get_verified_user_id(http_req)
     try:
         drop = await daily_drop_service.reroll_daily_drop(caller_id)
-        return {"status": "success", "drop": drop, "message": "Daily drop shuffled to secondary deficit."}
+        return {"status": "success", "drop": drop, "message": "Daily drop shuffled to secondary deficit set."}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reroll daily drop: {str(e)}")
+
+
+@router.post("/daily-drop/trigger-worker")
+async def trigger_daily_drop_worker(http_req: Request):
+    """
+    On-Demand / Debug Daily Update Worker Endpoint:
+    Forces a fresh 5-primary + 5-reserve curation run for the caller, resets today's reroll lock,
+    and returns the newly curated 5-lesson Daily Drop.
+    """
+    caller_id = get_verified_user_id(http_req)
+    try:
+        drop = await daily_drop_service.trigger_daily_worker(caller_id, force_fresh=True)
+        return {
+            "status": "success",
+            "drop": drop,
+            "message": "Daily update worker executed: 5 primary + reserve lessons calibrated and reroll unlocked.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to run daily drop worker: {str(e)}")
 
 
 @router.get("/library/completed")

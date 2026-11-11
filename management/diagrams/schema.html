@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Database Schema - Career Beacon</title>
+    <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+        body { background-color: #f4f6f8; padding: 40px; margin: 0; }
+        .schema-title { font-weight: bold; font-size: 18px; margin-bottom: 20px; text-align: center; color: #222; }
+        
+        .schema-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 30px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .db-table {
+            background: #fff;
+            border: 1.5px solid #222;
+            box-shadow: 2px 2px 8px rgba(0,0,0,0.08);
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        .db-table header {
+            background: #eef2f5;
+            border-bottom: 1.5px solid #222;
+            font-weight: bold;
+            text-align: center;
+            padding: 8px;
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .db-row {
+            display: grid;
+            grid-template-columns: 80px 1fr 45px;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 11px;
+            align-items: center;
+        }
+
+        .db-row:last-child { border-bottom: none; }
+
+        .db-cell {
+            padding: 5px 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .db-cell.type { color: #555; border-right: 1px solid #eee; }
+        .db-cell.name { font-weight: 600; color: #111; }
+        .db-cell.key { text-align: center; font-weight: bold; border-left: 1px solid #eee; color: #333; }
+
+        .rel-badge {
+            background: #eef2f5;
+            border: 1px dashed #666;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-top: 4px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="schema-title">Figure 4.6: Relational Database Schema</div>
+
+    <div class="schema-grid">
+
+        <!-- PROFILES -->
+        <div>
+            <table class="db-table">
+                <header>PROFILES</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">id</div><div class="db-cell key">PK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">email</div><div class="db-cell key">UK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">full_name</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">avatar_url</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">bio</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">created_at</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">updated_at</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">1:N ➔ user_skills, bookings, mentors</span>
+        </div>
+
+        <!-- CAREERS -->
+        <div>
+            <table class="db-table">
+                <header>CAREERS</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">id</div><div class="db-cell key">PK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">title</div><div class="db-cell key">UK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">description</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">created_at</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">updated_at</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">1:N ➔ career_skills, micro_content</span>
+        </div>
+
+        <!-- SKILLS -->
+        <div>
+            <table class="db-table">
+                <header>SKILLS</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">id</div><div class="db-cell key">PK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">name</div><div class="db-cell key">UK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">category</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">created_at</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">updated_at</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">1:N ➔ career_skills, user_skills</span>
+        </div>
+
+        <!-- CAREER_SKILLS -->
+        <div>
+            <table class="db-table">
+                <header>CAREER_SKILLS</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">career_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">skill_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">int</div><div class="db-cell name">rank</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">Junction Table (Careers ↔ Skills)</span>
+        </div>
+
+        <!-- USER_SKILLS -->
+        <div>
+            <table class="db-table">
+                <header>USER_SKILLS</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">user_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">skill_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">int</div><div class="db-cell name">proficiency</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">last_used</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">Junction Table (Profiles ↔ Skills)</span>
+        </div>
+
+        <!-- MICRO_CONTENT -->
+        <div>
+            <table class="db-table">
+                <header>MICRO_CONTENT</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">id</div><div class="db-cell key">PK</div></div>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">career_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">title</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">summary</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">content</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">vector(1536)</div><div class="db-cell name">embedding</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">source_url</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">created_at</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">N:1 ➔ careers</span>
+        </div>
+
+        <!-- MENTORS -->
+        <div>
+            <table class="db-table">
+                <header>MENTORS</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">id</div><div class="db-cell key">PK</div></div>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">profile_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">bio</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">expertise</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">numeric</div><div class="db-cell name">rating_avg</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">int</div><div class="db-cell name">rating_count</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">created_at</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">1:N ➔ mentor_qa, bookings</span>
+        </div>
+
+        <!-- MENTOR_QA -->
+        <div>
+            <table class="db-table">
+                <header>MENTOR_QA</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">id</div><div class="db-cell key">PK</div></div>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">mentor_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">question</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">answer</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">vector(1536)</div><div class="db-cell name">embedding</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">created_at</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">N:1 ➔ mentors</span>
+        </div>
+
+        <!-- BOOKINGS -->
+        <div>
+            <table class="db-table">
+                <header>BOOKINGS</header>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">id</div><div class="db-cell key">PK</div></div>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">mentor_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">uuid</div><div class="db-cell name">user_id</div><div class="db-cell key">FK</div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">start_time</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">timestamp</div><div class="db-cell name">end_time</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">status</div><div class="db-cell key"></div></div>
+                <div class="db-row"><div class="db-cell type">text</div><div class="db-cell name">meeting_link</div><div class="db-cell key"></div></div>
+            </table>
+            <span class="rel-badge">N:1 ➔ mentors, profiles</span>
+        </div>
+
+    </div>
+
+</body>
+</html>

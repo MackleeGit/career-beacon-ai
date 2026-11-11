@@ -1,0 +1,252 @@
+[
+  {
+    "user_id": "48b0e910-f8dc-4afd-ac6b-c06b73224cfe",
+    "lesson_id": "1f424daa-2745-477a-8135-8050a818c8d2",
+    "skill_id": "ca62ad7e-2faf-4431-939e-e5bc7fe235a3",
+    "attempt_number": 1,
+    "answers": {
+      "0": "Payee",
+      "1": "Payment method identifier",
+      "2": "https://google.com/pay",
+      "3": "Merchant validation",
+      "4": "basic-card"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T08:22:34.266675+00:00"
+  },
+  {
+    "user_id": "48b0e910-f8dc-4afd-ac6b-c06b73224cfe",
+    "lesson_id": "e91dc4b2-0d02-498a-a254-317fd6ca9b63",
+    "skill_id": "ca62ad7e-2faf-4431-939e-e5bc7fe235a3",
+    "attempt_number": 1,
+    "answers": {
+      "0": "UTF\u20118 or UTF\u201116",
+      "1": "Document/Literal and RPC/Literal",
+      "2": "Whether the header\u2019s role matches the security processor",
+      "3": "Reject the request and return a SOAP fault",
+      "4": "Using RPC/Encoded messaging style"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T08:22:36.558419+00:00"
+  },
+  {
+    "user_id": "48b0e910-f8dc-4afd-ac6b-c06b73224cfe",
+    "lesson_id": "1c2b830e-541e-464d-9cbb-41e135ba92c1",
+    "skill_id": "967eb752-cb1d-46be-a1b0-d08da2320188",
+    "attempt_number": 1,
+    "answers": {
+      "0": "Read the data chunk\u2011by\u2011chunk using an iterator",
+      "1": "HDFStore (HDF5)",
+      "2": "To map logical groups to their fields and define data_columns for indexing",
+      "3": "0.10.1",
+      "4": "Use HDFStore with those fields listed as data_columns for fast selection"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T08:22:39.030509+00:00"
+  },
+  {
+    "user_id": "5e63840b-cf51-458a-9985-e86e26d301c7",
+    "lesson_id": "d7923f4e-256d-462f-8ef2-935db453ecbc",
+    "skill_id": "3ce4685b-ac80-471c-9487-da2e6a18bc4b",
+    "attempt_number": 1,
+    "answers": {
+      "0": "Dentists",
+      "1": "Fragmented healthcare system with separate reimbursement models",
+      "2": "Schedule a follow\u2011up appointment",
+      "3": "Delay care until patient can travel",
+      "4": "Holding regular joint case conferences"
+    },
+    "score": 2,
+    "total": 5,
+    "percentage": 40.0,
+    "passed": false,
+    "created_at": "2026-11-02T08:29:15.838008+00:00"
+  },
+  {
+    "user_id": "e681600d-cfb4-4ad3-901b-9e63f530fdf0",
+    "lesson_id": "1f424daa-2745-477a-8135-8050a818c8d2",
+    "skill_id": "ca62ad7e-2faf-4431-939e-e5bc7fe235a3",
+    "attempt_number": 1,
+    "answers": {
+      "0": "Payee",
+      "1": "Payment method identifier",
+      "2": "https://google.com/pay",
+      "3": "Merchant validation",
+      "4": "basic-card"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T08:58:53.400775+00:00"
+  },
+  {
+    "user_id": "e681600d-cfb4-4ad3-901b-9e63f530fdf0",
+    "lesson_id": "e91dc4b2-0d02-498a-a254-317fd6ca9b63",
+    "skill_id": "ca62ad7e-2faf-4431-939e-e5bc7fe235a3",
+    "attempt_number": 1,
+    "answers": {
+      "0": "UTF\u20118 or UTF\u201116",
+      "1": "Document/Literal and RPC/Literal",
+      "2": "Whether the header\u2019s role matches the security processor",
+      "3": "Reject the request and return a SOAP fault",
+      "4": "Using RPC/Encoded messaging style"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T08:58:55.802352+00:00"
+  },
+  {
+    "user_id": "e681600d-cfb4-4ad3-901b-9e63f530fdf0",
+    "lesson_id": "1c2b830e-541e-464d-9cbb-41e135ba92c1",
+    "skill_id": "967eb752-cb1d-46be-a1b0-d08da2320188",
+    "attempt_number": 1,
+    "answers": {
+      "0": "Read the data chunk\u2011by\u2011chunk using an iterator",
+      "1": "HDFStore (HDF5)",
+      "2": "To map logical groups to their fields and define data_columns for indexing",
+      "3": "0.10.1",
+      "4": "Use HDFStore with those fields listed as data_columns for fast selection"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T08:58:57.604344+00:00"
+  },
+  {
+    "user_id": "28c30260-fa84-4f53-918f-c6ccc4191a50",
+    "lesson_id": "e91dc4b2-0d02-498a-a254-317fd6ca9b63",
+    "skill_id": "ca62ad7e-2faf-4431-939e-e5bc7fe235a3",
+    "attempt_number": 1,
+    "answers": {
+      "0": "UTF\u20118 or UTF\u201116",
+      "1": "Document/Literal and RPC/Literal",
+      "2": "Whether the header\u2019s role matches the security processor",
+      "3": "Reject the request and return a SOAP fault",
+      "4": "Using RPC/Encoded messaging style"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T09:40:01.941491+00:00"
+  },
+  {
+    "user_id": "28c30260-fa84-4f53-918f-c6ccc4191a50",
+    "lesson_id": "9e79191b-67d9-42f2-9a8e-21d1ec9daf69",
+    "skill_id": "f55a7ff3-4cc1-47ef-999f-ea9e1c2f6cd2",
+    "attempt_number": 1,
+    "answers": {
+      "0": "===",
+      "1": "The else block",
+      "2": "The condition would always be true",
+      "3": "It ensures every possible input is handled"
+    },
+    "score": 4,
+    "total": 4,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T09:40:04.294400+00:00"
+  },
+  {
+    "user_id": "28c30260-fa84-4f53-918f-c6ccc4191a50",
+    "lesson_id": "d6a2d020-0d2d-4b16-8e34-0092de40d18c",
+    "skill_id": "f55a7ff3-4cc1-47ef-999f-ea9e1c2f6cd2",
+    "attempt_number": 1,
+    "answers": {
+      "0": "<ol>",
+      "1": "href",
+      "2": "<section>",
+      "3": "External CSS linked in <head>",
+      "4": "Missing a <caption> element"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T09:40:07.198955+00:00"
+  },
+  {
+    "user_id": "ec72159d-e95d-43ed-9b8c-34a7239f87a3",
+    "lesson_id": "e91dc4b2-0d02-498a-a254-317fd6ca9b63",
+    "skill_id": "ca62ad7e-2faf-4431-939e-e5bc7fe235a3",
+    "attempt_number": 1,
+    "answers": {
+      "0": "UTF\u20118 or UTF\u201116",
+      "1": "Document/Literal and RPC/Literal",
+      "2": "Whether the header\u2019s role matches the security processor",
+      "3": "Reject the request and return a SOAP fault",
+      "4": "Using RPC/Encoded messaging style"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T09:56:10.800440+00:00"
+  },
+  {
+    "user_id": "ec72159d-e95d-43ed-9b8c-34a7239f87a3",
+    "lesson_id": "9e79191b-67d9-42f2-9a8e-21d1ec9daf69",
+    "skill_id": "f55a7ff3-4cc1-47ef-999f-ea9e1c2f6cd2",
+    "attempt_number": 1,
+    "answers": {
+      "0": "===",
+      "1": "The else block",
+      "2": "The condition would always be true",
+      "3": "It ensures every possible input is handled"
+    },
+    "score": 4,
+    "total": 4,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T09:56:12.903728+00:00"
+  },
+  {
+    "user_id": "ec72159d-e95d-43ed-9b8c-34a7239f87a3",
+    "lesson_id": "d6a2d020-0d2d-4b16-8e34-0092de40d18c",
+    "skill_id": "f55a7ff3-4cc1-47ef-999f-ea9e1c2f6cd2",
+    "attempt_number": 1,
+    "answers": {
+      "0": "<ol>",
+      "1": "href",
+      "2": "<section>",
+      "3": "External CSS linked in <head>",
+      "4": "Missing a <caption> element"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-02T09:56:15.046015+00:00"
+  },
+  {
+    "user_id": "719a1585-89e6-4033-8862-069f86f32293",
+    "lesson_id": "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+    "skill_id": "6a21c569-5d06-4bec-b54c-bac1d6571609",
+    "attempt_number": 1,
+    "answers": {
+      "0": "p = 0.932",
+      "1": "Nonmaleficence",
+      "2": "Blend simulation with traditional teaching",
+      "3": "Ensuring nonmaleficence by practicing without patient risk",
+      "4": "It may be insufficient to significantly improve performance, satisfaction, and confidence when used alone"
+    },
+    "score": 5,
+    "total": 5,
+    "percentage": 100.0,
+    "passed": true,
+    "created_at": "2026-11-11T03:42:01.029751+00:00"
+  }
+]

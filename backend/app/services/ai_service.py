@@ -86,7 +86,7 @@ async def _call_gemini(prompt: str, system_instruction: str, client: httpx.Async
     if system_instruction:
         payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
-    for model_name in ("gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+    for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
         response = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             f"?key={settings.gemini_api_key}",

@@ -2,7 +2,7 @@
 // Handles the full learner onboarding flow (career search -> skill assessment).
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/SupabaseClient';
-import { searchCareer, getCareerById, saveSkills } from '../lib/api';
+import { searchCareer, getCareerById, saveSkills, getOnboardingFields } from '../lib/api';
 import Toast from '../components/Toast';
 import ThemeSelector from '../components/ThemeSelector';
 import {
@@ -93,12 +93,54 @@ function similarityLabel(score) {
   return                         { text: 'Possible match', badgeClass: 'badge--warning' };
 }
 
-// ─── Step 1a: Free-text Career Input ────────────────────────────────────────
+// ─── Step 1a: Free-text Career Input & Field Explorer ────────────────────────
 
-function CareerInput({ user, onResult, onLogoutRequest }) {
+function CareerInput({ user, onResult, onSelectCareer, onLogoutRequest }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  const [fields, setFields] = useState([]);
+  const [selectedField, setSelectedField] = useState(null);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [highlightedCareer, setHighlightedCareer] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    getOnboardingFields()
+      .then((data) => {
+        if (active && Array.isArray(data)) {
+          setFields(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Update highlighted career when selectedField or branchFilter changes
+  const activeBranchCareers = selectedField?.careers || [];
+  const filteredBranchCareers = activeBranchCareers.filter((c) =>
+    c.title.toLowerCase().includes(branchFilter.trim().toLowerCase())
+  );
+
+  const activeHighlighted =
+    highlightedCareer && filteredBranchCareers.some((c) => c.id === highlightedCareer.id)
+      ? highlightedCareer
+      : filteredBranchCareers[0] || null;
+
+  const handleFieldSelect = (f) => {
+    if (selectedField?.field_id === f.field_id) {
+      setSelectedField(null);
+      setBranchFilter('');
+      setHighlightedCareer(null);
+    } else {
+      setSelectedField(f);
+      setBranchFilter('');
+      setHighlightedCareer(f.careers?.[0] || null);
+    }
+  };
 
   const displayName =
     user?.user_metadata?.full_name ||
@@ -145,7 +187,7 @@ function CareerInput({ user, onResult, onLogoutRequest }) {
       )}
       <h2 style={{ marginBottom: '8px' }}>Define your target career</h2>
       <p style={{ marginBottom: '24px', fontSize: '0.92rem', color: 'var(--text-secondary)' }}>
-        Enter the role you are working towards. We will benchmark it against O*NET and ESCO occupational taxonomies to build your skill profile.
+        Enter the role you are working towards or explore canonical pathways by field. We benchmark it against official occupational taxonomies to synthesize your skill profile.
       </p>
 
       <form onSubmit={handleSearch} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -202,6 +244,251 @@ function CareerInput({ user, onResult, onLogoutRequest }) {
         </div>
       )}
 
+      {/* ── Field Exploration Carousel / Chips ── */}
+      <div style={{ marginTop: '28px', borderTop: '1px solid var(--border)', paddingTop: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Or explore pathways by field
+          </span>
+          {selectedField && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs"
+              style={{ fontSize: '0.78rem', padding: '2px 8px', color: 'var(--text-muted)' }}
+              onClick={() => setSelectedField(null)}
+            >
+              Close explorer
+            </button>
+          )}
+        </div>
+
+        {/* 7 Field Pills */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+          {fields.map((f) => {
+            const isSelected = selectedField?.field_id === f.field_id;
+            const shortLabel = f.label.split(',')[0].split('&')[0].trim();
+            const count = f.total_count || f.careers?.length || 0;
+            return (
+              <button
+                key={f.field_id}
+                type="button"
+                onClick={() => handleFieldSelect(f)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '9999px',
+                  fontSize: '0.8rem',
+                  fontWeight: isSelected ? 600 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  border: isSelected ? '1px solid var(--accent)' : '1px solid var(--border)',
+                  background: isSelected ? 'var(--accent-soft)' : 'var(--surface-elevated)',
+                  color: isSelected ? 'var(--accent)' : 'var(--text-secondary)',
+                }}
+              >
+                {shortLabel} {count > 0 && `(${count})`}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Selected Field Interactive Scrollable Catalog & Detail Preview */}
+        {selectedField && (
+          <div
+            style={{
+              padding: '16px',
+              borderRadius: 'var(--r-md)',
+              background: 'var(--surface-elevated)',
+              border: '1px solid var(--border)',
+              marginTop: '8px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            {/* Header with Title & Live Filter Input */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
+                <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {selectedField.label}
+                </div>
+                <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                  {filteredBranchCareers.length} of {activeBranchCareers.length} pathways
+                </div>
+              </div>
+
+              <div style={{ position: 'relative' }}>
+                <Search
+                  size={15}
+                  color="var(--text-muted)"
+                  style={{
+                    position: 'absolute',
+                    left: '11px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    pointerEvents: 'none',
+                  }}
+                />
+                <input
+                  type="text"
+                  placeholder={`Search ${activeBranchCareers.length} careers in ${selectedField.label.split(',')[0].trim()}...`}
+                  value={branchFilter}
+                  onChange={(e) => setBranchFilter(e.target.value)}
+                  style={{
+                    paddingLeft: '34px',
+                    paddingRight: branchFilter ? '32px' : '12px',
+                    fontSize: '0.84rem',
+                    height: '36px',
+                    background: 'var(--surface)',
+                  }}
+                />
+                {branchFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setBranchFilter('')}
+                    style={{
+                      position: 'absolute',
+                      right: '10px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--text-muted)',
+                      padding: 0,
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Split View: Scrollable List on Left, Detail Preview on Right */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(200px, 1fr) minmax(240px, 1.3fr)',
+                gap: '12px',
+                alignItems: 'stretch',
+              }}
+            >
+              {/* Left Column: Scrollable List of Careers */}
+              <div
+                style={{
+                  maxHeight: '320px',
+                  overflowY: 'auto',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--r-sm)',
+                  background: 'var(--surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+              >
+                {filteredBranchCareers.length === 0 ? (
+                  <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                    No roles found matching "{branchFilter}".
+                  </div>
+                ) : (
+                  filteredBranchCareers.map((car) => {
+                    const isHighlighted = activeHighlighted?.id === car.id;
+                    return (
+                      <div
+                        key={car.id}
+                        onClick={() => setHighlightedCareer(car)}
+                        style={{
+                          padding: '9px 12px',
+                          cursor: 'pointer',
+                          fontSize: '0.82rem',
+                          fontWeight: isHighlighted ? 600 : 400,
+                          color: isHighlighted ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          background: isHighlighted ? 'var(--accent-soft)' : 'transparent',
+                          borderLeft: isHighlighted ? '3px solid var(--accent)' : '3px solid transparent',
+                          borderBottom: '1px solid var(--border-subtle, var(--border))',
+                          transition: 'background 0.12s ease',
+                        }}
+                      >
+                        {car.title}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Right Column: Full Detail Preview & Direct Action */}
+              <div
+                style={{
+                  padding: '14px',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--r-sm)',
+                  background: 'var(--surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                }}
+              >
+                {activeHighlighted ? (
+                  <>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span
+                          style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.04em',
+                            padding: '2px 8px',
+                            borderRadius: 'var(--r-sm)',
+                            background: 'var(--accent-soft)',
+                            color: 'var(--accent)',
+                          }}
+                        >
+                          {selectedField.track_type === 'companion_licensing' ? 'Companion Licensing' : 'Core Mastery'}
+                        </span>
+                      </div>
+                      <h4 style={{ fontSize: '0.96rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
+                        {activeHighlighted.title}
+                      </h4>
+                      <p
+                        style={{
+                          fontSize: '0.8rem',
+                          lineHeight: 1.5,
+                          color: 'var(--text-secondary)',
+                          marginBottom: '14px',
+                          maxHeight: '170px',
+                          overflowY: 'auto',
+                        }}
+                      >
+                        {activeHighlighted.description || 'Verified occupational profile benchmarked against O*NET and ESCO national labor standards.'}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--sm"
+                      style={{ alignSelf: 'flex-start', marginTop: '8px' }}
+                      onClick={() => {
+                        if (onSelectCareer) {
+                          onSelectCareer({ id: activeHighlighted.id, title: activeHighlighted.title });
+                        } else {
+                          getCareerById(activeHighlighted.id).then(onResult).catch((err) => setError(err.message));
+                        }
+                      }}
+                    >
+                      <span>Select Career Pathway</span>
+                      <ArrowRight size={14} />
+                    </button>
+                  </>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                    Select an occupation to view details
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div style={{ textAlign: 'center', marginTop: '24px' }}>
         <button
           id="onboarding-logout-btn"
@@ -220,7 +507,7 @@ function CareerInput({ user, onResult, onLogoutRequest }) {
 
 // ─── Step 1b: Career Card Grid ───────────────────────────────────────────────
 
-function CareerCardGrid({ candidates, onSelect, onNoneMatch, onBack }) {
+function CareerCardGrid({ candidates, scopeRedirectNotice, onSelect, onNoneMatch, onBack }) {
   return (
     <div>
       <div className="step-indicator">
@@ -229,9 +516,31 @@ function CareerCardGrid({ candidates, onSelect, onNoneMatch, onBack }) {
       </div>
 
       <h2 style={{ marginBottom: '6px' }}>Select your career pathway</h2>
-      <p style={{ marginBottom: '20px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+      <p style={{ marginBottom: '18px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
         We found {candidates.length} match{candidates.length !== 1 ? 'es' : ''} in our occupational catalog. Choose the option that best aligns with your goal.
       </p>
+
+      {scopeRedirectNotice && (
+        <div
+          id="scope-redirect-callout"
+          style={{
+            marginBottom: '18px',
+            padding: '12px 16px',
+            background: 'var(--surface-elevated)',
+            border: '1px solid var(--border)',
+            borderLeft: '3px solid var(--accent)',
+            borderRadius: 'var(--r-md)',
+            fontSize: '0.83rem',
+            lineHeight: 1.55,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '3px', fontSize: '0.82rem' }}>
+            Analytical &amp; Supervisory Scope Alignment
+          </div>
+          <div>{scopeRedirectNotice}</div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '22px' }}>
         {candidates.map((cand) => {
@@ -259,9 +568,15 @@ function CareerCardGrid({ candidates, onSelect, onNoneMatch, onBack }) {
               }}
             >
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: '0.96rem', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.96rem', color: 'var(--text-primary)', marginBottom: '2px' }}>
                   {cand.title}
                 </div>
+                {cand.field_label && (
+                  <div className="mono" style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginBottom: '5px' }}>
+                    {cand.field_label}
+                    {cand.track_type === 'licensing_companion' ? ' · Licensing & Code Track' : ''}
+                  </div>
+                )}
                 {cand.description && (
                   <div style={{ fontSize: '0.82rem', lineHeight: 1.5, color: 'var(--text-secondary)' }}>
                     {cand.description.length > 165 ? cand.description.slice(0, 165) + '...' : cand.description}
@@ -810,7 +1125,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
 
       {/* Career Header */}
       <div style={{ marginBottom: '20px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px', flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>{career.title}</h2>
           {career.provenance_label ? (
             <span className={`badge ${career.provenance_label.includes('AI') ? 'badge--accent' : 'badge--success'}`}>
@@ -822,8 +1137,32 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
             <span className="badge badge--accent">AI Proposal (Editable)</span>
           )}
         </div>
+        {career.field_label && (
+          <div className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+            {career.field_label}
+            {career.track_type === 'licensing_companion' ? ' · Technical Licensing & Code Compliance Track' : ''}
+          </div>
+        )}
         {career.description && (
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>{career.description}</p>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: career.scope_note ? '10px' : 0 }}>
+            {career.description}
+          </p>
+        )}
+        {career.scope_note && (
+          <div
+            style={{
+              padding: '10px 14px',
+              background: 'var(--surface-elevated)',
+              border: '1px solid var(--border)',
+              borderLeft: '3px solid var(--border-strong, var(--text-muted))',
+              borderRadius: 'var(--r-sm)',
+              fontSize: '0.8rem',
+              lineHeight: 1.5,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {career.scope_note}
+          </div>
         )}
       </div>
 
@@ -1133,6 +1472,7 @@ export default function Onboarding({ user, onComplete }) {
 
   const [phase, setPhase] = useState(() => savedDraft?.phase || 'input');
   const [candidates, setCandidates] = useState(() => savedDraft?.candidates || []);
+  const [scopeRedirectNotice, setScopeRedirectNotice] = useState(() => savedDraft?.scopeRedirectNotice || null);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibratingTitle, setCalibratingTitle] = useState('');
   const [career, setCareer] = useState(() => savedDraft?.career || null);
@@ -1146,18 +1486,20 @@ export default function Onboarding({ user, onComplete }) {
     try {
       window.sessionStorage.setItem(
         storageKey,
-        JSON.stringify({ phase, candidates, career, skills, source })
+        JSON.stringify({ phase, candidates, scopeRedirectNotice, career, skills, source })
       );
     } catch {
       // Ignore sessionStorage quota errors
     }
-  }, [storageKey, phase, candidates, career, skills, source]);
+  }, [storageKey, phase, candidates, scopeRedirectNotice, career, skills, source]);
 
   const handleSearchResult = useCallback((result) => {
     if (result.status === 'disambiguation_required') {
       setCandidates(result.candidates);
+      setScopeRedirectNotice(result.scope_redirect_notice || null);
       setPhase('grid');
     } else if (result.status === 'no_candidates') {
+      setScopeRedirectNotice(null);
       setPhase('ai_form');
     } else if (
       result.status === 'generated' &&
@@ -1168,11 +1510,14 @@ export default function Onboarding({ user, onComplete }) {
         id: '__ai_generated__',
         title: result.career.title,
         description: result.career.description,
+        field_label: result.career.field_label,
+        track_type: result.career.track_type,
         similarity: 0.98,
         is_ai_proposal: true,
         _raw_result: result,
       };
       setCandidates([aiOption, ...result.related_candidates]);
+      setScopeRedirectNotice(null);
       setPhase('grid');
     } else if (result.status === 'matched' || result.status === 'generated') {
       if (!result.career || !result.skills) {
@@ -1182,6 +1527,7 @@ export default function Onboarding({ user, onComplete }) {
       setCareer(result.career);
       setSkills(result.skills);
       setSource(result.status);
+      setScopeRedirectNotice(null);
       setPhase('assessment');
     } else {
       setPhase('not_found');
@@ -1326,40 +1672,47 @@ export default function Onboarding({ user, onComplete }) {
               </div>
             )}
 
-            {phase === 'input' && (
-              <CareerInput
-                user={user}
-                onResult={handleSearchResult}
-                onLogoutRequest={() => setShowLogoutToast(true)}
-              />
-            )}
+            {isCalibrating ? (
+              <div style={{ textAlign: 'center', padding: '44px 20px' }}>
+                <div className="spinner spinner--lg" style={{ margin: '0 auto 16px auto' }} />
+                <h3 style={{ marginBottom: '8px' }}>Calibrating Core Competencies</h3>
+                <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                  Standardizing vocational pillars for <strong>{calibratingTitle}</strong>...
+                </p>
+              </div>
+            ) : (
+              <>
+                {phase === 'input' && (
+                  <CareerInput
+                    user={user}
+                    onResult={handleSearchResult}
+                    onSelectCareer={handleCardSelect}
+                    onLogoutRequest={() => setShowLogoutToast(true)}
+                  />
+                )}
 
-            {phase === 'grid' &&
-              (isCalibrating ? (
-                <div style={{ textAlign: 'center', padding: '44px 20px' }}>
-                  <div className="spinner spinner--lg" style={{ margin: '0 auto 16px auto' }} />
-                  <h3 style={{ marginBottom: '8px' }}>Calibrating Core Competencies</h3>
-                  <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-                    Standardizing vocational pillars for <strong>{calibratingTitle}</strong>...
-                  </p>
-                </div>
-              ) : (
-                <CareerCardGrid
-                  candidates={candidates}
-                  onSelect={handleCardSelect}
-                  onNoneMatch={(target) => setPhase(target === 'not_found' ? 'not_found' : 'ai_form')}
-                  onBack={() => {
-                    setCandidates([]);
-                    setPhase('input');
-                  }}
-                />
-              ))}
+                {phase === 'grid' && (
+                  <CareerCardGrid
+                    candidates={candidates}
+                    scopeRedirectNotice={scopeRedirectNotice}
+                    onSelect={handleCardSelect}
+                    onNoneMatch={(target) => setPhase(target === 'not_found' ? 'not_found' : 'ai_form')}
+                    onBack={() => {
+                      setCandidates([]);
+                      setScopeRedirectNotice(null);
+                      setPhase('input');
+                    }}
+                  />
+                )}
+              </>
+            )}
 
             {phase === 'ai_form' && (
               <AIFallbackForm
                 onResult={(result) => {
                   if (result.status === 'disambiguation_required') {
                     setCandidates(result.candidates);
+                    setScopeRedirectNotice(result.scope_redirect_notice || null);
                     setPhase('grid');
                   } else if (
                     result.status === 'generated' &&
@@ -1370,16 +1723,20 @@ export default function Onboarding({ user, onComplete }) {
                       id: '__ai_generated__',
                       title: result.career.title,
                       description: result.career.description,
+                      field_label: result.career.field_label,
+                      track_type: result.career.track_type,
                       similarity: 0.98,
                       is_ai_proposal: true,
                       _raw_result: result,
                     };
                     setCandidates([aiOption, ...result.related_candidates]);
+                    setScopeRedirectNotice(null);
                     setPhase('grid');
                   } else if (result.status === 'matched' || result.status === 'generated') {
                     setCareer(result.career);
                     setSkills(result.skills);
                     setSource(result.status);
+                    setScopeRedirectNotice(null);
                     setPhase('assessment');
                   } else {
                     setPhase('not_found');

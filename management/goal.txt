@@ -1,0 +1,274 @@
+# TECHNICAL SPECIFICATION & PROJECT NOTE
+
+**Student Name:** Gitonga Macklee Nderitu
+
+**Student ID:** 168000
+
+**Class:** ICS 4.1B
+
+**Unit:** ICS Project II
+
+---
+
+## 1. Project Title and Concept Note
+
+### Project Title
+
+Career Beacon: AI-Powered Micro-Learning and Mentorship Marketplace
+
+### Concept Note
+
+**Paragraph 1: Background, Challenge, Cause, and Proof** Access to professional mentorship and career guidance remains limited for students, recent graduates, and career switchers in emerging markets. The primary challenge is information overload, where users are overwhelmed by fragmented learning resources and lack clear, structured pathways for career growth. This challenge is largely caused by the absence of a unified and scalable platform capable of connecting learners with mentors and industry-relevant content in real time. Existing online resources are often disconnected and fail to effectively align individual skills with current industry demands, making career development inefficient and difficult to navigate. As a result, many learners struggle to identify relevant learning paths, mentorship opportunities, and practical career progression strategies.
+
+**Paragraph 2: Solutions, Implementation, Methodology, Tech Stack, and Domain** Possible solutions to this problem include traditional targeted mentorship programs, online learning management systems, and AI-driven recommendation platforms. This project proposes the development of an AI-powered mentorship marketplace that utilizes a hybrid recommendation engine to deliver personalized mentorship and atomized micro-learning content tailored to users’ career goals and skill gaps. The system will be developed using the Agile methodology to support iterative development, continuous testing, and regular user feedback. Python will be used for the machine learning backend because of its extensive data processing and artificial intelligence libraries, while JavaScript will be used to develop the web-based frontend due to its flexibility and ability to create highly interactive user interfaces. Supabase, built on PostgreSQL, will serve as the database management system because of its scalability, reliability, and support for the pgvector extension, which enables efficient vector similarity searches for matching users with relevant mentors and learning content. The proposed solution will operate as a machine learning-driven web application to provide a scalable, responsive, and accessible environment for professional networking, mentorship, and skills development.
+
+---
+
+## 2. Expected Application and Final Architecture
+
+The final deliverable is a highly responsive web application optimized for desktop and mobile browsers. Visually, it functions as a personalized hub combining elements of professional networking and bite-sized learning feeds.
+
+### Core Tech Stack Assembly
+
+* **Frontend User Interface:** JavaScript / React.js. Communicates asynchronously with the backend via REST APIs and maintains real-time websocket connections to Supabase for dynamic data state changes (chats, updates, alerts).
+* **Database & Backend-as-a-Service:** Supabase (PostgreSQL). Manages authentication, traditional relational data tables, real-time sync pipelines, and vector similarity indexing via the `pgvector` extension.
+* **AI Engine API Layer:** Python (FastAPI). Operates as an independent machine learning service running asynchronously. It handles Natural Language Processing (NLP), content atomization, automated quiz drafting, and graph-weighted recommendation processing.
+
+---
+
+## 3. Learner Onboarding, Career, and Skill Pipelines
+
+The platform completely avoids manual catalog administration by leveraging a hybrid seeded/generated schema during user registration.
+
+### Step 1: The Input and Database Interrogation
+
+During sign-up, the user encounters a free-text search bar: *"What is your target career?"*
+The user inputs a string (e.g., *"AI Web App Developer"*). The React frontend captures this string and queries the Supabase database to search for a semantic vector match within a pre-seeded table of standard careers (e.g., *Software Engineer, Data Analyst*).
+
+### Step 2: NLP Normalization and AI Fallback
+
+* **Scenario A (Cache/Seed Match):** If a cosine similarity search in Supabase yields a match above a threshold score of 0.85, the platform immediately returns the standard career profile and its pre-mapped skill list.
+* **Scenario B (AI Generation Fallback):** If no matching career profile exists, the string is routed to the Python FastAPI backend. Python passes the query to a language model with a structured prompt instructing it to normalize the career name into a standard industry taxonomy and generate an array of the top 8 to 10 specific technical skills required for that exact career path.
+
+The response returns as a structured JSON object:
+
+```json
+{
+  "standardized_title": "Full-Stack Machine Learning Engineer",
+  "skills": ["Python", "JavaScript", "FastAPI", "React", "Vector Databases"]
+}
+
+```
+
+Python inserts this new career and its skills into the Supabase database. This dynamically seeds the platform over time; future users searching for the same niche instantly receive this record without triggering additional AI processing.
+
+### Step 3: Proficiency Baselines & Graph Initialization
+
+The generated list of skills is displayed to the user via UI sliders. The user self-declares their baseline knowledge tier for each skill node:
+
+* **Novice:** Converts to a numerical baseline value of **20%**
+* **Intermediate:** Converts to a numerical baseline value of **50%**
+* **Advanced:** Converts to a numerical baseline value of **80%**
+
+Upon submission, these data points are recorded in a relational junction table (`user_skills`) to establish the initial coordinates of the user's custom **Skill Graph**.
+
+---
+
+## 4. Micro-Learning Hub & Automated Content Engine
+
+The Micro-Learning module functions as an automated content ingestion, transformation, and verification pipeline.
+
+### Step 1: Targeted API Fetching & Curation Gating
+
+A Python worker script queries external whitelisted tech APIs and public repositories (e.g., Dev.to, YouTube API, Hashnode, official documentation sites) using keyword search queries matched against high-demand skill gaps observed across the user base.
+
+To eliminate fluff, spam, and low-quality tutorials, the pipeline passes the raw content through three programmatic validation gates:
+
+1. **Engagement Gate:** Validates minimum popularity scores (e.g., Dev.to articles must have over 30 positive reactions; YouTube metadata must show high view/rating counts).
+2. **Blacklist Gate:** Rejects items containing title strings indicating subjective opinions or low-educational value (e.g., *"My thoughts on..."*, *"Rant"*, *"Why I left..."*).
+3. **Tag Intersection Gate:** The item must explicitly map to existing skill names stored within the internal `skills` database table. If no overlap occurs, it is dropped.
+
+### Step 2: Content Transformation (Atomization & Quizzes)
+
+When an article or video transcript passes all gates, the Python machine learning service processes the payload:
+
+* **Summarization (Atomization):** An NLP routine condenses the source text into a precise, 3-bullet-point summary containing core technical takeaways, capped under 150 words.
+* **Vectorization:** Python calculates an embedding vector from the summary metadata text using an embedding model and stores it directly inside the Supabase `micro_content` vector column.
+* **Dynamic Quiz Generation:** The text summary is evaluated by an automated script to format an instant 3-question Multiple Choice Quiz (MCQ) saved as a native JSON array containing the questions, alternative choices, and exact validation answers.
+
+```json
+[
+  {
+    "question": "Which PostgreSQL extension is explicitly used to store and search vector embeddings?",
+    "options": ["pg_trgm", "pgvector", "uuid-ossp", "postgis"],
+    "answer": "pgvector"
+  }
+]
+
+```
+
+### Step 3: Examination and Progress Tracking
+
+When a user finishes consuming a piece of micro-content on the React frontend, the interface renders the embedded JSON quiz dynamically.
+
+* If the user answers all questions successfully, a request updates their `proficiency_score` for that specific skill node in the `user_skills` table (e.g., increasing progress by +10%).
+* Once the score reaches 100%, the skill status is updated to *"Mastered"*, updating the user's graph weights and changing the focus of subsequent recommendation query updates.
+
+---
+
+## 5. Machine Learning Recommendation Architecture
+
+The engine uses a **Two-Stage Hybrid Ranking Pipeline** combining semantic vector calculations with Graph Theory logic.
+
+```
+STAGE 1: DATABASE COARSE FILTER (Supabase / pgvector)
+[User Skill Vector] ─── (Cosine Similarity Search) ───► Pulls Top 30 Closest Content Rows
+
+STAGE 2: PYTHON RE-RANKING ENGINE (FastAPI / Graph Weights)
+[Top 30 Rows] ───► Apply Difficulty Controls ───► Apply Source Trust Modifiers ───► Sort Top 5 Final Feed
+
+```
+
+### Stage 1: Coarse Vector Search (Supabase Layer)
+
+When a user opens their dashboard, the system looks at their target career path and identified skill gaps. A query calculates the cosine distance between the user’s vector footprint and the embeddings of stored micro-content/mentor profiles using the `pgvector` operator (`<=>`). This extracts the top 30 conceptually relevant items instantly at the database layer.
+
+### Stage 2: Fine Graph Re-Ranking (Python Layer)
+
+The 30 candidate records are passed into the Python backend service to perform logic-based re-ranking based on your supervisor's specific design constraints:
+
+* **Priority in Difficulty:** The algorithm evaluates the user's current progress score (node weight) against the item's baseline difficulty rank. If an item covers advanced concepts while the user's corresponding skill node weight is low, Python penalizes its score to prevent premature exposure to complex material.
+* **Growth in Breadth vs. Weight:** If the system detects a user has high depth within a single skill node but lacks coverage across other areas mandated by their target career, the ranking engine prioritizes peripheral skill nodes to encourage broader learning.
+* **Verification and Trust Scoring:** Every piece of content and every mentor maintains an organic `source_trust_score` (from 0.0 to 1.0) in Supabase. Python applies this metric as a direct multiplier during ranking. If a source or mentor distributes inaccurate or unhelpful data, user flags downvote their profile, lowering their trust factor and automatically pushing their records down the recommendation feed.
+
+---
+
+## 6. Mentorship Marketplace Module
+
+The human-in-the-loop component mitigates the "Cold Start" dilemma by utilizing expert input to anchor and validate automated system recommendations.
+
+### Mentor Onboarding and Profiles
+
+Mentors register on the platform, declare their core domain competencies, and input an introduction bio. The Python service extracts keyword definitions from their profiles, matches them to internal skill nodes, and generates a corresponding `mentor_embedding` vector string saved to their account record.
+
+### Searchable Q&A Repository
+
+Each mentor profile includes a public Question and Answer board.
+
+* **Learner Perspective:** Learners can execute real-time searches across historical questions and answers using text searches powered by vector lookups. This helps users retrieve relevant insights immediately without needing to open duplicate tickets.
+* **Interoperability ("Ask MENTOR"):** If a learner fails a specific micro-content quiz multiple times, the UI triggers an automated **"Ask MENTOR"** button. This action automatically routes the user to the Q&A layout of highly ranked mentors matching that exact skill tag, pre-filling the post with context from the lesson they are stuck on.
+
+### Session Booking Pipeline
+
+To optimize development velocity for a solo engineer, the session scheduling framework uses a clean, reliable workflow:
+
+* Mentors configure their standard weekly availability calendar and paste their persistent **Google Meet** video conference or **Calendly** hyperlinks into their profile management page.
+* Mentees select an open timeframe block from the mentor's profile dashboard to schedule an appointment.
+* Upon booking validation, the database creates a transaction record, generates an automated alert notification via Supabase Realtime, and presents the direct Google Meet address on the user's active schedule board exactly ten minutes before the session starts to keep communications secure.
+
+---
+
+## 7. Supabase Database DDL Schema Initialization (SQL)
+
+Execute the following script within your Supabase SQL Editor to configure your core database structure, relationships, and vector search indices.
+
+```sql
+-- Step 1: Enable the pgvector extension for AI similarity math
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Step 2: Users and Core Profiles Table
+CREATE TABLE public.profiles (
+    id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
+    full_name TEXT NOT NULL,
+    role TEXT CHECK (role IN ('student', 'mentor', 'admin')) DEFAULT 'student',
+    target_career_id INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Step 3: Career Pathways Table
+CREATE TABLE public.careers (
+    id SERIAL PRIMARY KEY,
+    title TEXT UNIQUE NOT NULL,
+    normalized_title TEXT NOT NULL,
+    career_vector vector(384), -- Coordinates generated from open-source embedding models
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Step 4: Skills Framework Table
+CREATE TABLE public.skills (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    category_slug TEXT NOT NULL
+);
+
+-- Step 5: Junction Table for Career-to-Skill Requirements
+CREATE TABLE public.career_skills (
+    career_id INT REFERENCES public.careers(id) ON DELETE CASCADE,
+    skill_id INT REFERENCES public.skills(id) ON DELETE CASCADE,
+    PRIMARY KEY (career_id, skill_id)
+);
+
+-- Step 6: User Progress Graph Track Table
+CREATE TABLE public.user_skills (
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    skill_id INT REFERENCES public.skills(id) ON DELETE CASCADE,
+    proficiency_score INT CHECK (proficiency_score BETWEEN 0 AND 100) DEFAULT 0,
+    status TEXT CHECK (status IN ('Not Started', 'Learning', 'Mastered')) DEFAULT 'Not Started',
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, skill_id)
+);
+
+-- Step 7: Micro-Learning Content Library
+CREATE TABLE public.micro_content (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    source_url TEXT UNIQUE NOT NULL,
+    summary_bullets TEXT NOT NULL,
+    associated_skill_id INT REFERENCES public.skills(id) ON DELETE SET NULL,
+    difficulty_level INT CHECK (difficulty_level BETWEEN 1 AND 5) DEFAULT 1,
+    source_trust_score NUMERIC(3,2) CHECK (source_trust_score BETWEEN 0.00 AND 1.00) DEFAULT 1.00,
+    quizzes JSONB NOT NULL, -- Stores native array of generated MCQs
+    content_vector vector(384), -- Generated vector representation of summary + tags
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Step 8: Mentor Profile Extensions Table
+CREATE TABLE public.mentors (
+    mentor_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE PRIMARY KEY,
+    biography TEXT NOT NULL,
+    meeting_link TEXT NOT NULL, -- Secure persistent link (Google Meet / Calendly)
+    reputation_rating NUMERIC(3,2) DEFAULT 5.00,
+    mentor_vector vector(384),
+    is_verified BOOLEAN DEFAULT FALSE
+);
+
+-- Step 9: Mentorship Knowledge Exchange Q&A Table
+CREATE TABLE public.mentor_qa (
+    id SERIAL PRIMARY KEY,
+    learner_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    mentor_id UUID REFERENCES public.mentors(mentor_id) ON DELETE CASCADE,
+    associated_skill_id INT REFERENCES public.skills(id),
+    question_text TEXT NOT NULL,
+    answer_text TEXT, -- Nullable initially until the mentor responds
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Step 10: Session Appointments Booking Table
+CREATE TABLE public.bookings (
+    id SERIAL PRIMARY KEY,
+    learner_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    mentor_id UUID REFERENCES public.mentors(mentor_id) ON DELETE CASCADE,
+    scheduled_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    status TEXT CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled')) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Step 11: Create Indexes for Vector Search Optimization
+CREATE INDEX ON public.micro_content USING hnsw (content_vector vector_cosine_ops);
+CREATE INDEX ON public.mentors USING hnsw (mentor_vector vector_cosine_ops);
+
+-- Step 12: Link profile FK backward safety constraint
+ALTER TABLE public.profiles 
+ADD CONSTRAINT fk_target_career FOREIGN KEY (target_career_id) REFERENCES public.careers(id);
+
+```

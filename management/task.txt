@@ -1,0 +1,125 @@
+# Career Beacon Project - Interval Tasks & Objectives Linkage
+
+Student: Gitonga Macklee Nderitu (168000)  
+Supervisor: Dr. Tiberias Tabulu  
+Degree: Bachelor of Science in Informatics and Computer Science  
+Project Title: Career Beacon: AI-Powered Micro-Learning and Mentorship Marketplace  
+
+---
+
+## Mapping to Approved Research Objectives
+
+| Objective ID | Proposal Specific Objective | Associated Technical Components | Current Interval Status |
+|---|---|---|---|
+| **Obj i** | Analyze considerations & parameters for personalized micro-learning | Cognitive load gating, skill atomization, 3 validation gates | Intervals 1–5 Complete |
+| **Obj ii** | Investigate recommendation algorithms & architectures | pgvector Cosine similarity, two-stage hybrid ranking design | Intervals 1–5 Complete |
+| **Obj iii** | Analyze critical factors for mentor matching | Trust scores, skill alignment, peer endorsement metrics | Analyzed — Interval 6 Next |
+| **Obj iv** | Investigate semantic approaches to mentor recommendation | all-MiniLM-L6-v2 vector embeddings, cosine distance pairing | In Progress — Interval 6 Next |
+| **Obj v** | Develop, test, and validate Semantic Microlearning model | Coarse vector retrieval, dynamic MCQ generation, skill updates | Interval 6 Next |
+| **Obj vi** | Develop, test, and validate Semantic Mentor-Matching model | Mentor embeddings, Q&A vector search, booking transactions | Interval 7 Next |
+| **Obj vii** | Develop, test, and implement modular web application | React Vite SPA, FastAPI AI Engine, Supabase PostgreSQL BaaS | Intervals 1–5 Operational |
+
+---
+
+## Interval Task Progress Tracking
+
+### Interval 1: Project Setup & Repository Initialization (Complete)
+- [x] Git repository initialized with `.gitignore` protection
+- [x] Node.js v20+ Vite frontend build toolchain configured
+- [x] Python 3.11/3.12 virtual environment setup
+- [x] Decoupled environment variables for client and server configured
+> Commit: `e7d0e61`
+
+---
+
+### Interval 2: Database Configuration, Auth & RLS (Complete)
+- [x] Supabase PostgreSQL instance provisioned, `pgvector` extension enabled
+- [x] Relational DDL executed: `profiles`, `careers`, `skills`, `career_skills`, `user_skills`, `micro_content`, `mentors`, `mentor_qa`, `bookings`
+- [x] HNSW vector indexes configured (`vector_cosine_ops`)
+- [x] Supabase Auth integration (email/password)
+- [x] Row Level Security (RLS) policies applied
+- [x] Project renamed to Career Beacon
+> Commits: `178c718`, `28b8fb3`
+
+---
+
+### Interval 3: Backend Scaffold, Embedding Service & AI Integration (Complete)
+- [x] FastAPI backend scaffolded with routers structure
+- [x] Async Gemini REST client integrated
+- [x] Supabase DB connection layer built (`database.py`)
+- [x] Embedding service implemented (initial sentence-transformers)
+- [x] Gemini generation model updated
+> Commits: `e095c77`, `8c223dd`
+
+---
+
+### Interval 4: Learner Onboarding & Skill Graph (Complete)
+- [x] `CareerSearch` → `SkillAssessment` → `Dashboard` React flow wired end-to-end
+- [x] FastAPI endpoints live: `/career-search`, `/save-skills`, `/status`
+- [x] Vector match via `match_careers` RPC (pgvector cosine similarity)
+- [x] AI fallback pipeline (Gemini) for unrecognized careers
+- [x] Proficiency baselines (Novice 20 / Intermediate 50 / Advanced 80) persisted to `user_skills`
+- [x] Back-navigation and empty-skills guard added to onboarding
+- [x] Learner skill graph dashboard rendering proficiency meters and mastery counters
+> Commit: `79d3357`
+
+---
+
+### Interval 5: Deployment, Infrastructure Hardening & AI Resilience (Complete)
+- [x] Fly.io containerised deployment scaffolded (fly.toml, Dockerfile)
+- [x] Migrated hosting from Fly.io to Render (render.yaml)
+- [x] Python pinned to 3.11.9 for Render compatibility
+- [x] Replaced `sentence-transformers` with FastEmbed (ONNX) — resolved 512MB OOM on free tier
+- [x] Multi-provider AI fallback implemented: Groq (`gpt-oss-120b`) primary, Gemini (`gemini-2.5-flash`) secondary with exponential backoff
+- [x] Cosine similarity threshold raised 0.75 → 0.85 (calibrated to prevent false-positive matches)
+- [x] CORS hardened: production Netlify origin + local dev ports whitelisted
+- [x] Netlify build config fixed (`netlify.toml`, SPA redirect, `VITE_API_URL`)
+- [x] Deferred persistence pattern implemented (career saved only on skill graph confirmation)
+- [x] Logout confirmation toast added
+- [x] Codebase cleaned: AI artifacts removed, `sync_embeddings.py` utility added
+- [x] Dashboard refactored: skill graph separated from future recommendations page
+- [x] "Catalog Match" vs "AI Generated" badge added to skill assessment step
+> Commits: `c06d4e1`, `9e9b5e2`, `231c44f`, `1e702fb`, `a2813ca`, `44ce39f`, `8f8094f`, `20b9130`, `bd087f5`, `d13888c`, `8c5c8b7`, `245da70`, `e638e0c`
+
+---
+
+### Interval 6: Micro-Learning Content Engine (Next)
+- [x] **Task 6.1 (Obj i, v): Content Ingestion Worker (Zero-Key Resilient)**
+  - Multi-source Python worker script (`backend/scripts/ingest_content.py`) requiring zero external paid API keys:
+    1. Dev.to API (top developer tutorials & architectural takeaways)
+    2. StackExchange API (StackOverflow, MedicalSciences, Law, Money/Finance Q&A)
+    3. Wikipedia REST API (encyclopedic concept foundations)
+    4. Hacker News via Algolia API (high-signal engineering guides)
+    5. YouTube Video Engine (keyless public search with optional YouTube v3 API upgrade)
+  - 3-Gate validation pipeline:
+    1. Engagement gate (Dev.to reactions >= 20, SE votes >= 5 with accepted answer, HN points >= 30)
+    2. Blacklist gate (reject low-value titles: "My thoughts on...", "Rant", "Why I left...", "Drama")
+    3. Tag intersection gate (verified match against `skills` table in Supabase)
+- [x] **Task 6.2 (Obj i, v): Content Atomization & Quiz Generation**
+  - NLP summarization: condense content to 3-bullet / <150 word summary
+  - LLM-driven 5-question MCQ JSON generation per content item
+  - Content vector (384-dim) computed and stored in `micro_content.embedding`
+- [x] **Task 6.3 (Obj ii, v): Two-Stage Hybrid Recommendation Feed**
+  - Stage 1: pgvector coarse filter on `micro_content` → top 30 by cosine similarity to user skill gap vector (with relational fallback)
+  - Stage 2: FastAPI re-ranker applying difficulty penalty, breadth priority, `source_trust_score` multiplier → top 5
+  - New `/recommendations` feed integrated into frontend with embedded quiz UI
+- [x] **Task 6.4 (Obj v): Quiz Interaction & Skill Progression**
+  - Quiz rendered dynamically from `quizzes` JSONB column
+  - Correct answers → `proficiency` +10% update in `user_skills`
+  - Skill status auto-updated to `Mastered` at 100%
+  - "Ask MENTOR" fallback summon on repeated quiz failure
+
+---
+
+### Interval 7: Mentorship Marketplace (Planned)
+- [ ] **Task 7.1 (Obj iii, iv, vi): Mentor Onboarding & Profile Embeddings**
+  - Mentor registration, bio input, skill declaration
+  - Bio → 384-dim `mentor_vector` stored in `mentors` table
+- [ ] **Task 7.2 (Obj iv, vi): Semantic Q&A Vector Search**
+  - Public Q&A board per mentor profile
+  - Vector search across historical Q&A for instant retrieval
+  - "Ask MENTOR" trigger on repeated quiz failure — routes to matched mentor, pre-fills skill context
+- [ ] **Task 7.3 (Obj vi): Session Booking Pipeline**
+  - Mentor availability calendar, Google Meet / Calendly link integration
+  - Booking transaction records in `bookings` table
+  - Supabase Realtime notification 10 minutes before session start

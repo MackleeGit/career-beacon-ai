@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Entity Relationship Diagram – Career Beacon</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #ffffff;
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px 20px 60px;
+        }
+        .fig-caption {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            margin-top: 16px;
+            text-align: center;
+        }
+        svg text { font-family: "Segoe UI", Arial, sans-serif; }
+    </style>
+</head>
+<body>
+
+<svg width="1200" height="920" viewBox="0 0 1200 920" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <marker id="arrow-one" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 2 L 10 5 L 0 8" fill="none" stroke="#444" stroke-width="1.5"/>
+        </marker>
+        <marker id="arrow-many" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+            <path d="M 0 3 L 10 7 L 0 11" fill="none" stroke="#444" stroke-width="1.5"/>
+            <line x1="10" y1="2" x2="10" y2="12" stroke="#444" stroke-width="1.5"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="600" y="28" text-anchor="middle" font-size="18" font-weight="700" fill="#111">Entity Relationship Diagram – Career Beacon Database</text>
+    <text x="600" y="48" text-anchor="middle" font-size="12" font-weight="400" fill="#666">Supabase PostgreSQL 15 with pgvector Extension</text>
+
+    <!-- ===== PROFILES TABLE ===== -->
+    <g transform="translate(50, 80)">
+        <rect width="260" height="230" rx="8" fill="#f0f4ff" stroke="#3b5998" stroke-width="2"/>
+        <rect width="260" height="36" rx="8" fill="#3b5998"/>
+        <rect x="0" y="28" width="260" height="8" fill="#3b5998"/>
+        <text x="130" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">profiles</text>
+        <text x="15" y="58" font-size="12" fill="#111">🔑 id : UUID (PK)</text>
+        <text x="15" y="78" font-size="12" fill="#111">    email : TEXT NOT NULL UNIQUE</text>
+        <text x="15" y="98" font-size="12" fill="#111">    full_name : TEXT</text>
+        <text x="15" y="118" font-size="12" fill="#111">    avatar_url : TEXT</text>
+        <text x="15" y="138" font-size="12" fill="#111">    bio : TEXT</text>
+        <text x="15" y="158" font-size="12" fill="#c41e3a">🔗 target_career_id : UUID (FK)</text>
+        <text x="15" y="178" font-size="12" fill="#111">    created_at : TIMESTAMPTZ</text>
+        <text x="15" y="198" font-size="12" fill="#111">    updated_at : TIMESTAMPTZ</text>
+    </g>
+
+    <!-- ===== CAREERS TABLE ===== -->
+    <g transform="translate(470, 80)">
+        <rect width="260" height="210" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+        <rect width="260" height="36" rx="8" fill="#2e7d32"/>
+        <rect x="0" y="28" width="260" height="8" fill="#2e7d32"/>
+        <text x="130" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">careers</text>
+        <text x="15" y="58" font-size="12" fill="#111">🔑 id : UUID (PK)</text>
+        <text x="15" y="78" font-size="12" fill="#111">    title : TEXT NOT NULL UNIQUE</text>
+        <text x="15" y="98" font-size="12" fill="#111">    description : TEXT</text>
+        <text x="15" y="118" font-size="12" fill="#6d28d9">🧮 career_vector : VECTOR(384)</text>
+        <text x="15" y="138" font-size="12" fill="#111">    created_at : TIMESTAMPTZ</text>
+        <text x="15" y="158" font-size="12" fill="#111">    updated_at : TIMESTAMPTZ</text>
+        <text x="15" y="185" font-size="10" fill="#888" font-style="italic">HNSW Index: idx_careers_vector</text>
+    </g>
+
+    <!-- ===== SKILLS TABLE ===== -->
+    <g transform="translate(890, 80)">
+        <rect width="260" height="190" rx="8" fill="#fff3e0" stroke="#ef6c00" stroke-width="2"/>
+        <rect width="260" height="36" rx="8" fill="#ef6c00"/>
+        <rect x="0" y="28" width="260" height="8" fill="#ef6c00"/>
+        <text x="130" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">skills</text>
+        <text x="15" y="58" font-size="12" fill="#111">🔑 id : UUID (PK)</text>
+        <text x="15" y="78" font-size="12" fill="#111">    name : TEXT NOT NULL UNIQUE</text>
+        <text x="15" y="98" font-size="12" fill="#111">    category : TEXT</text>
+        <text x="15" y="118" font-size="12" fill="#111">    created_at : TIMESTAMPTZ</text>
+        <text x="15" y="138" font-size="12" fill="#111">    updated_at : TIMESTAMPTZ</text>
+    </g>
+
+    <!-- ===== CAREER_SKILLS (Junction) ===== -->
+    <g transform="translate(640, 340)">
+        <rect width="240" height="140" rx="8" fill="#fce4ec" stroke="#c62828" stroke-width="2"/>
+        <rect width="240" height="36" rx="8" fill="#c62828"/>
+        <rect x="0" y="28" width="240" height="8" fill="#c62828"/>
+        <text x="120" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">career_skills</text>
+        <text x="15" y="58" font-size="12" fill="#c41e3a">🔗 career_id : UUID (PK, FK)</text>
+        <text x="15" y="78" font-size="12" fill="#c41e3a">🔗 skill_id : UUID (PK, FK)</text>
+        <text x="15" y="98" font-size="12" fill="#111">    rank : INT DEFAULT 0</text>
+    </g>
+
+    <!-- ===== USER_SKILLS (Junction) ===== -->
+    <g transform="translate(50, 380)">
+        <rect width="260" height="160" rx="8" fill="#ede7f6" stroke="#5e35b1" stroke-width="2"/>
+        <rect width="260" height="36" rx="8" fill="#5e35b1"/>
+        <rect x="0" y="28" width="260" height="8" fill="#5e35b1"/>
+        <text x="130" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">user_skills</text>
+        <text x="15" y="58" font-size="12" fill="#c41e3a">🔗 user_id : UUID (PK, FK)</text>
+        <text x="15" y="78" font-size="12" fill="#c41e3a">🔗 skill_id : UUID (PK, FK)</text>
+        <text x="15" y="98" font-size="12" fill="#111">    proficiency : INT (0-100)</text>
+        <text x="15" y="118" font-size="12" fill="#111">    last_used : TIMESTAMPTZ</text>
+    </g>
+
+    <!-- ===== MICRO_CONTENT TABLE ===== -->
+    <g transform="translate(370, 560)">
+        <rect width="300" height="300" rx="8" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+        <rect width="300" height="36" rx="8" fill="#00838f"/>
+        <rect x="0" y="28" width="300" height="8" fill="#00838f"/>
+        <text x="150" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">micro_content</text>
+        <text x="15" y="58" font-size="12" fill="#111">🔑 id : UUID (PK)</text>
+        <text x="15" y="78" font-size="12" fill="#111">    title : TEXT NOT NULL</text>
+        <text x="15" y="98" font-size="12" fill="#111">    summary_bullets : TEXT</text>
+        <text x="15" y="118" font-size="12" fill="#111">    source_url : TEXT</text>
+        <text x="15" y="138" font-size="12" fill="#c41e3a">🔗 associated_skill_id : UUID (FK)</text>
+        <text x="15" y="158" font-size="12" fill="#111">    difficulty_level : INT (1-5)</text>
+        <text x="15" y="178" font-size="12" fill="#111">    source_trust_score : FLOAT</text>
+        <text x="15" y="198" font-size="12" fill="#111">    quizzes : JSONB</text>
+        <text x="15" y="218" font-size="12" fill="#6d28d9">🧮 embedding : VECTOR(384)</text>
+        <text x="15" y="238" font-size="12" fill="#111">    content : TEXT</text>
+        <text x="15" y="258" font-size="12" fill="#111">    created_at : TIMESTAMPTZ</text>
+        <text x="15" y="280" font-size="10" fill="#888" font-style="italic">HNSW Index: idx_micro_content_embedding</text>
+    </g>
+
+    <!-- ===== MENTORS TABLE ===== -->
+    <g transform="translate(790, 540)">
+        <rect width="280" height="230" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+        <rect width="280" height="36" rx="8" fill="#b45309"/>
+        <rect x="0" y="28" width="280" height="8" fill="#b45309"/>
+        <text x="140" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">mentors</text>
+        <text x="15" y="58" font-size="12" fill="#111">🔑 id : UUID (PK)</text>
+        <text x="15" y="78" font-size="12" fill="#c41e3a">🔗 profile_id : UUID (FK)</text>
+        <text x="15" y="98" font-size="12" fill="#111">    bio : TEXT</text>
+        <text x="15" y="118" font-size="12" fill="#111">    expertise : TEXT</text>
+        <text x="15" y="138" font-size="12" fill="#111">    rating_avg : NUMERIC(3,2)</text>
+        <text x="15" y="158" font-size="12" fill="#111">    rating_count : INT</text>
+        <text x="15" y="178" font-size="12" fill="#6d28d9">🧮 mentor_vector : VECTOR(384)</text>
+        <text x="15" y="198" font-size="12" fill="#111">    created_at : TIMESTAMPTZ</text>
+    </g>
+
+    <!-- ===== MENTOR_QA TABLE ===== -->
+    <g transform="translate(50, 620)">
+        <rect width="260" height="200" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+        <rect width="260" height="36" rx="8" fill="#b45309"/>
+        <rect x="0" y="28" width="260" height="8" fill="#b45309"/>
+        <text x="130" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">mentor_qa</text>
+        <text x="15" y="58" font-size="12" fill="#111">🔑 id : UUID (PK)</text>
+        <text x="15" y="78" font-size="12" fill="#c41e3a">🔗 mentor_id : UUID (FK)</text>
+        <text x="15" y="98" font-size="12" fill="#111">    question : TEXT NOT NULL</text>
+        <text x="15" y="118" font-size="12" fill="#111">    answer : TEXT NOT NULL</text>
+        <text x="15" y="138" font-size="12" fill="#6d28d9">🧮 embedding : VECTOR(384)</text>
+        <text x="15" y="158" font-size="12" fill="#111">    created_at : TIMESTAMPTZ</text>
+        <text x="15" y="180" font-size="10" fill="#888" font-style="italic">HNSW Index: idx_mentor_qa_embedding</text>
+    </g>
+
+    <!-- ===== BOOKINGS TABLE ===== -->
+    <g transform="translate(50, 860)">
+        <rect width="310" height="55" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+        <rect width="310" height="36" rx="8" fill="#b45309"/>
+        <rect x="0" y="28" width="310" height="8" fill="#b45309"/>
+        <text x="155" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">bookings</text>
+    </g>
+    <g transform="translate(380, 860)">
+        <text x="0" y="18" font-size="11" fill="#555">🔑 id : UUID (PK)  |  🔗 mentor_id, user_id (FK)</text>
+        <text x="0" y="36" font-size="11" fill="#555">start_time, end_time, status, meeting_link</text>
+    </g>
+
+
+    <!-- ===== RELATIONSHIP LINES ===== -->
+
+    <!-- profiles → careers (target_career_id FK)  1..1 to 0..1 -->
+    <line x1="310" y1="228" x2="470" y2="175" stroke="#444" stroke-width="1.8"/>
+    <text x="375" y="190" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="445" y="185" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="360" y="210" font-size="9" fill="#777" font-style="italic">target_career_id</text>
+
+    <!-- careers → career_skills (1 to Many) -->
+    <line x1="660" y1="290" x2="730" y2="340" stroke="#444" stroke-width="1.8"/>
+    <text x="670" y="300" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="720" y="340" font-size="10" fill="#444" font-weight="600">*</text>
+
+    <!-- skills → career_skills (1 to Many) -->
+    <line x1="980" y1="270" x2="870" y2="370" stroke="#444" stroke-width="1.8"/>
+    <text x="975" y="280" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="870" y="365" font-size="10" fill="#444" font-weight="600">*</text>
+
+    <!-- profiles → user_skills (1 to Many) -->
+    <line x1="180" y1="310" x2="180" y2="380" stroke="#444" stroke-width="1.8"/>
+    <text x="170" y="325" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="170" y="375" font-size="10" fill="#444" font-weight="600">*</text>
+
+    <!-- skills → user_skills (1 to Many) -->
+    <line x1="890" y1="200" x2="310" y2="430" stroke="#444" stroke-width="1.5" stroke-dasharray="6 3"/>
+    <text x="600" y="300" font-size="9" fill="#777" font-style="italic">skill_id FK</text>
+
+    <!-- skills → micro_content (1 to Many, via associated_skill_id) -->
+    <line x1="980" y1="270" x2="640" y2="700" stroke="#444" stroke-width="1.5" stroke-dasharray="6 3"/>
+    <text x="830" y="470" font-size="9" fill="#777" font-style="italic">associated_skill_id</text>
+
+    <!-- profiles → mentors (1 to 0..1, profile_id FK) -->
+    <line x1="310" y1="250" x2="790" y2="600" stroke="#444" stroke-width="1.5"/>
+    <text x="530" y="410" font-size="9" fill="#777" font-style="italic">profile_id FK</text>
+    <text x="320" y="260" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="778" y="600" font-size="10" fill="#444" font-weight="600">0..1</text>
+
+    <!-- mentors → mentor_qa (1 to Many) -->
+    <line x1="790" y1="680" x2="310" y2="700" stroke="#444" stroke-width="1.8"/>
+    <text x="770" y="675" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="318" y="695" font-size="10" fill="#444" font-weight="600">*</text>
+
+    <!-- mentors → bookings -->
+    <line x1="790" y1="750" x2="360" y2="880" stroke="#444" stroke-width="1.5"/>
+    <text x="780" y="755" font-size="10" fill="#444" font-weight="600">1</text>
+    <text x="368" y="878" font-size="10" fill="#444" font-weight="600">*</text>
+
+    <!-- profiles → bookings (learner bookings) -->
+    <line x1="160" y1="310" x2="160" y2="860" stroke="#444" stroke-width="1.5" stroke-dasharray="6 3"/>
+    <text x="145" y="585" font-size="9" fill="#777" font-style="italic" writing-mode="tb">user_id FK</text>
+
+    <!-- Legend -->
+    <g transform="translate(790, 810)">
+        <rect width="370" height="95" rx="6" fill="#f9fafb" stroke="#ccc" stroke-width="1"/>
+        <text x="185" y="20" text-anchor="middle" font-size="11" font-weight="700" fill="#333">Legend</text>
+        <text x="15" y="40" font-size="11" fill="#111">🔑 Primary Key     🔗 Foreign Key</text>
+        <text x="15" y="58" font-size="11" fill="#6d28d9">🧮 384-dim Vector Column (pgvector)</text>
+        <line x1="15" y1="72" x2="60" y2="72" stroke="#444" stroke-width="1.8"/>
+        <text x="70" y="76" font-size="10" fill="#444">Direct Relationship</text>
+        <line x1="200" y1="72" x2="245" y2="72" stroke="#444" stroke-width="1.5" stroke-dasharray="6 3"/>
+        <text x="255" y="76" font-size="10" fill="#444">Cross-Domain FK</text>
+    </g>
+
+</svg>
+
+<p class="fig-caption">Figure 4.2: Entity Relationship Diagram – Career Beacon Database Schema (PostgreSQL 15 + pgvector)</p>
+
+</body>
+</html>

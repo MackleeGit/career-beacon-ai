@@ -1,20 +1,38 @@
 import re
 import uuid
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from app.core.database import supabase_client
+from app.core.career_fields import (
+    CAREER_FIELDS,
+    classify_career_field,
+    check_kinesthetic_redirect,
+)
 from app.services.embedding_service import EmbeddingService
 from app.services.ai_service import AIService
+from app.services.daily_drop_service import DailyDropService
 
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
 
 embedding_service = EmbeddingService()
 ai_service = AIService()
-
+daily_drop_service = DailyDropService()
 
 from app.middleware.auth_middleware import get_verified_user_id
+
+# In-memory canonical skill vector cache (skill_id -> 384-d unit vector)
+_CANONICAL_SKILL_VECTOR_CACHE: Dict[str, List[float]] = {}
+SKILL_CANONICALIZATION_THRESHOLD = 0.82
+
+
+async def _match_canonical_skill_by_vector(
+    raw_name: str,
+    existing_skills: List[Dict[str, Any]],
+    threshold: float = SKILL_CANONICALIZATION_THRESHOLD,
+) -> Optional[Dict[str, Any]]:
+    return await embedding_service.match_canonical_skill(raw_name, existing_skills, threshold=threshold)
 
 
 
@@ -199,23 +217,32 @@ async def _canonical_match_result(career: dict) -> dict:
     # Fires if lacks standardized stack OR has fewer than 6 essential skills
     needs_normalization = (not has_curated_or_distilled_stack) or (len(essential_skills) < 6)
 
+    field_meta = classify_career_field(career.get("title", ""), career.get("onet_soc_code"))
+    career["field_id"] = field_meta["field_id"]
+    career["field_label"] = field_meta["label"]
+    career["track_type"] = field_meta["track_type"]
+
     if needs_normalization:
         try:
-            norm_prompt = """You are a Vocational Taxonomy Standardizer.
+            field_directive = field_meta["extraction_directive"]
+            norm_prompt = f"""You are a Vocational Taxonomy Standardizer for the '{field_meta['label']}' career field.
 Extract exactly 8 to 10 Primary Vocational Competencies for the specified occupation.
 
+FIELD-SPECIFIC EXTRACTION DIRECTIVE:
+{field_directive}
+
 EACH COMPETENCY MUST SATISFY ALL 4 OBJECTIVE TESTS:
-1. OBSERVABLE TASK TEST: Must represent an explicit physical, technical, or analytical task performed on the job (e.g. 'Structural Analysis & Design', 'Soil Mechanics Testing'), NOT a broad knowledge domain (FAIL: 'Design', 'Science', 'Engineering').
+1. COGNITIVE / ANALYTICAL / REGULATORY TASK TEST: Must represent an explicit technical, clinical, analytical, diagnostic, or regulatory task taught and assessed via cognitive instruction (e.g. 'Structural Load Analysis', 'NEC Circuit Load Sizing', 'Pharmacokinetic Dosage Calculation'), NOT a broad knowledge bucket (FAIL: 'Design', 'Science', 'Engineering') and NEVER a purely physical muscle-memory reflex.
 2. INDEPENDENT TESTABILITY TEST: Must be assessable via a 5-question technical diagnostic test with definitive right/wrong answers.
-3. DOMAIN EXCLUSIVITY TEST: Must be specific to this trade or profession. Reject cross-occupational generalities (FAIL: 'Active Listening', 'Critical Thinking', 'Computer Literacy', 'Time Management').
+3. DOMAIN EXCLUSIVITY TEST: Must be specific to this profession. Reject cross-occupational generalities (FAIL: 'Active Listening', 'Critical Thinking', 'Computer Literacy', 'Time Management').
 4. ATOMICITY & NO-OVERLAP TEST: No two competencies may share the same underlying technical tools or procedures (FAIL: 'CAD Modeling' AND 'AutoCAD Drafting' in the same list).
 
 OUTPUT strictly valid JSON:
-{
+{{
     "competencies": [
-        {"name": "Skill Name (2 to 4 words)", "category": "Technical | Safety | Tools | Operations"}
+        {{"name": "Skill Name (2 to 4 words)", "category": "Technical | Safety | Tools | Operations"}}
     ]
-}"""
+}}"""
             c_title = career.get("title", "")
             c_desc = career.get("description", "")
             user_msg = f"Career Title: {c_title}\nDescription: {c_desc}"
@@ -231,17 +258,44 @@ OUTPUT strictly valid JSON:
 
                 new_batch = []
                 distilled_list = []
+                # Fetch existing canonical skills once for deduplication
+                existing_canonical_res = (
+                    supabase_client.table("skills")
+                    .select("id, name, category")
+                    .limit(1000)
+                    .execute()
+                )
+                existing_canonical = existing_canonical_res.data or []
+
                 for item in comps:
                     name = item.get("name", "").strip()
                     cat = item.get("category", "Technical").strip()
                     if not name:
                         continue
-                    sk_res = supabase_client.table("skills").select("id").ilike("name", name).execute()
-                    if sk_res.data:
-                        sk_id = sk_res.data[0]["id"]
+
+                    sk_id = None
+                    canonical_name = name
+                    canonical_cat = cat
+
+                    # 1. Exact case-insensitive match
+                    exact_match = next((s for s in existing_canonical if s.get("name", "").strip().lower() == name.lower()), None)
+                    if exact_match:
+                        sk_id = exact_match["id"]
+                        canonical_name = exact_match["name"]
+                        canonical_cat = exact_match.get("category") or cat
                     else:
-                        ins = supabase_client.table("skills").insert({"name": name, "category": cat}).execute()
-                        sk_id = ins.data[0]["id"] if ins.data else None
+                        # 2. Semantic vector deduplication against existing canonical skills
+                        vec_match = await _match_canonical_skill_by_vector(name, existing_canonical, threshold=0.86)
+                        if vec_match:
+                            sk_id = vec_match["id"]
+                            canonical_name = vec_match["name"]
+                            canonical_cat = vec_match.get("category") or cat
+                        else:
+                            ins = supabase_client.table("skills").insert({"name": name, "category": cat}).execute()
+                            if ins.data:
+                                sk_id = ins.data[0]["id"]
+                                existing_canonical.append({"id": sk_id, "name": name, "category": cat})
+
                     if sk_id:
                         # Save with source_origin='llm' and review_status='unreviewed'
                         # for human-by-exception governance approval.
@@ -255,8 +309,8 @@ OUTPUT strictly valid JSON:
                         })
                         distilled_list.append({
                             "id": sk_id,
-                            "name": name,
-                            "category": cat,
+                            "name": canonical_name,
+                            "category": canonical_cat,
                             "importance": "essential",
                             "importance_score": 0.95,
                             "source_origin": "llm",
@@ -336,6 +390,63 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
 
     query = sanitize_career_query(raw_query)
 
+    async def _build_kinesthetic_redirect_response(rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        rows = []
+        try:
+            target_socs = rule.get("target_soc_codes") or []
+            if target_socs:
+                soc_res = (
+                    supabase_client.table("careers")
+                    .select("id, title, description, onet_soc_code")
+                    .in_("onet_soc_code", target_socs)
+                    .limit(8)
+                    .execute()
+                )
+                rows = soc_res.data or []
+
+            existing_ids = {r["id"] for r in rows}
+            if len(rows) < 6:
+                redir_res = (
+                    supabase_client.table("careers")
+                    .select("id, title, description, onet_soc_code")
+                    .in_("title", rule["target_titles"])
+                    .limit(8)
+                    .execute()
+                )
+                for r in redir_res.data or []:
+                    if r["id"] not in existing_ids:
+                        rows.append(r)
+                        existing_ids.add(r["id"])
+        except Exception as redir_err:
+            print(f"[career-search] Kinesthetic redirect lookup notice: {redir_err}")
+
+        if rows:
+            candidates_out = []
+            for idx, r in enumerate(rows[:6]):
+                fm = classify_career_field(r.get("title", ""), r.get("onet_soc_code"))
+                candidates_out.append({
+                    "id": r["id"],
+                    "title": r["title"],
+                    "description": r.get("description", ""),
+                    "similarity": round(0.92 - (idx * 0.02), 2),
+                    "field_id": fm["field_id"],
+                    "field_label": fm["label"],
+                    "track_type": fm["track_type"],
+                })
+            return {
+                "status": "disambiguation_required",
+                "scope_redirect_notice": rule["reason"],
+                "candidates": candidates_out,
+            }
+        return None
+
+    # 0. Strategic Scope Gate: Intercept purely kinesthetic/athletic/motor queries and redirect to analytical/operations tracks
+    direct_redir_rule = check_kinesthetic_redirect(query)
+    if direct_redir_rule:
+        redir_payload = await _build_kinesthetic_redirect_response(direct_redir_rule)
+        if redir_payload:
+            return redir_payload
+
     # Canonical title lookup precedes semantic search. This catches exact and
     # simple singular/plural title matches even when query and catalogue vectors
     # were built from different text (for example query title vs title+description).
@@ -359,6 +470,11 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
             priority = {"dual_sourced": 0, "onet": 1, "esco": 2, "curated_list": 3, "llm": 4}
             exact_matches.sort(key=lambda row: priority.get(row.get("source_origin"), 9))
             top_exact = exact_matches[0]
+            soc_redir = check_kinesthetic_redirect(top_exact.get("title", ""), top_exact.get("onet_soc_code"))
+            if soc_redir:
+                redir_payload = await _build_kinesthetic_redirect_response(soc_redir)
+                if redir_payload:
+                    return redir_payload
             if not request.always_show_candidates:
                 return await _canonical_match_result(top_exact)
     except Exception as e:
@@ -371,7 +487,7 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
     #    user to pick from rather than forcing a binary match/no-match decision.
     HIGH_CONFIDENCE_THRESHOLD = 0.85  # Auto-select without asking user
     DISAMBIGUATION_THRESHOLD = 0.75   # Must clear 0.75 to return catalog-only grid without AI synthesis
-    AI_COEXIST_FLOOR = 0.25           # Floor when fetching closest catalog neighbours for AI fallback
+    AI_COEXIST_FLOOR = 0.58           # Calibrated above FastEmbed 0.535 noise floor for closest catalog neighbors
     try:
         query_vector = await embedding_service.get_embedding(query)
         response = supabase_client.rpc(
@@ -391,11 +507,18 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
                 supabase_client.table("careers")
                 .select("id, is_curated, source_origin, review_status, onet_soc_code, esco_occupation_uri")
                 .in_("id", cand_ids)
-                .in_("source_origin", list(CANONICAL_SOURCES))
                 .neq("review_status", "rejected")
                 .execute()
             )
-            canonical_dict = {row["id"]: row for row in (source_res.data or [])}
+            canonical_dict = {
+                row["id"]: row
+                for row in (source_res.data or [])
+                if (
+                    row.get("source_origin") in CANONICAL_SOURCES
+                    or row.get("is_curated") is True
+                    or row.get("review_status") in ("reviewed", "approved")
+                )
+            }
             for candidate in raw_candidates:
                 if candidate["id"] in canonical_dict:
                     merged = dict(candidate)
@@ -413,14 +536,33 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
             candidates = [top_exact_cand] + [c for c in candidates if c["id"] != top_exact["id"]]
 
         if candidates and not request.is_structured_ai:
+            # Tag each candidate with its 7-Field metadata and strategically prioritize Core Mastery (Fields 1-6)
+            # over Field 7 Licensing Companion tracks when semantic similarity is close (within 0.06).
+            for c in candidates:
+                f_meta = classify_career_field(c.get("title", ""), c.get("onet_soc_code"))
+                c["field_id"] = f_meta["field_id"]
+                c["field_label"] = f_meta["label"]
+                c["track_type"] = f_meta["track_type"]
+
+            candidates.sort(
+                key=lambda c: (
+                    float(c.get("similarity") or 0.0) - (0.06 if c.get("track_type") == "licensing_companion" else 0.0)
+                ),
+                reverse=True,
+            )
+
             top_match = candidates[0]
+            top_redir = check_kinesthetic_redirect(top_match.get("title", ""), top_match.get("onet_soc_code"))
+            if top_redir:
+                redir_payload = await _build_kinesthetic_redirect_response(top_redir)
+                if redir_payload:
+                    return redir_payload
+
             top_score = top_match.get("similarity", 0)
             if top_score >= HIGH_CONFIDENCE_THRESHOLD and not request.always_show_candidates:
                 return await _canonical_match_result(top_match)
 
             # Only show catalog-only disambiguation grid if the top match clears DISAMBIGUATION_THRESHOLD (0.75).
-            # If top_score < 0.75 (e.g., 0.69 for "Martian Colony Terraform Specialist"), fall through to AI
-            # synthesis so the AI Career Target card is presented alongside these closest catalog neighbors!
             strong_candidates = [c for c in candidates if c.get("similarity", 0) >= DISAMBIGUATION_THRESHOLD]
             if strong_candidates:
                 return {
@@ -431,6 +573,9 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
                             "title": c["title"],
                             "description": c.get("description", ""),
                             "similarity": round(c.get("similarity", 0), 2),
+                            "field_id": c.get("field_id"),
+                            "field_label": c.get("field_label"),
+                            "track_type": c.get("track_type"),
                         }
                         for c in strong_candidates[:8]
                     ],
@@ -438,27 +583,40 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
     except Exception as e:
         print("[career-search] RPC search error:", e)
 
-    # 3. AI Fallback: Validate occupational intent AND generate structured occupational skill profile.
-    system_prompt = """You are an expert labor-market analyst and Vocational Taxonomy Standardizer.
-First, determine whether the user's query represents a legitimate, recognizable, or plausible human occupation, profession, trade, or specialized career role (including surgical specialties, emerging tech, or blue-collar trades).
-REJECT the query (set "is_valid_career": false) if it is an insult, slur, everyday object, animal, or non-occupational gibberish.
+    # 3. AI Fallback: Validate occupational intent, classify into the 7 Served Career Fields,
+    #    and generate a cognitive/regulatory occupational skill profile.
+    system_prompt = """You are an expert labor-market analyst and Vocational Taxonomy Standardizer for Career Beacon.
+Career Beacon serves 7 specific Career Fields:
+1. "tech": Software, Data & Cybersecurity
+2. "engineering": Engineering & Applied Physical Systems
+3. "healthcare": Healthcare, Biomedical & Clinical Practice
+4. "science": Life, Physical & Analytical Sciences
+5. "finance": Finance, Accounting & Quantitative Business
+6. "business_ops": Business Operations, Management, Legal & Digital Media
+7. "trades_safety": Technical Licensing, Code Compliance & Operational Safety Companion Track (FAA, NEC, OSHA, EPA, HACCP written licensing & diagnostic standards)
 
-When valid, extract exactly 8 to 10 Primary Vocational Competencies for this occupation.
+RULES FOR SCOPE & STRATEGIC REFRAMING:
+- REJECT the query (set "is_valid_career": false) if it is an insult, slur, everyday object, animal, or non-occupational gibberish.
+- If the query is a purely physical/athletic/manual-motor role (e.g., Professional Athlete, Footballer, Bus Driver, Bricklayer), AUTOMATICALLY PIVOT the "title" and "description" to its closest analytical, performance-science, logistics, or supervisory counterpart (e.g., "Sports Performance & Tactical Analyst", "Fleet & Transit Operations Coordinator", "Construction Safety & Project Supervisor").
+- If the query belongs to "trades_safety" (e.g., Electrician, Commercial Pilot, HVAC Technician, Chef), scope all extracted competencies strictly to WRITTEN-EXAM, CODE-COMPLIANCE, DIAGNOSTIC, SCHEMATIC, and SAFETY REGULATION pillars (never physical muscle-memory tasks).
+
+Extract exactly 8 to 10 Primary Vocational Competencies for this occupation.
 EACH COMPETENCY MUST SATISFY ALL 4 OBJECTIVE TESTS:
-1. OBSERVABLE TASK TEST: Must represent an explicit physical, technical, clinical, or analytical task performed on the job (e.g. 'Composite Restoration Placement', 'Endoscopic Sinus Surgery', 'Structural Beam Sizing'), NOT a broad knowledge bucket (FAIL: 'Science', 'Communication', 'Healthcare').
+1. COGNITIVE / ANALYTICAL / REGULATORY TASK TEST: Must represent an explicit technical, clinical, analytical, diagnostic, or regulatory task taught via instructional material (e.g. 'Composite Restoration Placement', 'Structural Beam Sizing', 'NEC Load Calculation'), NOT a broad knowledge bucket (FAIL: 'Science', 'Communication', 'Healthcare').
 2. INDEPENDENT TESTABILITY TEST: Must be assessable via a 5-question technical diagnostic checkpoint with definitive right/wrong answers.
-3. DOMAIN EXCLUSIVITY TEST: Must be specific to this trade or profession. Reject cross-occupational generalities (FAIL: 'Active Listening', 'Critical Thinking', 'Computer Literacy', 'Time Management', 'EMR Systems').
+3. DOMAIN EXCLUSIVITY TEST: Must be specific to this profession. Reject cross-occupational generalities (FAIL: 'Active Listening', 'Critical Thinking', 'Computer Literacy', 'Time Management').
 4. ATOMICITY & NO-OVERLAP TEST: No two competencies may share the same underlying technical tools or procedures.
 
 CATEGORIES (use exactly these names):
-- "Technical": Core specialized execution and domain techniques
+- "Technical": Core specialized execution, analysis, and domain techniques
 - "Operations": Day-to-day occupational procedures, clinical tasks, or operational workflows
-- "Safety": Safety regulations, infection control, hazard mitigation, or emergency protocols
-- "Tools": Dedicated machinery, diagnostic hardware, software platforms, or instruments
+- "Safety": Safety regulations, code compliance, infection control, or risk protocols
+- "Tools": Dedicated diagnostic hardware, software platforms, schematics, or analytical instruments
 
 OUTPUT strictly valid JSON:
 {
     "is_valid_career": true,
+    "field_id": "tech | engineering | healthcare | science | finance | business_ops | trades_safety",
     "title": "Standardized Job Title",
     "description": "One clear sentence describing the occupational scope and responsibilities.",
     "skills": [
@@ -493,8 +651,15 @@ OUTPUT strictly valid JSON:
         raw_name = sk["name"].strip()
         norm_name = raw_name.lower()
 
-        # Check exact or normalized match only. Prevent cross-domain false positives (e.g. Martian terraforming matching IaC Terraform)
+        # 1. Exact normalized match
         match = exact_map.get(norm_name)
+
+        # 2. Full-catalog semantic vector deduplication fallback (calibrated sim >= 0.82)
+        if not match and existing_skills:
+            try:
+                match = await _match_canonical_skill_by_vector(raw_name, existing_skills)
+            except Exception as dedupe_err:
+                print(f"[learner-onboarding] Skill vector deduplication notice: {dedupe_err}")
 
         if match:
             source_origin = "esco" if match.get("esco_skill_uri") else ("onet" if match.get("onet_element_id") else "curated_list")
@@ -540,18 +705,139 @@ OUTPUT strictly valid JSON:
         for c in strong_related[:5]
     ]
 
+    ai_field_id = ai_data.get("field_id")
+    ai_field_meta = CAREER_FIELDS.get(ai_field_id) or classify_career_field(ai_data.get("title", ""), None)
+
     return {
         "status": "generated",
         "career": {
-            "id":            None,
-            "title":         ai_data["title"],
-            "description":   ai_data.get("description", ""),
+            "id":               None,
+            "title":            ai_data["title"],
+            "description":      ai_data.get("description", ""),
             "provenance_label": "AI Suggestion",
-            "_pending":      True,
+            "field_id":         ai_field_meta["field_id"],
+            "field_label":      ai_field_meta["label"],
+            "track_type":       ai_field_meta["track_type"],
+            "_pending":         True,
         },
         "skills": pending_skills,
         "related_candidates": vector_candidate_list,
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/onboarding/fields
+# ---------------------------------------------------------------------------
+FIELD_TOP_CAREERS = {
+    "tech": [
+        "Full-Stack Engineer",
+        "Frontend Developer",
+        "Backend Software Engineer",
+        "Data Scientist",
+        "Information Security Analyst",
+        "Database Administrator and Architect",
+    ],
+    "engineering": [
+        "Civil Engineer",
+        "Aerospace Engineer",
+        "Electronic Engineer",
+        "Biomedical Engineer",
+        "Mechanical Engineer",
+        "Electrical Engineer",
+    ],
+    "healthcare": [
+        "Registered Nurse",
+        "Physical Therapist",
+        "Pharmacy Technician",
+        "Advanced Practice Psychiatric Nurse",
+        "General Internal Medicine Physician",
+        "Medical Doctor",
+    ],
+    "science": [
+        "Biochemist and Biophysicist",
+        "Geneticist",
+        "Environmental Scientist and Specialist, Including Health",
+        "Conservation Scientist",
+        "Soil and Plant Scientist",
+        "Animal Scientist",
+    ],
+    "finance": [
+        "Accountant and Auditor",
+        "Actuary",
+        "Financial Analyst",
+        "Financial Manager",
+        "Credit Counselor",
+        "Appraiser and Assessor of Real Estate",
+    ],
+    "business_ops": [
+        "Operations Research Analyst",
+        "Market Research Analyst and Marketing Specialist",
+        "Human Resources Specialist",
+        "Search Marketing Strategist",
+        "Management Analyst",
+        "Project Management Specialist",
+    ],
+    "trades_safety": [
+        "Occupational Health and Safety Specialist",
+        "Construction Manager",
+        "Emergency Management Director",
+        "Transportation, Storage, and Distribution Manager",
+        "Compliance Manager",
+        "Facilities Manager",
+    ],
+}
+
+_CACHED_FIELDS_PAYLOAD: Optional[List[Dict[str, Any]]] = None
+
+@router.get("/fields")
+async def get_onboarding_fields(http_req: Request):
+    """
+    Returns the 7 canonical Career Fields with the full catalog of careers in each branch
+    for instant client-side filtering, scrolling, and guided exploration during onboarding.
+    """
+    global _CACHED_FIELDS_PAYLOAD
+    if _CACHED_FIELDS_PAYLOAD is not None:
+        return _CACHED_FIELDS_PAYLOAD
+
+    try:
+        _ = get_verified_user_id(http_req)
+    except Exception:
+        pass
+
+    res = (
+        supabase_client.table("careers")
+        .select("id, title, description, onet_soc_code")
+        .neq("review_status", "rejected")
+        .execute()
+    )
+    all_careers = res.data or []
+
+    by_field = {fid: [] for fid in CAREER_FIELDS}
+    for c in all_careers:
+        fm = classify_career_field(c.get("title", ""), c.get("onet_soc_code"))
+        fid = fm["field_id"]
+        if fid in by_field:
+            by_field[fid].append({
+                "id": c["id"],
+                "title": c["title"],
+                "description": c.get("description") or "",
+                "field_id": fid,
+            })
+
+    output = []
+    for field_id, meta in CAREER_FIELDS.items():
+        field_careers = by_field.get(field_id, [])
+        field_careers.sort(key=lambda x: x["title"].lower())
+        output.append({
+            "field_id": field_id,
+            "label": meta["label"],
+            "track_type": meta["track_type"],
+            "total_count": len(field_careers),
+            "careers": field_careers,
+        })
+
+    _CACHED_FIELDS_PAYLOAD = output
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +866,7 @@ async def get_career_by_id(career_id: str, http_req: Request):
 # POST /api/onboarding/save-skills (Workstreams 1, 3, 4, 5)
 # ---------------------------------------------------------------------------
 @router.post("/save-skills")
-async def save_skills(request: SaveSkillsRequest, http_req: Request):
+async def save_skills(request: SaveSkillsRequest, http_req: Request, background_tasks: BackgroundTasks):
     """
     Commits onboarding to database atomically.
     Identity is strictly bound to the verified JWT sub (Workstream 1).
@@ -683,26 +969,37 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request):
                 is_ai_career = True
 
         # Atomic resolution of all skills
+        db_all_skills_res = supabase_client.table("skills").select("id, name, category").execute()
+        all_canonical_skills = db_all_skills_res.data or []
+        canonical_exact_map = {s["name"].lower().strip(): s for s in all_canonical_skills if s.get("name")}
+
         user_skills_to_insert = []
         for sk in request.skills:
             # 1. Resolve real skill_id in database
             real_skill_id = sk.skill_id
             if not real_skill_id or real_skill_id.startswith("temp-"):
-                existing = (
-                    supabase_client.table("skills")
-                    .select("id")
-                    .ilike("name", sk.name.strip())
-                    .execute()
-                )
-                if existing.data:
-                    real_skill_id = existing.data[0]["id"]
+                clean_name = sk.name.strip()
+                exact_hit = canonical_exact_map.get(clean_name.lower())
+                if exact_hit:
+                    real_skill_id = exact_hit["id"]
                 else:
-                    new_skill_res = (
-                        supabase_client.table("skills")
-                        .insert({"name": sk.name.strip(), "category": sk.category})
-                        .execute()
-                    )
-                    real_skill_id = new_skill_res.data[0]["id"]
+                    # Full-catalog semantic deduplication before inserting new skill row
+                    try:
+                        vec_match = await _match_canonical_skill_by_vector(clean_name, all_canonical_skills)
+                        if vec_match:
+                            real_skill_id = vec_match["id"]
+                    except Exception:
+                        pass
+
+                    if not real_skill_id or real_skill_id.startswith("temp-"):
+                        new_skill_res = (
+                            supabase_client.table("skills")
+                            .insert({"name": clean_name, "category": sk.category})
+                            .execute()
+                        )
+                        real_skill_id = new_skill_res.data[0]["id"]
+                        all_canonical_skills.append({"id": real_skill_id, "name": clean_name, "category": sk.category})
+                        canonical_exact_map[clean_name.lower()] = {"id": real_skill_id, "name": clean_name, "category": sk.category}
 
             # 2. Bind skill to career_skills junction ONLY if career is an unreviewed AI proposal.
             # Canonical careers already have authoritative taxonomy relations from O*NET/ESCO.
@@ -736,6 +1033,12 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request):
         supabase_client.table("user_skills").delete().eq("user_id", user_id).execute()
         if user_skills_to_insert:
             supabase_client.table("user_skills").upsert(user_skills_to_insert).execute()
+
+        # 6. Immediately compile Day 1 Daily Drop in background so it's ready before learner opens drops
+        try:
+            background_tasks.add_task(daily_drop_service.trigger_daily_worker, user_id=user_id, force_fresh=True)
+        except Exception as bg_err:
+            print(f"[save-skills] Non-fatal background drop trigger notice: {bg_err}")
 
         return {
             "status": "success",

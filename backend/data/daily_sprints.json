@@ -1,0 +1,208 @@
+[
+  {
+    "id": "b7976616-937f-420d-8542-8332514a7777",
+    "user_id": "2a64245a-a91c-419c-b322-68222e57fb26",
+    "sprint_date": "2026-11-10",
+    "target_skill_id": "00dc8837-7917-4232-a5c9-cd21d070438f",
+    "target_skill_name": "Specimen collection for labs",
+    "focus_skill_names": [
+      "Specimen collection for labs",
+      "Vital signs measurement"
+    ],
+    "active_lesson_ids": [
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab"
+    ],
+    "reserve_lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09"
+    ],
+    "lesson_ids": [
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 0,
+    "is_completed": false,
+    "created_at": "2026-11-10T14:31:32.241959+00:00"
+  },
+  {
+    "id": "a71f56ca-ea8c-436c-979d-c7a36e85776f",
+    "user_id": "798e276f-e229-458e-958c-d196034d95de",
+    "sprint_date": "2026-11-10",
+    "target_skill_id": "60be9282-7c3b-4aae-ab56-d941189d0896",
+    "target_skill_name": "Route Optimization Planning",
+    "focus_skill_names": [
+      "Route Optimization Planning"
+    ],
+    "active_lesson_ids": [
+      "bd1875d9-7b3d-4d7a-8e40-3f1611da6ace",
+      "31506e9f-5806-41cd-bb90-0ffc03101f86"
+    ],
+    "reserve_lesson_ids": [
+      "31506e9f-5806-41cd-bb90-0ffc03101f86",
+      "bd1875d9-7b3d-4d7a-8e40-3f1611da6ace"
+    ],
+    "lesson_ids": [
+      "bd1875d9-7b3d-4d7a-8e40-3f1611da6ace",
+      "31506e9f-5806-41cd-bb90-0ffc03101f86"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 0,
+    "is_completed": false,
+    "created_at": "2026-11-10T14:55:56.573620+00:00"
+  },
+  {
+    "id": "455acf54-c31f-4e01-81d1-70a27dc30e90",
+    "user_id": "20bba44c-e162-4bde-9fd6-fb7c268bbe19",
+    "sprint_date": "2026-11-10",
+    "target_skill_id": "1cba104f-7947-429c-8fa6-1f8729ea287a",
+    "target_skill_name": "RESTful API Design & Integration",
+    "focus_skill_names": [
+      "RESTful API Design & Integration",
+      "Database Schema Design",
+      "Kubernetes"
+    ],
+    "active_lesson_ids": [
+      "2e294281-6c79-40f6-8b5e-d06d3a066e43",
+      "83b18c45-c75b-4816-8255-a1282480c950",
+      "e6caeb54-a33c-4364-8b24-95a115115421"
+    ],
+    "reserve_lesson_ids": [
+      "9b5504f2-de74-485e-a936-e42026cb8c8e",
+      "0be85876-3036-440b-83df-afc404dbc674",
+      "24841660-cf5d-4aa0-8fd2-f583a0ea38f0"
+    ],
+    "lesson_ids": [
+      "2e294281-6c79-40f6-8b5e-d06d3a066e43",
+      "83b18c45-c75b-4816-8255-a1282480c950",
+      "e6caeb54-a33c-4364-8b24-95a115115421"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 0,
+    "is_completed": false,
+    "created_at": "2026-11-10T21:20:54.629103+00:00"
+  },
+  {
+    "id": "22d3d5de-caca-4b18-a217-0a11a71826fe",
+    "user_id": "0d27b387-9166-4ded-9736-b59e30ac59d6",
+    "sprint_date": "2026-11-10",
+    "target_skill_id": "8471f9b9-c1f8-4616-b023-4c70f47460ef",
+    "target_skill_name": "REST API Data Retrieval",
+    "focus_skill_names": [
+      "SQL Query Optimization",
+      "Snowflake Schema Modeling",
+      "ARIMA Time Series Forecasting"
+    ],
+    "active_lesson_ids": [
+      "9b5504f2-de74-485e-a936-e42026cb8c8e",
+      "3a7bce3e-93f2-465d-b5b3-d184b6c3e84d",
+      "cd1815c1-91db-4765-8aad-a6923872e78e"
+    ],
+    "reserve_lesson_ids": [
+      "4cd153f3-5a7b-40cf-9047-a4a710d6a080",
+      "ae254572-a555-4c63-ba9c-a1726e1dc75d",
+      "63f13df2-62f3-4803-8b37-b27c194dabb9"
+    ],
+    "lesson_ids": [
+      "9b5504f2-de74-485e-a936-e42026cb8c8e",
+      "3a7bce3e-93f2-465d-b5b3-d184b6c3e84d",
+      "cd1815c1-91db-4765-8aad-a6923872e78e"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 0,
+    "is_completed": false,
+    "created_at": "2026-11-10T21:23:51.390383+00:00"
+  },
+  {
+    "id": "edc9337e-94c3-4dd3-978a-dea06af456f9",
+    "user_id": "719a1585-89e6-4033-8862-069f86f32293",
+    "sprint_date": "2026-11-11",
+    "target_skill_id": "7ced6f18-38bb-42c1-9ee7-9c890dc4cf00",
+    "target_skill_name": "Medication administration",
+    "focus_skill_names": [
+      "Vital signs measurement",
+      "Specimen collection for labs"
+    ],
+    "active_lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09"
+    ],
+    "reserve_lesson_ids": [
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab"
+    ],
+    "lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+      "fea1fb77-fb1b-46ba-bb94-f7630cb15b76",
+      "4de02688-2e3f-4a58-92d5-e2ad73098c09"
+    ],
+    "passed_lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab"
+    ],
+    "rerolls_used": 0,
+    "is_completed": false,
+    "created_at": "2026-11-11T03:25:51.847435+00:00"
+  },
+  {
+    "id": "8dc0a6fa-e4e6-4178-8f2e-0914b4a2b845",
+    "user_id": "e8691450-dfee-448e-9f97-0fa1958458a1",
+    "sprint_date": "2026-11-11",
+    "target_skill_id": "fc3c402d-ced3-4837-aa17-da9663af5f77",
+    "target_skill_name": "Computers and Electronics",
+    "focus_skill_names": [
+      "Computers and Electronics"
+    ],
+    "active_lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+      "b2f93d89-a3b9-47c9-919c-47dacab0db64",
+      "025a4d16-9781-4119-8c03-139be8a5d68c"
+    ],
+    "reserve_lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab"
+    ],
+    "lesson_ids": [
+      "363c9034-1b47-4ac8-b5a6-2ca6bb6411ab",
+      "b2f93d89-a3b9-47c9-919c-47dacab0db64",
+      "025a4d16-9781-4119-8c03-139be8a5d68c"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 1,
+    "is_completed": false,
+    "created_at": "2026-11-11T05:00:07.620413+00:00"
+  },
+  {
+    "id": "f1cbcbee-ab19-48fd-8290-d060627f60e4",
+    "user_id": "7f9bf7ac-829a-4cac-b12c-d0bf83695ea5",
+    "sprint_date": "2026-11-11",
+    "target_skill_id": "12747a70-e40f-4628-be18-f0e5efb67776",
+    "target_skill_name": "JavaScript (ES6+)",
+    "focus_skill_names": [
+      "JavaScript (ES6+)"
+    ],
+    "active_lesson_ids": [
+      "ebfb1514-2719-433b-b2f8-d29453d901f8",
+      "4f5dad22-f172-4307-8bbe-ed8c9711a95a",
+      "446a9306-4426-4571-b324-758d66c2d3f2"
+    ],
+    "reserve_lesson_ids": [
+      "ebfb1514-2719-433b-b2f8-d29453d901f8",
+      "4f5dad22-f172-4307-8bbe-ed8c9711a95a",
+      "446a9306-4426-4571-b324-758d66c2d3f2"
+    ],
+    "lesson_ids": [
+      "ebfb1514-2719-433b-b2f8-d29453d901f8",
+      "4f5dad22-f172-4307-8bbe-ed8c9711a95a",
+      "446a9306-4426-4571-b324-758d66c2d3f2"
+    ],
+    "passed_lesson_ids": [],
+    "rerolls_used": 1,
+    "is_completed": false,
+    "created_at": "2026-11-11T05:02:17.632746+00:00"
+  }
+]

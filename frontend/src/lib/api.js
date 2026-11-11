@@ -94,6 +94,13 @@ export async function getCareerById(careerId) {
 }
 
 /**
+ * Fetch the 7 canonical Career Fields with top curated career pathways.
+ */
+export async function getOnboardingFields() {
+  return request('/api/onboarding/fields');
+}
+
+/**
  * Save the user's career and skill proficiency graph.
  */
 export async function saveSkills(userId, career, allSkills, proficiencyMap) {
@@ -177,7 +184,11 @@ export async function getCompletedLibrary() {
 }
 
 export async function rerollDailyDrop() {
-  return request('/api/recommendations/daily-drop/reroll', { method: 'POST', timeoutMs: 30000 });
+  return request('/api/recommendations/daily-drop/reroll', { method: 'POST', timeoutMs: 45000 });
+}
+
+export async function triggerDailyDropWorker() {
+  return request('/api/recommendations/daily-drop/trigger-worker', { method: 'POST', timeoutMs: 90000 });
 }
 
 // ===========================================================================
@@ -311,6 +322,13 @@ export async function getMentorshipQuestions({ q = '', skillTag = '', forMentor 
   return request(`/api/mentor/questions?${params.toString()}`);
 }
 
+export async function preflightMentorshipQuestion({ q = '', skillTag = '' } = {}) {
+  const params = new URLSearchParams();
+  if (q && q.trim()) params.set('q', q.trim());
+  if (skillTag && skillTag.trim()) params.set('skill_tag', skillTag.trim());
+  return request(`/api/mentor/questions/preflight?${params.toString()}`);
+}
+
 export async function askMentorshipQuestion(payload) {
   return request('/api/mentor/questions', {
     method: 'POST',
@@ -332,8 +350,16 @@ export async function upvoteMentorshipAnswer(questionId, answerId) {
   );
 }
 
-export async function getMentorAvailableSlots(mentorId, daysAhead = 10) {
-  return request(`/api/mentor/${encodeURIComponent(mentorId)}/slots?days_ahead=${daysAhead}`);
+export async function getMentorAvailableSlots(mentorId, daysAhead = 10, learnerId = null) {
+  const params = new URLSearchParams({ days_ahead: daysAhead });
+  if (learnerId) params.set('learner_id', learnerId);
+  return request(`/api/mentor/${encodeURIComponent(mentorId)}/slots?${params.toString()}`);
+}
+
+export async function markConnectionMessagesRead(connectionId) {
+  return request(`/api/mentor/messages/${encodeURIComponent(connectionId)}/read`, {
+    method: 'POST',
+  });
 }
 
 export async function bookMentorshipSession(payload) {
@@ -414,6 +440,65 @@ export async function takeAdminModerationAction(action, itemId, itemType) {
   return request('/api/admin/moderation/action', {
     method: 'POST',
     body: JSON.stringify({ action, item_id: itemId, item_type: itemType }),
+  });
+}
+
+export async function getAdminIngestionOverview() {
+  return request('/api/admin/ingestion/overview');
+}
+
+export async function getAdminIngestionLessons(limit = 50) {
+  return request(`/api/admin/ingestion/lessons?limit=${limit}`);
+}
+
+export async function triggerAdminIngestion(careerTitle, skillName, skillId = null, category = 'Core') {
+  return request('/api/admin/ingestion/trigger', {
+    method: 'POST',
+    body: JSON.stringify({
+      career_title: careerTitle,
+      skill_name: skillName,
+      skill_id: skillId,
+      category,
+    }),
+  });
+}
+
+export async function getAdminIngestionPriorities() {
+  return request('/api/admin/ingestion/priorities');
+}
+
+export async function runAdminNightlyBatch(maxSkills = 5, targetLessonsPerSkill = 3, forceAll = false) {
+  return request('/api/admin/ingestion/run-nightly-batch', {
+    method: 'POST',
+    body: JSON.stringify({
+      max_skills: maxSkills,
+      target_lessons_per_skill: targetLessonsPerSkill,
+      force_all: forceAll,
+    }),
+  });
+}
+
+export async function runAdminDailyDropBatch() {
+  return request('/api/admin/daily-drop/run-batch-worker', {
+    method: 'POST',
+  });
+}
+
+export async function getAdminIngestionBatches() {
+  return request('/api/admin/ingestion/batches');
+}
+
+export async function updateAdminBatchStatus(batchId, status) {
+  return request(`/api/admin/ingestion/batches/${batchId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function editAdminIngestionLesson(lessonId, payload) {
+  return request(`/api/admin/ingestion/lessons/${lessonId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
   });
 }
 

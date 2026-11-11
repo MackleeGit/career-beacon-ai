@@ -1,0 +1,22 @@
+[
+  {
+    "id": "flag-978ab80f",
+    "item_type": "pulse_post",
+    "sender_name": "User (20bba44c...)",
+    "target_context": "Mentor Pulse Feed",
+    "content_snippet": "Why Composite B-Tree Indexes Fail Silently in High-Write PostgreSQL Workloads",
+    "reason": "Flagged by learner for moderator review",
+    "created_at": "2026-11-10T22:02:16.013949+00:00",
+    "status": "pending_review"
+  },
+  {
+    "id": "flag-sample-1",
+    "item_type": "message",
+    "sender_name": "Anonymous User",
+    "target_context": "Direct Message to Mentor",
+    "content_snippet": "Spam promotional link: http://buycrypto-token-fast.biz",
+    "reason": "Suspected spam / external link solicitation",
+    "created_at": "2026-11-01T08:15:00Z",
+    "status": "pending_review"
+  }
+]

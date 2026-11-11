@@ -33,3 +33,4 @@ if rec_target in rec_code and "/library/completed" not in rec_code:
     with open("backend/app/routers/recommendations.py", "w", encoding="utf-8") as f:
         f.write(rec_code)
     print("backend/app/routers/recommendations.py updated with /library/completed route")
+

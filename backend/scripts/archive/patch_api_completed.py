@@ -15,3 +15,4 @@ if target in code and "getCompletedLibrary" not in code:
     print("frontend/src/lib/api.js updated with getCompletedLibrary")
 else:
     print("target not found or already patched")
+

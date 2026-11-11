@@ -37,6 +37,7 @@ import {
   X,
   LogOut,
   Check,
+  CheckCircle2,
   Award,
   Clock,
   Video,
@@ -204,14 +205,44 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
 
   useEffect(() => {
     loadWorkspace();
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const [connRes, sessRes] = await Promise.all([
+          getMentorshipConnections('mentor'),
+          getMentorshipSessions('mentor'),
+        ]);
+        if (isMounted) {
+          setConnections(connRes.connections || []);
+          setSessions(sessRes.sessions || []);
+        }
+      } catch {}
+    }, 8000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
     if (!selectedConnId) return;
-    getConnectionMessages(selectedConnId)
-      .then((res) => setMessages(res.messages || []))
-      .catch((err) => console.error('Failed to load messages:', err));
+    let isMounted = true;
+    const fetchMsgs = () => {
+      getConnectionMessages(selectedConnId)
+        .then((res) => {
+          if (isMounted) setMessages(res.messages || []);
+        })
+        .catch(() => {});
+    };
+    fetchMsgs();
+    const interval = setInterval(fetchMsgs, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [selectedConnId]);
+
+  const activeConnection = connections.find((c) => c.id === selectedConnId);
 
   const handleRespondConnection = async (connectionId, action) => {
     try {
@@ -225,6 +256,17 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
     } catch (err) {
       setToastMessage(err.message || 'Failed to update connection.');
     }
+  };
+
+  const formatMsgTime = (isoString) => {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (isToday) return timeStr;
+    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${timeStr}`;
   };
 
   const handleSendMessage = async (e) => {
@@ -595,8 +637,11 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
               role="mentor"
               sessions={sessions}
               connections={connections}
-              onNavigate={(tab) => {
+              activeTab={activeTab}
+              activeConnectionId={selectedConnId}
+              onNavigate={(tab, subTab, connId) => {
                 setActiveTab(tab);
+                if (connId) setSelectedConnId(connId);
                 if (mobileMenuOpen) setMobileMenuOpen(false);
               }}
               onNotifyToast={setToastMessage}
@@ -1341,6 +1386,32 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
                       </div>
                     ) : (
                       <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border-subtle)', flexWrap: 'wrap', gap: '8px' }}>
+                          <div>
+                            <span style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
+                              {activeConnection?.learner_snapshot?.learner_name || 'Mentee'}
+                            </span>
+                            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                              · {activeConnection?.learner_snapshot?.target_career || 'Career Track'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn--secondary btn--xs"
+                            onClick={() => {
+                              if (activeConnection?.learner_id) {
+                                setBookingMenteeId(activeConnection.learner_id);
+                              }
+                              setActiveTab('calendar');
+                              setCalendarSubTab('schedule');
+                            }}
+                            style={{ gap: '5px' }}
+                          >
+                            <Calendar size={12} />
+                            <span>Schedule 1:1 Session</span>
+                          </button>
+                        </div>
+
                         <div style={{ maxHeight: '310px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '6px' }}>
                           {messages.length === 0 ? (
                             <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem', margin: 'auto', padding: '24px 0' }}>
@@ -1362,19 +1433,24 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
                                     borderColor: isMe ? 'var(--accent-border)' : 'var(--border)',
                                   }}
                                 >
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '2px' }}>
-                                    <span>{isMe ? 'You (Mentor)' : 'Mentee'}</span>
-                                    {!isMe && (
-                                      <button
-                                        type="button"
-                                        className="btn btn--ghost btn--xs"
-                                        onClick={() => handleReportContent('message', m.id, m.text, 'Mentor Direct Message')}
-                                        title="Report message to admin"
-                                        style={{ padding: '0 3px', color: 'var(--text-muted)' }}
-                                      >
-                                        <Flag size={10} />
-                                      </button>
-                                    )}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '3px' }}>
+                                    <span style={{ fontWeight: 600 }}>{isMe ? 'You (Mentor)' : 'Mentee'}</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span style={{ fontSize: '0.67rem' }}>
+                                        {formatMsgTime(m.created_at)}
+                                      </span>
+                                      {!isMe && (
+                                        <button
+                                          type="button"
+                                          className="btn btn--ghost btn--xs"
+                                          onClick={() => handleReportContent('message', m.id, m.text, 'Mentor Direct Message')}
+                                          title="Report message to admin"
+                                          style={{ padding: '0 3px', color: 'var(--text-muted)' }}
+                                        >
+                                          <Flag size={10} />
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                   <div style={{ fontSize: '0.85rem', lineHeight: 1.48, color: 'var(--text-primary)' }}>{m.text}</div>
                                 </div>

@@ -14,6 +14,9 @@ export default function NotificationBell({
   role = 'learner', // 'learner' | 'mentor'
   sessions = [],
   connections = [],
+  activeTab = null,
+  activeSubTab = null,
+  activeConnectionId = null,
   onNavigate,
   onNotifyToast,
 }) {
@@ -29,6 +32,8 @@ export default function NotificationBell({
 
   const dropdownRef = useRef(null);
   const alertedUpcomingRef = useRef(new Set());
+  const seenMessageIdsRef = useRef(new Set());
+  const isInitialMountRef = useRef(true);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -70,10 +75,12 @@ export default function NotificationBell({
     const list = [];
     const now = new Date();
 
-    // 1. Session Notifications
-    sessions.forEach((sess) => {
-      if (sess.status === 'cancelled' || sess.status === 'completed') return;
+    // 1. Session Notifications (Ranked strictly by proximity in time)
+    const upcomingSessions = [...sessions]
+      .filter((s) => s.status !== 'cancelled' && s.status !== 'completed')
+      .sort((a, b) => new Date(a.slot_start_iso) - new Date(b.slot_start_iso));
 
+    upcomingSessions.forEach((sess) => {
       const startTime = new Date(sess.slot_start_iso);
       const diffMs = startTime - now;
       const diffHours = diffMs / (1000 * 60 * 60);
@@ -128,14 +135,66 @@ export default function NotificationBell({
           title: 'Connection Accepted',
           body: `${mentorName} accepted your connection request. Direct messaging & 1:1 scheduling are now active.`,
           tab: 'mentorship',
+          subTab: 'sessions',
+          connectionId: conn.id,
           timestamp: conn.updated_at || conn.created_at,
         });
       }
     });
 
+    // 3. Direct Message Notifications (when not on that particular DM page)
+    connections.forEach((conn) => {
+      const unreadMsgs = conn.unread_messages || [];
+      if (unreadMsgs.length === 0) return;
+
+      // Check if user is currently viewing this exact DM thread
+      const isViewingThisChat =
+        role === 'learner'
+          ? activeTab === 'mentorship' && activeSubTab === 'sessions' && activeConnectionId === conn.id
+          : activeTab === 'messages' && activeConnectionId === conn.id;
+
+      if (isViewingThisChat) return;
+
+      const otherPartyName =
+        role === 'learner'
+          ? conn.mentor?.full_name || 'Mentor'
+          : conn.learner_snapshot?.learner_name || 'Mentee';
+
+      const latestUnread = unreadMsgs[unreadMsgs.length - 1];
+      const countLabel = unreadMsgs.length > 1 ? ` (${unreadMsgs.length} new)` : '';
+
+      list.push({
+        id: `msg-${latestUnread.id}`,
+        type: 'message',
+        priority: 'high',
+        title: `Direct Message from ${otherPartyName}${countLabel}`,
+        body: `"${latestUnread.text.length > 100 ? latestUnread.text.slice(0, 100) + '...' : latestUnread.text}"`,
+        tab: role === 'learner' ? 'mentorship' : 'messages',
+        subTab: role === 'learner' ? 'sessions' : null,
+        connectionId: conn.id,
+        timestamp: latestUnread.created_at,
+      });
+    });
+
     // Filter out dismissed notifications
-    return list.filter((n) => !dismissedIds.includes(n.id));
-  }, [sessions, connections, role, dismissedIds]);
+    const filtered = list.filter((n) => !dismissedIds.includes(n.id));
+
+    // Check for new incoming message notifications to fire a toast
+    filtered.forEach((n) => {
+      if (n.type === 'message' && !seenMessageIdsRef.current.has(n.id)) {
+        seenMessageIdsRef.current.add(n.id);
+        if (!isInitialMountRef.current && onNotifyToast) {
+          onNotifyToast(`${n.title}: ${n.body}`);
+        }
+      }
+    });
+
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+    }
+
+    return filtered;
+  }, [sessions, connections, role, activeTab, activeSubTab, activeConnectionId, dismissedIds, onNotifyToast]);
 
   // Periodic alert: every 60s check if a session is starting within 30 minutes
   useEffect(() => {
@@ -294,6 +353,8 @@ export default function NotificationBell({
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           {notif.type === 'session' ? (
                             <Calendar size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                          ) : notif.type === 'message' ? (
+                            <MessageSquare size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                           ) : (
                             <Users size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                           )}
@@ -335,7 +396,7 @@ export default function NotificationBell({
                             type="button"
                             className="btn btn--secondary btn--xs"
                             onClick={() => {
-                              onNavigate(notif.tab);
+                              onNavigate(notif.tab, notif.subTab, notif.connectionId);
                               setIsOpen(false);
                             }}
                           >

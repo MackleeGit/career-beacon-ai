@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>System Architecture Diagram</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: #ffffff;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        .toolbar {
+            margin-bottom: 12px;
+        }
+        .btn {
+            background: #000000;
+            color: #ffffff;
+            border: 1px solid #000000;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn:hover { background: #333333; }
+        svg {
+            background: #ffffff;
+            border: 2px solid #000000;
+        }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <button class="btn" onclick="exportPNG()">Download High-Res PNG</button>
+</div>
+
+<svg id="diagram-svg" width="760" height="760" viewBox="0 0 760 760" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#000000"/>
+        </marker>
+    </defs>
+
+    <!-- Canvas Background -->
+    <rect width="760" height="760" fill="#ffffff"/>
+
+    <!-- ================= TIER 1: PRESENTATION TIER ================= -->
+    <g transform="translate(30, 20)">
+        <!-- Outer Tier Container -->
+        <rect width="700" height="140" fill="#ffffff" stroke="#000000" stroke-width="2"/>
+        <!-- Tier Header Bar (Light Gray with Black Text for 100% Guaranteed Visibility) -->
+        <rect width="700" height="32" fill="#e5e5e5" stroke="#000000" stroke-width="1.5"/>
+        <text x="350" y="22" font-size="15" font-weight="bold" fill="#000000" text-anchor="middle">TIER 1: PRESENTATION LAYER (React 18 Single-Page Application)</text>
+
+        <!-- Subcomponent 1 -->
+        <rect x="18" y="44" width="205" height="82" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="120" y="68" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">Learner Onboarding</text>
+        <text x="120" y="90" font-size="12" fill="#000000" text-anchor="middle">Natural Career Query</text>
+        <text x="120" y="110" font-size="12" fill="#000000" text-anchor="middle">Baseline Sliders (20/50/80%)</text>
+
+        <!-- Subcomponent 2 -->
+        <rect x="245" y="44" width="210" height="82" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="350" y="68" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">Skill Graph Dashboard</text>
+        <text x="350" y="90" font-size="12" fill="#000000" text-anchor="middle">Visual Readiness Wheel</text>
+        <text x="350" y="110" font-size="12" fill="#000000" text-anchor="middle">Target Skill Gap Breakdown</text>
+
+        <!-- Subcomponent 3 -->
+        <rect x="477" y="44" width="205" height="82" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="579" y="68" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">Micro-Learning &amp; Mentors</text>
+        <text x="579" y="90" font-size="12" fill="#000000" text-anchor="middle">3-Bullet Lessons &amp; 5-MCQs</text>
+        <text x="579" y="110" font-size="12" fill="#000000" text-anchor="middle">Contextual "Ask MENTOR"</text>
+    </g>
+
+    <!-- Connector Tier 1 to Tier 2 -->
+    <line x1="380" y1="160" x2="380" y2="200" stroke="#000000" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="395" y="184" font-size="12" font-weight="bold" fill="#000000">HTTPS / JSON REST API</text>
+
+
+    <!-- ================= TIER 2: API & ROUTING TIER ================= -->
+    <g transform="translate(30, 200)">
+        <rect width="700" height="125" fill="#ffffff" stroke="#000000" stroke-width="2"/>
+        <rect width="700" height="32" fill="#e5e5e5" stroke="#000000" stroke-width="1.5"/>
+        <text x="350" y="22" font-size="15" font-weight="bold" fill="#000000" text-anchor="middle">TIER 2: API &amp; ROUTING LAYER (Python FastAPI ASGI Gateway)</text>
+
+        <!-- Router 1 -->
+        <rect x="18" y="44" width="205" height="68" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="120" y="68" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">/api/v1/career</text>
+        <text x="120" y="88" font-size="12" fill="#000000" text-anchor="middle">/search-and-match</text>
+        <text x="120" y="103" font-size="11" fill="#000000" text-anchor="middle">/complete-onboarding</text>
+
+        <!-- Router 2 -->
+        <rect x="245" y="44" width="210" height="68" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="350" y="68" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">/api/v1/recommendations</text>
+        <text x="350" y="88" font-size="12" fill="#000000" text-anchor="middle">/feed (Two-Stage Ranking)</text>
+        <text x="350" y="103" font-size="11" fill="#000000" text-anchor="middle">/submit-quiz (Atomic XP)</text>
+
+        <!-- Router 3 -->
+        <rect x="477" y="44" width="205" height="68" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="579" y="68" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">/api/v1/mentors</text>
+        <text x="579" y="88" font-size="12" fill="#000000" text-anchor="middle">/marketplace &amp; /book</text>
+        <text x="579" y="103" font-size="11" fill="#000000" text-anchor="middle">/semantic-search (Q&amp;A)</text>
+    </g>
+
+    <!-- Connector Tier 2 to Tier 3 -->
+    <line x1="380" y1="325" x2="380" y2="365" stroke="#000000" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="395" y="349" font-size="12" font-weight="bold" fill="#000000">Internal Engine Calls</text>
+
+
+    <!-- ================= TIER 3: INTELLIGENCE & RECOMMENDATION CORE ================= -->
+    <g transform="translate(30, 365)">
+        <rect width="700" height="175" fill="#ffffff" stroke="#000000" stroke-width="2"/>
+        <rect width="700" height="32" fill="#e5e5e5" stroke="#000000" stroke-width="1.5"/>
+        <text x="350" y="22" font-size="15" font-weight="bold" fill="#000000" text-anchor="middle">TIER 3: CORE INTELLIGENCE (Dual Semantic Recommendation Engine)</text>
+
+        <!-- Component 1 -->
+        <rect x="18" y="44" width="205" height="118" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="120" y="66" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">Dense Vector Embeddings</text>
+        <text x="120" y="84" font-size="12" font-weight="bold" fill="#000000" text-anchor="middle">all-MiniLM-L6-v2</text>
+        <text x="120" y="103" font-size="11.5" fill="#000000" text-anchor="middle">• 384-dimensional vectors</text>
+        <text x="120" y="120" font-size="11.5" fill="#000000" text-anchor="middle">• Local PyTorch CPU</text>
+        <text x="120" y="137" font-size="11.5" fill="#000000" text-anchor="middle">• ~8ms inference latency</text>
+        <text x="120" y="153" font-size="11.5" fill="#000000" text-anchor="middle">• Zero external API costs</text>
+
+        <!-- Component 2 -->
+        <rect x="245" y="44" width="210" height="118" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="350" y="66" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">Two-Stage Re-ranking</text>
+        <text x="350" y="84" font-size="12" font-weight="bold" fill="#000000" text-anchor="middle">Stage 1: pgvector Recall</text>
+        <text x="350" y="100" font-size="11" fill="#000000" text-anchor="middle">Cosine nearest (top 30)</text>
+        <text x="350" y="119" font-size="12" font-weight="bold" fill="#000000" text-anchor="middle">Stage 2: Composite Rank</text>
+        <text x="350" y="136" font-size="11" fill="#000000" text-anchor="middle">Gap(0.45)+Sim(0.35)+Diff(0.20)</text>
+        <text x="350" y="152" font-size="11" fill="#000000" text-anchor="middle">Diversity penalty -> top 5 feed</text>
+
+        <!-- Component 3 -->
+        <rect x="477" y="44" width="205" height="118" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="579" y="66" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">Generative LLM Fallback</text>
+        <text x="579" y="84" font-size="12" font-weight="bold" fill="#000000" text-anchor="middle">Primary: Groq Cloud</text>
+        <text x="579" y="100" font-size="11" fill="#000000" text-anchor="middle">Llama-3.3-70b (&lt;700ms)</text>
+        <text x="579" y="119" font-size="12" font-weight="bold" fill="#000000" text-anchor="middle">Failover: Google Gemini</text>
+        <text x="579" y="136" font-size="11" fill="#000000" text-anchor="middle">Gemini 1.5 Flash</text>
+        <text x="579" y="152" font-size="11" fill="#000000" text-anchor="middle">Taxonomy synthesis &amp; MCQs</text>
+    </g>
+
+    <!-- Connector Tier 3 to Tier 4 -->
+    <line x1="380" y1="540" x2="380" y2="580" stroke="#000000" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="395" y="564" font-size="12" font-weight="bold" fill="#000000">PostgREST / SQL RPC Calls</text>
+
+
+    <!-- ================= TIER 4: PERSISTENCE & DATA TIER ================= -->
+    <g transform="translate(30, 580)">
+        <rect width="700" height="155" fill="#ffffff" stroke="#000000" stroke-width="2"/>
+        <rect width="700" height="32" fill="#e5e5e5" stroke="#000000" stroke-width="1.5"/>
+        <text x="350" y="22" font-size="15" font-weight="bold" fill="#000000" text-anchor="middle">TIER 4: DATA PERSISTENCE LAYER (Supabase Managed PostgreSQL 15)</text>
+
+        <!-- Block 1 -->
+        <rect x="18" y="44" width="155" height="96" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="95" y="66" font-size="13" font-weight="bold" fill="#000000" text-anchor="middle">Relational Core</text>
+        <text x="95" y="86" font-size="11.5" fill="#000000" text-anchor="middle">profiles</text>
+        <text x="95" y="102" font-size="11.5" fill="#000000" text-anchor="middle">careers &amp; skills</text>
+        <text x="95" y="118" font-size="11.5" fill="#000000" text-anchor="middle">career_skills</text>
+        <text x="95" y="132" font-size="11" fill="#000000" text-anchor="middle">user_skills</text>
+
+        <!-- Block 2 -->
+        <rect x="190" y="44" width="160" height="96" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="270" y="66" font-size="13" font-weight="bold" fill="#000000" text-anchor="middle">pgvector Store</text>
+        <text x="270" y="86" font-size="11.5" fill="#000000" text-anchor="middle">micro_content</text>
+        <text x="270" y="102" font-size="11" fill="#000000" text-anchor="middle">(embedding 384-dim)</text>
+        <text x="270" y="118" font-size="11.5" fill="#000000" text-anchor="middle">career_vector</text>
+        <text x="270" y="132" font-size="10.5" fill="#000000" text-anchor="middle">HNSW Cosine Index</text>
+
+        <!-- Block 3 -->
+        <rect x="367" y="44" width="155" height="96" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="444" y="66" font-size="13" font-weight="bold" fill="#000000" text-anchor="middle">Mentorship</text>
+        <text x="444" y="86" font-size="11.5" fill="#000000" text-anchor="middle">mentors</text>
+        <text x="444" y="102" font-size="11.5" fill="#000000" text-anchor="middle">mentor_qa</text>
+        <text x="444" y="118" font-size="11" fill="#000000" text-anchor="middle">(embedding 384-dim)</text>
+        <text x="444" y="132" font-size="11" fill="#000000" text-anchor="middle">bookings</text>
+
+        <!-- Block 4 -->
+        <rect x="539" y="44" width="143" height="96" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>
+        <text x="610" y="66" font-size="13" font-weight="bold" fill="#000000" text-anchor="middle">Security &amp; RPC</text>
+        <text x="610" y="86" font-size="11.5" fill="#000000" text-anchor="middle">GoTrue Auth (JWT)</text>
+        <text x="610" y="102" font-size="11" fill="#000000" text-anchor="middle">Row Level Security</text>
+        <text x="610" y="118" font-size="11.5" fill="#000000" text-anchor="middle">match_careers()</text>
+        <text x="610" y="132" font-size="11" fill="#000000" text-anchor="middle">match_micro_content()</text>
+    </g>
+
+</svg>
+
+<script>
+function exportPNG() {
+    const svg = document.getElementById('diagram-svg');
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const scale = 2;
+    canvas.width = svg.getAttribute('width') * scale;
+    canvas.height = svg.getAttribute('height') * scale;
+    const ctx = canvas.getContext('2d');
+    
+    const img = new Image();
+    const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(svgBlob);
+    
+    img.onload = function() {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        
+        const a = document.createElement('a');
+        a.download = 'System_Architecture_Diagram.png';
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+    };
+    img.src = url;
+}
+</script>
+
+</body>
+</html>

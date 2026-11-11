@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>System Wireframes - Dual Semantic Recommendation Framework</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Courier New', Courier, monospace; }
+        body { background-color: #eef0f2; padding: 40px; color: #333; }
+        .wireframe-container { margin-bottom: 60px; }
+        .figure-title { font-weight: bold; font-size: 16px; margin-bottom: 12px; font-family: sans-serif; }
+        .screen-browser { border: 2px solid #555; background: #fff; max-width: 900px; border-radius: 6px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .browser-header { background: #e0e0e0; padding: 10px 15px; border-bottom: 2px solid #555; display: flex; align-items: center; gap: 8px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; background: #aaa; border: 1px solid #777; }
+        .url-bar { background: #fff; padding: 4px 12px; border: 1px solid #aaa; flex-grow: 1; margin-left: 10px; font-size: 12px; color: #666; }
+        
+        .app-header { border-bottom: 2px solid #ccc; padding: 15px; display: flex; justify-content: space-between; align-items: center; background: #fafafa; }
+        .app-body { padding: 25px; }
+        .box { border: 2px dashed #888; background: #f9f9f9; padding: 15px; margin-bottom: 15px; border-radius: 4px; }
+        .btn { border: 2px solid #333; background: #e0e0e0; padding: 8px 16px; font-weight: bold; cursor: pointer; display: inline-block; text-align: center; }
+        .input-field { border: 1px solid #666; padding: 8px; width: 100%; background: #fff; margin-top: 5px; margin-bottom: 15px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+        .progress-bar { height: 16px; background: #e0e0e0; border: 1px solid #666; width: 100%; margin-top: 5px; position: relative; }
+        .progress-fill { height: 100%; background: #888; }
+        .badge { border: 1px solid #333; background: #eee; padding: 2px 6px; font-size: 11px; margin-right: 5px; }
+    </style>
+</head>
+<body>
+
+    <!-- Figure 4.7: Authentication & Onboarding -->
+    <div class="wireframe-container">
+        <div class="figure-title">Figure 4.7: Authentication and Career Onboarding Wireframe</div>
+        <div class="screen-browser">
+            <div class="browser-header">
+                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                <div class="url-bar">https://careermentor.app/auth</div>
+            </div>
+            <div class="app-header">
+                <strong>[LOGO] Career Mentor</strong>
+                <span>Home | Help</span>
+            </div>
+            <div class="app-body">
+                <div style="max-width: 450px; margin: 0 auto;" class="box">
+                    <h3 style="margin-top:0;">Account Registration & Onboarding</h3>
+                    <label>Full Name</label>
+                    <input type="text" class="input-field" value="Gitonga Nderitu" disabled>
+                    
+                    <label>Email Address</label>
+                    <input type="text" class="input-field" value="student@strathmore.edu" disabled>
+                    
+                    <label>Target Career Track</label>
+                    <input type="text" class="input-field" value="AI Engineer" disabled>
+                    <small style="display:block; margin-top:-10px; margin-bottom:15px; color:#666;">*Triggers Gemini API if custom role is entered</small>
+
+                    <div class="btn" style="width:100%;">Create Account & Generate Profile</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Figure 4.8: Learner Profile Dashboard -->
+    <div class="wireframe-container">
+        <div class="figure-title">Figure 4.8: Learner Profile Dashboard Wireframe</div>
+        <div class="screen-browser">
+            <div class="browser-header">
+                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                <div class="url-bar">https://careermentor.app/dashboard</div>
+            </div>
+            <div class="app-header">
+                <strong>[LOGO] Career Mentor</strong>
+                <span>Dashboard | Micro-Learning | Mentors | Quizzes | [Profile]</span>
+            </div>
+            <div class="app-body">
+                <div class="box">
+                    <h3 style="margin:0;">Target Career: AI Engineer</h3>
+                    <p style="margin:5px 0 0 0;">Overall Career Readiness: 48%</p>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 48%;"></div></div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="box">
+                        <h4>Shared Skill Profile (Weighted Proficiencies)</h4>
+                        <div style="margin-bottom:10px;">
+                            <span>Python (80%)</span>
+                            <div class="progress-bar"><div class="progress-fill" style="width: 80%;"></div></div>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <span>Machine Learning Theory (40%)</span> <span class="badge">[GAP]</span>
+                            <div class="progress-bar"><div class="progress-fill" style="width: 40%;"></div></div>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <span>MLOps & Deployment (25%)</span> <span class="badge">[GAP]</span>
+                            <div class="progress-bar"><div class="progress-fill" style="width: 25%;"></div></div>
+                        </div>
+                    </div>
+
+                    <div class="box" style="display:flex; flex-direction:column; justify-content:center; gap:15px;">
+                        <h4>Recommended Next Actions</h4>
+                        <div class="btn">View Micro-Learning Feed (3 New)</div>
+                        <div class="btn">Take Adaptive Skill Quiz</div>
+                        <div class="btn">Browse Matched Mentors</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Figure 4.9: Rolling Micro-Learning Recommendation Feed -->
+    <div class="wireframe-container">
+        <div class="figure-title">Figure 4.9: Rolling Micro-Learning Feed Wireframe</div>
+        <div class="screen-browser">
+            <div class="browser-header">
+                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                <div class="url-bar">https://careermentor.app/recommendations</div>
+            </div>
+            <div class="app-header">
+                <strong>[LOGO] Career Mentor</strong>
+                <span>Dashboard | <strong>Micro-Learning</strong> | Mentors | Quizzes</span>
+            </div>
+            <div class="app-body">
+                <h3>Personalized Learning Feed</h3>
+                <p>Content dynamically fetched via pgvector Cosine Search matching your skill gaps.</p>
+                
+                <!-- Content Card 1 -->
+                <div class="box grid-2" style="grid-template-columns: 120px 1fr; align-items:center;">
+                    <div style="height:80px; background:#ccc; border:1px solid #888; display:flex; align-items:center; justify-content:center;">[THUMBNAIL]</div>
+                    <div>
+                        <span class="badge">YouTube</span> <span class="badge">Target: MLOps Gap</span>
+                        <h4 style="margin:5px 0;">Introduction to Docker for Machine Learning Models</h4>
+                        <p style="margin:0 0 10px 0; font-size:12px;">Duration: 8 mins | Rating: 4.8</p>
+                        <div class="btn">Watch Content</div>
+                        <div class="btn">Mark Completed</div>
+                    </div>
+                </div>
+
+                <!-- Content Card 2 -->
+                <div class="box grid-2" style="grid-template-columns: 120px 1fr; align-items:center;">
+                    <div style="height:80px; background:#ccc; border:1px solid #888; display:flex; align-items:center; justify-content:center;">[ARTICLE]</div>
+                    <div>
+                        <span class="badge">Dev.to</span> <span class="badge">Target: ML Theory Gap</span>
+                        <h4 style="margin:5px 0;">Understanding Bias-Variance Tradeoff Visually</h4>
+                        <p style="margin:0 0 10px 0; font-size:12px;">Read Time: 5 mins | Rating: 4.6</p>
+                        <div class="btn">Read Article</div>
+                        <div class="btn">Mark Completed</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Figure 4.10: Semantic Mentor Matching Screen -->
+    <div class="wireframe-container">
+        <div class="figure-title">Figure 4.10: Semantic Mentor Matching Wireframe</div>
+        <div class="screen-browser">
+            <div class="browser-header">
+                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                <div class="url-bar">https://careermentor.app/mentors</div>
+            </div>
+            <div class="app-header">
+                <strong>[LOGO] Career Mentor</strong>
+                <span>Dashboard | Micro-Learning | <strong>Mentors</strong> | Quizzes</span>
+            </div>
+            <div class="app-body">
+                <h3>Matched Mentors</h3>
+                <p>Ranked using vector similarity between your career goals and mentor bios.</p>
+
+                <div class="grid-2">
+                    <!-- Mentor 1 -->
+                    <div class="box">
+                        <div style="display:flex; gap:15px; margin-bottom:10px;">
+                            <div style="width:60px; height:60px; background:#ccc; border:1px solid #888; text-align:center; line-height:60px;">[PHOTO]</div>
+                            <div>
+                                <h4 style="margin:0;">Dr. Alex Karani</h4>
+                                <small>Senior AI Architect @ TechCorp</small><br>
+                                <span class="badge" style="margin-top:5px; display:inline-block;">Vector Match: 94%</span>
+                            </div>
+                        </div>
+                        <p style="font-size:12px;">Specializes in bridging ML Theory gaps and production pipeline design.</p>
+                        <div class="btn" style="width:100%;">Book Session (Google Meet)</div>
+                    </div>
+
+                    <!-- Mentor 2 -->
+                    <div class="box">
+                        <div style="display:flex; gap:15px; margin-bottom:10px;">
+                            <div style="width:60px; height:60px; background:#ccc; border:1px solid #888; text-align:center; line-height:60px;">[PHOTO]</div>
+                            <div>
+                                <h4 style="margin:0;">Jane Wambui</h4>
+                                <small>MLOps Engineer @ CloudData</small><br>
+                                <span class="badge" style="margin-top:5px; display:inline-block;">Vector Match: 88%</span>
+                            </div>
+                        </div>
+                        <p style="font-size:12px;">Expert in CI/CD pipelines for ML models and containerization.</p>
+                        <div class="btn" style="width:100%;">Book Session (Google Meet)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Figure 4.11: Adaptive Assessment / Exam Page -->
+    <div class="wireframe-container">
+        <div class="figure-title">Figure 4.11: Adaptive Assessment (Quiz) Wireframe</div>
+        <div class="screen-browser">
+            <div class="browser-header">
+                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                <div class="url-bar">https://careermentor.app/quiz/active</div>
+            </div>
+            <div class="app-header">
+                <strong>[LOGO] Career Mentor</strong>
+                <span>Assessment Mode | Target Gap: MLOps & Deployment</span>
+            </div>
+            <div class="app-body">
+                <div class="box">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h4>Adaptive Skill Quiz</h4>
+                        <span>Question 2 of 5</span>
+                    </div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 40%;"></div></div>
+                    
+                    <p style="margin-top:20px; font-weight:bold;">
+                        Scenario (Generated by Gemini API): You are deploying a PyTorch model to production and need to ensure isolated environments. Which tool best isolates model dependencies?
+                    </p>
+
+                    <div style="margin:15px 0;">
+                        <input type="radio" name="q1"> (A) Docker Containers<br><br>
+                        <input type="radio" name="q1"> (B) Raw Python Virtualenv<br><br>
+                        <input type="radio" name="q1"> (C) Git Repositories<br><br>
+                        <input type="radio" name="q1"> (D) PostgreSQL Database
+                    </div>
+
+                    <div style="display:flex; justify-content:space-between; margin-top:20px;">
+                        <div class="btn">Previous</div>
+                        <div class="btn">Submit & Next Question</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

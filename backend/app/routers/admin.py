@@ -10,6 +10,8 @@ Provides clean operational endpoints for the Career Beacon Admin Command Center:
 """
 
 from typing import List, Optional, Dict, Any
+import os
+import json
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
@@ -17,9 +19,12 @@ from pydantic import BaseModel, Field
 
 from app.core.database import supabase_client
 from app.services.mentorship_service import mentorship_service
+from app.services.embedding_service import EmbeddingService
+from app.services.ingestion_batch_service import ingestion_batch_service
 from app.middleware.auth_middleware import get_verified_user_id
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+embedding_service = EmbeddingService()
 
 
 class CareerReviewActionPayload(BaseModel):
@@ -56,11 +61,16 @@ def require_admin_role(http_req: Request) -> str:
             email = (res.data[0].get("email") or "").lower()
             if role == "admin" or email.startswith("admin@") or "admin" in email:
                 return user_id
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[admin-auth] Error checking admin role: {e}")
+        raise HTTPException(status_code=500, detail="Failed to verify administrative authorization.")
 
-    # Allow development / demo admin fallback
-    return user_id
+    raise HTTPException(
+        status_code=403,
+        detail="Forbidden: Administrative privileges required to access this resource.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +181,58 @@ async def review_career(career_id: str, payload: CareerReviewActionPayload, http
             update_data: Dict[str, Any] = {"review_status": "reviewed", "is_curated": True}
             if payload.custom_title and payload.custom_title.strip():
                 update_data["title"] = payload.custom_title.strip()
-            supabase_client.table("careers").update(update_data).eq("id", career_id).execute()
-            return {"status": "approved", "career_id": career_id, "message": "Career approved and verified in taxonomy."}
+
+            # Compute dual semantic vectors (title_vector, skills_vector, career_vector) upon approval
+            # so approved AI/provisional careers immediately participate in Stage 1 pgvector recall.
+            try:
+                c_res = supabase_client.table("careers").select("title, description").eq("id", career_id).limit(1).execute()
+                c_row = (c_res.data or [{}])[0]
+                final_title = update_data.get("title") or c_row.get("title") or "Professional Career"
+                final_desc = c_row.get("description") or ""
+
+                cs_res = (
+                    supabase_client.table("career_skills")
+                    .select("skills(name)")
+                    .eq("career_id", career_id)
+                    .execute()
+                )
+                skill_names = [
+                    r["skills"]["name"]
+                    for r in (cs_res.data or [])
+                    if r.get("skills") and r["skills"].get("name")
+                ]
+                if payload.custom_skills:
+                    skill_names = [s.strip() for s in payload.custom_skills if s and s.strip()] or skill_names
+
+                title_text = f"{final_title}. {final_desc}".strip()
+                skills_text = (
+                    f"Occupation: {final_title}. Core Competencies: {', '.join(skill_names)}."
+                    if skill_names else title_text
+                )
+                vecs = await embedding_service.get_embeddings_batch([title_text, skills_text])
+                if len(vecs) == 2 and vecs[0] and vecs[1]:
+                    update_data["career_vector"] = vecs[0]
+                    update_data["title_vector"] = vecs[0]
+                    update_data["skills_vector"] = vecs[1]
+            except Exception as vec_err:
+                print(f"[admin-review-career] Vector computation warning: {vec_err}")
+
+            try:
+                supabase_client.table("careers").update(update_data).eq("id", career_id).execute()
+            except Exception:
+                # Fallback if dual vector columns (title_vector/skills_vector) are not yet migrated
+                fallback_data = {
+                    k: v for k, v in update_data.items()
+                    if k not in ("title_vector", "skills_vector")
+                }
+                supabase_client.table("careers").update(fallback_data).eq("id", career_id).execute()
+
+            try:
+                supabase_client.table("career_skills").update({"review_status": "reviewed"}).eq("career_id", career_id).execute()
+            except Exception:
+                pass
+
+            return {"status": "approved", "career_id": career_id, "message": "Career approved, embedded, and verified in taxonomy."}
         else:
             # Reject: mark rejected
             supabase_client.table("careers").update({"review_status": "rejected"}).eq("id", career_id).execute()
@@ -232,39 +292,69 @@ async def toggle_mentor_verification(mentor_id: str, payload: MentorVerifyPayloa
 
 
 # ---------------------------------------------------------------------------
-# 4. Moderation & Flagged Content
+# 4. Moderation & Flagged Content (Durable File-Backed Store)
 # ---------------------------------------------------------------------------
-# In-memory store for demo / audit flagged items
-_FLAGGED_ITEMS: List[Dict[str, Any]] = [
-    {
-        "id": "flag-sample-1",
-        "item_type": "message",
-        "sender_name": "Anonymous User",
-        "target_context": "Direct Message to Mentor",
-        "content_snippet": "Spam promotional link: http://buycrypto-token-fast.biz",
-        "reason": "Suspected spam / external link solicitation",
-        "created_at": "2026-11-01T08:15:00Z",
-        "status": "pending_review",
-    }
-]
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+FLAGGED_FILE = os.path.join(DATA_DIR, "flagged_items.json")
+
+def _load_flagged_items() -> List[Dict[str, Any]]:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if os.path.exists(FLAGGED_FILE):
+        try:
+            with open(FLAGGED_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[admin-moderation] Error loading flagged items: {e}")
+    initial = [
+        {
+            "id": "flag-sample-1",
+            "item_type": "message",
+            "sender_name": "Anonymous User",
+            "target_context": "Direct Message to Mentor",
+            "content_snippet": "Spam promotional link: http://buycrypto-token-fast.biz",
+            "reason": "Suspected spam / external link solicitation",
+            "created_at": "2026-11-01T08:15:00Z",
+            "status": "pending_review",
+        }
+    ]
+    _save_flagged_items(initial)
+    return initial
+
+def _save_flagged_items(items: List[Dict[str, Any]]) -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    try:
+        with open(FLAGGED_FILE, "w", encoding="utf-8") as f:
+            json.dump(items, f, indent=2)
+    except Exception as e:
+        print(f"[admin-moderation] Failed to save flagged items: {e}")
+
+def record_flagged_item(item: Dict[str, Any]) -> None:
+    items = _load_flagged_items()
+    items.insert(0, item)
+    _save_flagged_items(items)
+
+# Expose _FLAGGED_ITEMS for backward-compatibility with imports
+_FLAGGED_ITEMS = _load_flagged_items()
 
 
 @router.get("/moderation/flagged")
 async def get_flagged_content(http_req: Request):
     require_admin_role(http_req)
-    return {"flagged_items": _FLAGGED_ITEMS, "count": len(_FLAGGED_ITEMS)}
+    items = _load_flagged_items()
+    return {"flagged_items": items, "count": len(items)}
 
 
 @router.post("/moderation/action")
 async def act_on_moderation_item(payload: ModerationActionPayload, http_req: Request):
     require_admin_role(http_req)
-    global _FLAGGED_ITEMS
-    if payload.action == "dismiss":
-        _FLAGGED_ITEMS = [f for f in _FLAGGED_ITEMS if f["id"] != payload.item_id]
-        return {"status": "dismissed", "message": "Flag dismissed."}
-    elif payload.action == "delete":
-        _FLAGGED_ITEMS = [f for f in _FLAGGED_ITEMS if f["id"] != payload.item_id]
-        return {"status": "deleted", "message": "Content removed and user warned."}
+    items = _load_flagged_items()
+    if payload.action in ("dismiss", "delete"):
+        filtered = [f for f in items if f["id"] != payload.item_id]
+        _save_flagged_items(filtered)
+        global _FLAGGED_ITEMS
+        _FLAGGED_ITEMS = filtered
+        msg = "Flag dismissed." if payload.action == "dismiss" else "Content removed and user warned."
+        return {"status": payload.action, "message": msg}
     return {"status": "no_action"}
 
 
@@ -279,7 +369,6 @@ class FlagReportPayload(BaseModel):
 @router.post("/moderation/flag")
 async def flag_item_for_moderation(payload: FlagReportPayload, http_req: Request):
     user_id = get_verified_user_id(http_req)
-    global _FLAGGED_ITEMS
     new_flag = {
         "id": f"flag-{uuid.uuid4().hex[:8]}",
         "item_type": payload.item_type,
@@ -290,10 +379,306 @@ async def flag_item_for_moderation(payload: FlagReportPayload, http_req: Request
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "pending_review",
     }
-    _FLAGGED_ITEMS.insert(0, new_flag)
+    record_flagged_item(new_flag)
+    global _FLAGGED_ITEMS
+    _FLAGGED_ITEMS = _load_flagged_items()
     return {
         "status": "reported",
         "flag_id": new_flag["id"],
         "message": "Content flagged for administrator review.",
     }
+
+
+# ---------------------------------------------------------------------------
+# 5. Content Ingestion & Reservoir Governance
+# ---------------------------------------------------------------------------
+
+class IngestionTriggerPayload(BaseModel):
+    career_title: str
+    skill_name: str
+    skill_id: Optional[str] = None
+    category: Optional[str] = "Core"
+
+
+@router.get("/ingestion/overview")
+async def get_ingestion_overview(http_req: Request):
+    """Returns real-time metrics on the seeded curriculum reservoir in Supabase."""
+    require_admin_role(http_req)
+    try:
+        res = supabase_client.table("micro_content").select("id, source_adapter, associated_skill_id, content, created_at").execute()
+        rows = res.data or []
+        total_lessons = len(rows)
+
+        adapter_counts: Dict[str, int] = {}
+        skill_ids = set()
+        field_counts: Dict[str, int] = {}
+
+        for r in rows:
+            adapter = r.get("source_adapter") or "general"
+            adapter_counts[adapter] = adapter_counts.get(adapter, 0) + 1
+            if r.get("associated_skill_id"):
+                skill_ids.add(r["associated_skill_id"])
+
+            c_raw = r.get("content")
+            if isinstance(c_raw, str):
+                try:
+                    c_dict = json.loads(c_raw)
+                    f_id = c_dict.get("field_id") or "general"
+                    field_counts[f_id] = field_counts.get(f_id, 0) + 1
+                except Exception:
+                    pass
+            elif isinstance(c_raw, dict):
+                f_id = c_raw.get("field_id") or "general"
+                field_counts[f_id] = field_counts.get(f_id, 0) + 1
+
+        return {
+            "status": "success",
+            "total_lessons": total_lessons,
+            "unique_skills_seeded": len(skill_ids),
+            "adapter_breakdown": adapter_counts,
+            "field_breakdown": field_counts,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch ingestion stats: {str(e)}")
+
+
+@router.get("/ingestion/lessons")
+async def get_ingestion_lessons(http_req: Request, limit: int = 50):
+    """Returns the most recently ingested lessons from the curriculum reservoir."""
+    require_admin_role(http_req)
+    try:
+        from app.services.content_service import hydrate_micro_content_row
+        res = (
+            supabase_client.table("micro_content")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        rows = res.data or []
+        hydrated = [hydrate_micro_content_row(r) for r in rows]
+        return {
+            "status": "success",
+            "count": len(hydrated),
+            "lessons": hydrated,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch reservoir lessons: {str(e)}")
+
+
+@router.post("/ingestion/trigger")
+async def trigger_ingestion_pipeline(payload: IngestionTriggerPayload, http_req: Request):
+    """
+    On-Demand Ingestion Worker (Live Supervisor Demonstration Endpoint):
+    Polls the authoritative external adapters, applies dual semantic vector validation,
+    generates 5 grounded MCQs with server-side shuffled keys, and seeds Supabase micro_content.
+    Returns step-by-step telemetry logs.
+    """
+    require_admin_role(http_req)
+    from app.services.content_service import ContentService
+    from app.core.career_fields import classify_career_field
+
+    logs: List[str] = []
+    t_start = datetime.now(timezone.utc)
+    logs.append(f"[{t_start.strftime('%H:%M:%S')}] Ingestion Worker Initialized for Career='{payload.career_title}', Skill='{payload.skill_name}'")
+
+    field_meta = classify_career_field(payload.career_title)
+    field_id = field_meta["field_id"]
+    field_label = field_meta["label"]
+    logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Career Field Resolved: {field_label} ('{field_id}')")
+
+    svc = ContentService()
+    try:
+        # Step 1: Look up or resolve skill UUID
+        resolved_skill_id = payload.skill_id
+        if not resolved_skill_id:
+            s_res = supabase_client.table("skills").select("id").ilike("name", f"%{payload.skill_name}%").limit(1).execute()
+            if s_res.data:
+                resolved_skill_id = s_res.data[0]["id"]
+                logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Matched Canonical Skill UUID: {resolved_skill_id}")
+
+        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Polling Authoritative Adapters for {field_id}...")
+
+        # Step 2: Ingest and synthesize
+        lesson = await svc.generate_dynamic_lesson_for_skill(
+            skill_id=resolved_skill_id or str(uuid.uuid4()),
+            skill_name=payload.skill_name,
+            category=payload.category or "Core",
+            career_title=payload.career_title,
+            target_proficiency=20,
+        )
+
+        if not lesson:
+            logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] FAILED: Candidate failed vector pedagogical gate or validation.")
+            return {
+                "status": "failed",
+                "logs": logs,
+                "lesson": None,
+                "message": "Content did not meet strict pedagogical criteria or source was unreachable."
+            }
+
+        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Source Verified: '{lesson.get('source_name', 'Authoritative Source')}' ({lesson.get('source_adapter')})")
+        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Synthesized 5 Grounded MCQs. Checkpoint validation passed.")
+        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Committed to Supabase micro_content (ID: {lesson.get('id')})")
+
+        # Record commit-style audit entry in Ingestion Ledger
+        commit_rec = ingestion_batch_service.record_commit(
+            career_title=payload.career_title,
+            skill_name=payload.skill_name,
+            sources=[{
+                "name": lesson.get("source_name", "Authoritative Source"),
+                "adapter": lesson.get("source_adapter", "web"),
+                "url": lesson.get("source_url", ""),
+                "trust_score": lesson.get("source_trust_score", 0.95),
+            }],
+            lesson_ids=[lesson.get("id")] if lesson.get("id") else [],
+            message=f"Live Ingestion: Ingested '{lesson.get('title')}' for {payload.career_title}",
+            author="Admin (Live Probe)",
+            status="approved",
+        )
+        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Ingestion Ledger Commit Created: #{commit_rec['commit_hash']}")
+
+        return {
+            "status": "success",
+            "logs": logs,
+            "lesson": lesson,
+            "batch": commit_rec,
+            "message": f"Successfully ingested and seeded lesson '{lesson.get('title')}' into Supabase reservoir."
+        }
+    except Exception as e:
+        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Error during ingestion: {str(e)}")
+        raise HTTPException(status_code=500, detail={"message": str(e), "logs": logs})
+
+
+@router.get("/ingestion/priorities")
+async def get_ingestion_priorities(http_req: Request):
+    """Returns skills with registered user enrollment ranked by deficit demand and low lesson coverage."""
+    require_admin_role(http_req)
+    from app.services.ingestion_worker import ingestion_worker_service
+    try:
+        priorities = await ingestion_worker_service.get_enrolled_skills_priority()
+        return {
+            "status": "success",
+            "count": len(priorities),
+            "priorities": priorities,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch enrolled skill priorities: {str(e)}")
+
+
+class NightlyBatchPayload(BaseModel):
+    max_skills: Optional[int] = 5
+    target_lessons_per_skill: Optional[int] = 3
+    force_all: Optional[bool] = False
+
+
+@router.post("/ingestion/run-nightly-batch")
+async def run_nightly_batch_endpoint(payload: NightlyBatchPayload, http_req: Request):
+    """
+    Executes the Nightly Autonomous Ingestion Worker:
+    Iterates over enrolled deficit skills, queries domain adapters, and seeds micro_content.
+    """
+    require_admin_role(http_req)
+    from app.services.ingestion_worker import ingestion_worker_service
+    try:
+        result = await ingestion_worker_service.run_nightly_batch(
+            max_skills=payload.max_skills or 5,
+            target_lessons_per_skill=payload.target_lessons_per_skill or 3,
+            force_all=payload.force_all or False,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Nightly batch ingestion failed: {str(e)}")
+
+
+@router.post("/daily-drop/run-batch-worker")
+async def run_daily_drop_batch_endpoint(http_req: Request):
+    """
+    Executes the Daily Drop Personalization Worker for all registered learners:
+    Pre-curates tomorrow's 5 primary + 5 reserve lessons from the seeded micro_content reservoir.
+    """
+    require_admin_role(http_req)
+    from app.services.ingestion_worker import ingestion_worker_service
+    try:
+        result = await ingestion_worker_service.run_daily_drop_batch()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Daily Drop batch personalization failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# 6. Ingestion Batches & Commit Audit Ledger
+# ---------------------------------------------------------------------------
+
+@router.get("/ingestion/batches")
+async def list_ingestion_batches(http_req: Request):
+    """Returns all git-commit style ingestion instances with source audits."""
+    require_admin_role(http_req)
+    batches = ingestion_batch_service.list_batches()
+    return {"status": "success", "count": len(batches), "batches": batches}
+
+
+@router.get("/ingestion/batches/{batch_id}")
+async def get_ingestion_batch_detail(batch_id: str, http_req: Request):
+    """Returns full details of a specific ingestion commit."""
+    require_admin_role(http_req)
+    batch = ingestion_batch_service.get_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Ingestion batch not found")
+    return {"status": "success", "batch": batch}
+
+
+class BatchStatusActionPayload(BaseModel):
+    status: str = Field(..., pattern="^(approved|rejected|pending)$")
+
+
+@router.post("/ingestion/batches/{batch_id}/status")
+async def update_batch_status(batch_id: str, payload: BatchStatusActionPayload, http_req: Request):
+    """Approves or rejects an entire ingestion commit and cascades to micro_content."""
+    require_admin_role(http_req)
+    res = ingestion_batch_service.set_batch_status(batch_id, payload.status)
+    if not res:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    action_label = "approved" if payload.status == "approved" else "disapproved (rejected)"
+    return {
+        "status": "success",
+        "batch": res,
+        "message": f"Ingestion commit {batch_id} marked as {action_label}.",
+    }
+
+
+class LessonEditPayload(BaseModel):
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    concept_overview: Optional[str] = None
+    practice_scenario: Optional[str] = None
+    difficulty_level: Optional[int] = None
+    quizzes: Optional[List[Dict[str, Any]]] = None
+    associated_skill_id: Optional[str] = None
+
+
+@router.put("/ingestion/lessons/{lesson_id}")
+async def edit_ingested_lesson(lesson_id: str, payload: LessonEditPayload, http_req: Request):
+    """Enables admin to inspect and edit ingested lessons, checkpoints, and skill bindings."""
+    require_admin_role(http_req)
+    try:
+        res = ingestion_batch_service.edit_lesson(
+            lesson_id=lesson_id,
+            title=payload.title,
+            summary=payload.summary,
+            concept_overview=payload.concept_overview,
+            practice_scenario=payload.practice_scenario,
+            difficulty_level=payload.difficulty_level,
+            quizzes=payload.quizzes,
+            associated_skill_id=payload.associated_skill_id,
+        )
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to edit lesson: {e}")
+
+
+
 

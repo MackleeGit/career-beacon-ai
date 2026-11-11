@@ -1,35 +1,31 @@
-# Render deployment configuration
-# Docs: https://render.com/docs/render-yaml-spec
-#
-# One-click deploy: connect this repo in Render dashboard,
-# it will auto-detect this file and configure the service.
-#
-# After deploy, copy the service URL (e.g. https://career-beacon-api.onrender.com)
-# and set it as VITE_API_URL in Netlify's Environment Variables dashboard.
-
+# Render deployment blueprint for Career Beacon AI Engine
 services:
   - type: web
     name: career-beacon-api
-    runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    env: python
+    region: oregon
     plan: free
-
-    # Environment variables — set secret values in Render dashboard, not here
+    buildCommand: "pip install -r backend/requirements.txt"
+    startCommand: "uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.2
       - key: ENVIRONMENT
         value: production
       - key: SUPABASE_URL
-        sync: false          # Set in Render dashboard
-      - key: SUPABASE_SERVICE_KEY
-        sync: false          # Set in Render dashboard
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: GROQ_API_KEY
-        sync: false          # Set in Render dashboard
+        sync: false
       - key: GEMINI_API_KEY
-        sync: false          # Set in Render dashboard
-      - key: YOUTUBE_API_KEY
-        sync: false          # Optional: improves YouTube search reliability
-
-    # Health check — Render will ping this to confirm service is up
-    healthCheckPath: /health
+        sync: false
+      - key: RENDER_EXTERNAL_URL
+        fromService:
+          type: web
+          name: career-beacon-api
+          property: host

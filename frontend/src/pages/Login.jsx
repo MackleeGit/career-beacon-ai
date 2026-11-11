@@ -277,29 +277,38 @@ export default function Login({
       return;
     }
 
-    let cleanEmail = inputIdentifier.toLowerCase();
+    const rawLower = inputIdentifier.toLowerCase();
+    const isLikelyEmail = rawLower.includes('@') && rawLower.includes('.') && !rawLower.startsWith('@');
+    let cleanEmail = rawLower;
 
-    // In signin mode, allow logging in with either username or email
-    if (mode === 'signin' && !cleanEmail.includes('@')) {
-      setLoading(true);
-      try {
-        const { data: prof, error: profErr } = await supabase
-          .from('profiles')
-          .select('email')
-          .ilike('username', cleanEmail)
-          .limit(1)
-          .maybeSingle();
+    // In signin mode, allow logging in with either username (e.g. 'cristiano' or '@cristiano') or email
+    if (mode === 'signin') {
+      if (!isLikelyEmail) {
+        const cleanUser = rawLower.replace(/^@+/, '').trim();
+        if (!cleanUser) {
+          setToast({ type: 'error', text: 'Please enter a valid username or email address.' });
+          return;
+        }
+        setLoading(true);
+        try {
+          const { data: prof, error: profErr } = await supabase
+            .from('profiles')
+            .select('email')
+            .ilike('username', cleanUser)
+            .limit(1)
+            .maybeSingle();
 
-        if (profErr || !prof?.email) {
-          setToast({ type: 'error', text: `No account found with username '@${cleanEmail}'.` });
+          if (profErr || !prof?.email) {
+            setToast({ type: 'error', text: `No account found with username '@${cleanUser}'.` });
+            setLoading(false);
+            return;
+          }
+          cleanEmail = prof.email.toLowerCase();
+        } catch (lookupErr) {
+          setToast({ type: 'error', text: 'Failed to resolve username.' });
           setLoading(false);
           return;
         }
-        cleanEmail = prof.email.toLowerCase();
-      } catch (lookupErr) {
-        setToast({ type: 'error', text: 'Failed to resolve username.' });
-        setLoading(false);
-        return;
       }
     } else {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -343,6 +352,14 @@ export default function Login({
           options: { data: metaData },
         });
         if (error) throw error;
+
+        if (data?.user?.id && cleanUser) {
+          try {
+            await supabase.from('profiles').update({ username: cleanUser }).eq('id', data.user.id);
+          } catch (pErr) {
+            console.error('Failed to update profile username:', pErr);
+          }
+        }
 
         if (!data.session) {
           setToast({
