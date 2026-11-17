@@ -135,7 +135,7 @@ export default function NotificationBell({
           title: 'Connection Accepted',
           body: `${mentorName} accepted your connection request. Direct messaging & 1:1 scheduling are now active.`,
           tab: 'mentorship',
-          subTab: 'sessions',
+          subTab: 'messages',
           connectionId: conn.id,
           timestamp: conn.updated_at || conn.created_at,
         });
@@ -150,7 +150,7 @@ export default function NotificationBell({
       // Check if user is currently viewing this exact DM thread
       const isViewingThisChat =
         role === 'learner'
-          ? activeTab === 'mentorship' && activeSubTab === 'sessions' && activeConnectionId === conn.id
+          ? activeTab === 'mentorship' && activeSubTab === 'messages' && activeConnectionId === conn.id
           : activeTab === 'messages' && activeConnectionId === conn.id;
 
       if (isViewingThisChat) return;
@@ -170,31 +170,32 @@ export default function NotificationBell({
         title: `Direct Message from ${otherPartyName}${countLabel}`,
         body: `"${latestUnread.text.length > 100 ? latestUnread.text.slice(0, 100) + '...' : latestUnread.text}"`,
         tab: role === 'learner' ? 'mentorship' : 'messages',
-        subTab: role === 'learner' ? 'sessions' : null,
+        subTab: role === 'learner' ? 'messages' : null,
         connectionId: conn.id,
         timestamp: latestUnread.created_at,
       });
     });
 
     // Filter out dismissed notifications
-    const filtered = list.filter((n) => !dismissedIds.includes(n.id));
+    return list.filter((n) => !dismissedIds.includes(n.id));
+  }, [sessions, connections, role, activeTab, activeSubTab, activeConnectionId, dismissedIds]);
 
-    // Check for new incoming message notifications to fire a toast
-    filtered.forEach((n) => {
-      if (n.type === 'message' && !seenMessageIdsRef.current.has(n.id)) {
-        seenMessageIdsRef.current.add(n.id);
-        if (!isInitialMountRef.current && onNotifyToast) {
-          onNotifyToast(`${n.title}: ${n.body}`);
-        }
-      }
-    });
+  // Fire toast notifications outside useMemo render phase
+  useEffect(() => {
+    const newMsgNotifs = activeNotifications.filter(
+      (n) => n.type === 'message' && !seenMessageIdsRef.current.has(n.id)
+    );
+    newMsgNotifs.forEach((n) => seenMessageIdsRef.current.add(n.id));
 
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
+      return;
     }
 
-    return filtered;
-  }, [sessions, connections, role, activeTab, activeSubTab, activeConnectionId, dismissedIds, onNotifyToast]);
+    if (onNotifyToast) {
+      newMsgNotifs.forEach((n) => onNotifyToast(`${n.title}: ${n.body}`));
+    }
+  }, [activeNotifications, onNotifyToast]);
 
   // Periodic alert: every 60s check if a session is starting within 30 minutes
   useEffect(() => {
@@ -378,7 +379,7 @@ export default function NotificationBell({
                       </div>
 
                       {/* Action Links */}
-                      <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
+                      <div style={{ display: 'flex', gap: '6px', marginTop: '2px', alignItems: 'center' }}>
                         {notif.meetingUrl && (
                           <a
                             href={notif.meetingUrl}
@@ -396,6 +397,7 @@ export default function NotificationBell({
                             type="button"
                             className="btn btn--secondary btn--xs"
                             onClick={() => {
+                              dismissNotification(notif.id);
                               onNavigate(notif.tab, notif.subTab, notif.connectionId);
                               setIsOpen(false);
                             }}
@@ -403,6 +405,14 @@ export default function NotificationBell({
                             View Details
                           </button>
                         )}
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--xs"
+                          onClick={() => dismissNotification(notif.id)}
+                          style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}
+                        >
+                          Mark as read
+                        </button>
                       </div>
                     </div>
                   );

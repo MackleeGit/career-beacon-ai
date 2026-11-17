@@ -13,6 +13,8 @@ Manages persistent learning history across three distinct dimensions:
 import os
 import json
 import logging
+import tempfile
+import threading
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from app.core.database import supabase_client
@@ -22,6 +24,37 @@ logger = logging.getLogger("career_beacon.learning_history_service")
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 ATTEMPTS_FILE = os.path.join(DATA_DIR, "assessment_attempts.json")
 ACTIVITY_FILE = os.path.join(DATA_DIR, "user_content_activity.json")
+_JSON_IO_LOCK = threading.RLock()
+
+
+def _safe_load_json_list(path: str) -> List[Dict[str, Any]]:
+    with _JSON_IO_LOCK:
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.warning(f"Failed reading {path}: {e}")
+            return []
+
+
+def _safe_save_json_list(path: str, records: List[Dict[str, Any]]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with _JSON_IO_LOCK:
+        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(records, f, indent=2)
+            os.replace(tmp_path, path)
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            logger.warning(f"Failed saving {path}: {e}")
 
 
 def _now_iso() -> str:
@@ -53,18 +86,12 @@ class LearningHistoryService:
             pass
 
         # 2. Local durable store fallback
-        try:
-            if os.path.exists(ATTEMPTS_FILE):
-                with open(ATTEMPTS_FILE, "r", encoding="utf-8") as f:
-                    all_attempts = json.load(f)
-                    attempts = [
-                        a for a in all_attempts
-                        if a.get("user_id") == user_id and a.get("lesson_id") == lesson_id
-                    ]
-                    attempts.sort(key=lambda x: x.get("attempt_number", 1))
-        except Exception as e:
-            logger.warning(f"Failed to read local assessment attempts: {e}")
-
+        all_attempts = _safe_load_json_list(ATTEMPTS_FILE)
+        attempts = [
+            a for a in all_attempts
+            if a.get("user_id") == user_id and a.get("lesson_id") == lesson_id
+        ]
+        attempts.sort(key=lambda x: x.get("attempt_number", 1))
         return attempts
 
     def has_passed_lesson(self, user_id: str, lesson_id: str) -> bool:
@@ -121,19 +148,9 @@ class LearningHistoryService:
             pass
 
         # 2. Persist to local durable file
-        try:
-            all_attempts = []
-            if os.path.exists(ATTEMPTS_FILE):
-                try:
-                    with open(ATTEMPTS_FILE, "r", encoding="utf-8") as f:
-                        all_attempts = json.load(f)
-                except Exception:
-                    all_attempts = []
-            all_attempts.append(record)
-            with open(ATTEMPTS_FILE, "w", encoding="utf-8") as f:
-                json.dump(all_attempts, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to persist assessment attempt locally: {e}")
+        all_attempts = _safe_load_json_list(ATTEMPTS_FILE)
+        all_attempts.append(record)
+        _safe_save_json_list(ATTEMPTS_FILE, all_attempts)
 
         return record
 
@@ -146,15 +163,15 @@ class LearningHistoryService:
         activity_map: Dict[str, Dict[str, Any]] = {}
 
         # 1. Try Supabase if table is known to be available
-        if self._remote_table_available is not False:
+        if LearningHistoryService._remote_table_available is not False:
             try:
                 res = supabase_client.table("user_content_activity").select("*").eq(
                     "user_id", user_id
                 ).execute()
+                LearningHistoryService._remote_table_available = True
                 if res.data:
                     for row in res.data:
                         activity_map[row["content_id"]] = row
-                    self._remote_table_available = True
                     return activity_map
             except Exception as e:
                 if "PGRST205" in str(e) or "Could not find the table" in str(e):
@@ -162,15 +179,10 @@ class LearningHistoryService:
                 logger.debug(f"Remote user_content_activity unavailable: {e}")
 
         # 2. Local fallback
-        try:
-            if os.path.exists(ACTIVITY_FILE):
-                with open(ACTIVITY_FILE, "r", encoding="utf-8") as f:
-                    all_act = json.load(f)
-                    for row in all_act:
-                        if row.get("user_id") == user_id:
-                            activity_map[row["content_id"]] = row
-        except Exception as e:
-            logger.warning(f"Failed to read local content activity: {e}")
+        all_act = _safe_load_json_list(ACTIVITY_FILE)
+        for row in all_act:
+            if row.get("user_id") == user_id:
+                activity_map[row["content_id"]] = row
 
         return activity_map
 
@@ -183,19 +195,12 @@ class LearningHistoryService:
             return
 
         now = _now_iso()
-        local_records = []
-        if os.path.exists(ACTIVITY_FILE):
-            try:
-                with open(ACTIVITY_FILE, "r", encoding="utf-8") as f:
-                    local_records = json.load(f)
-            except Exception:
-                local_records = []
-
+        local_records = _safe_load_json_list(ACTIVITY_FILE)
         local_map = {(r["user_id"], r["content_id"]): r for r in local_records}
 
         for cid in content_ids:
             # Remote upsert attempt if table exists
-            if self._remote_table_available is not False:
+            if LearningHistoryService._remote_table_available is not False:
                 try:
                     existing_res = supabase_client.table("user_content_activity").select(
                         "times_recommended"
@@ -214,7 +219,7 @@ class LearningHistoryService:
                             "last_seen_at": now,
                             "times_recommended": 1,
                         }).execute()
-                    self._remote_table_available = True
+                    LearningHistoryService._remote_table_available = True
                 except Exception as e:
                     if "PGRST205" in str(e) or "Could not find the table" in str(e):
                         LearningHistoryService._remote_table_available = False
@@ -235,122 +240,102 @@ class LearningHistoryService:
                     "times_recommended": 1,
                 }
 
-        try:
-            with open(ACTIVITY_FILE, "w", encoding="utf-8") as f:
-                json.dump(list(local_map.values()), f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to persist impressions locally: {e}")
+        _safe_save_json_list(ACTIVITY_FILE, list(local_map.values()))
 
     def record_content_open(self, user_id: str, content_id: str) -> None:
         """Records when a learner opens a learning resource."""
         now = _now_iso()
         # Remote update / insert
-        try:
-            res = supabase_client.table("user_content_activity").select("times_recommended").eq(
-                "user_id", user_id
-            ).eq("content_id", content_id).execute()
-            if res.data:
-                supabase_client.table("user_content_activity").update({
-                    "opened_at": now,
-                    "last_seen_at": now,
-                }).eq("user_id", user_id).eq("content_id", content_id).execute()
-            else:
-                supabase_client.table("user_content_activity").insert({
-                    "user_id": user_id,
-                    "content_id": content_id,
-                    "first_seen_at": now,
-                    "last_seen_at": now,
-                    "opened_at": now,
-                    "times_recommended": 1,
-                }).execute()
-        except Exception:
-            pass
+        if LearningHistoryService._remote_table_available is not False:
+            try:
+                res = supabase_client.table("user_content_activity").select("times_recommended").eq(
+                    "user_id", user_id
+                ).eq("content_id", content_id).execute()
+                if res.data:
+                    supabase_client.table("user_content_activity").update({
+                        "opened_at": now,
+                        "last_seen_at": now,
+                    }).eq("user_id", user_id).eq("content_id", content_id).execute()
+                else:
+                    supabase_client.table("user_content_activity").insert({
+                        "user_id": user_id,
+                        "content_id": content_id,
+                        "first_seen_at": now,
+                        "last_seen_at": now,
+                        "opened_at": now,
+                        "times_recommended": 1,
+                    }).execute()
+                LearningHistoryService._remote_table_available = True
+            except Exception as e:
+                if "PGRST205" in str(e) or "Could not find the table" in str(e):
+                    LearningHistoryService._remote_table_available = False
 
         # Local update / insert
-        try:
-            records = []
-            if os.path.exists(ACTIVITY_FILE):
-                try:
-                    with open(ACTIVITY_FILE, "r", encoding="utf-8") as f:
-                        records = json.load(f)
-                except Exception:
-                    records = []
-
-            found = False
-            for r in records:
-                if r.get("user_id") == user_id and r.get("content_id") == content_id:
-                    r["opened_at"] = now
-                    r["last_seen_at"] = now
-                    found = True
-                    break
-            if not found:
-                records.append({
-                    "user_id": user_id,
-                    "content_id": content_id,
-                    "first_seen_at": now,
-                    "last_seen_at": now,
-                    "opened_at": now,
-                    "completed_at": None,
-                    "times_recommended": 1,
-                })
-            with open(ACTIVITY_FILE, "w", encoding="utf-8") as f:
-                json.dump(records, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to record content open locally: {e}")
+        records = _safe_load_json_list(ACTIVITY_FILE)
+        found = False
+        for r in records:
+            if r.get("user_id") == user_id and r.get("content_id") == content_id:
+                r["opened_at"] = now
+                r["last_seen_at"] = now
+                found = True
+                break
+        if not found:
+            records.append({
+                "user_id": user_id,
+                "content_id": content_id,
+                "first_seen_at": now,
+                "last_seen_at": now,
+                "opened_at": now,
+                "completed_at": None,
+                "times_recommended": 1,
+            })
+        _safe_save_json_list(ACTIVITY_FILE, records)
 
     def record_content_completion(self, user_id: str, content_id: str) -> None:
         """Records when a learner marks a learning resource complete."""
         now = _now_iso()
         # Remote update / insert
-        try:
-            res = supabase_client.table("user_content_activity").select("times_recommended").eq(
-                "user_id", user_id
-            ).eq("content_id", content_id).execute()
-            if res.data:
-                supabase_client.table("user_content_activity").update({
-                    "completed_at": now,
-                    "last_seen_at": now,
-                }).eq("user_id", user_id).eq("content_id", content_id).execute()
-            else:
-                supabase_client.table("user_content_activity").insert({
-                    "user_id": user_id,
-                    "content_id": content_id,
-                    "first_seen_at": now,
-                    "last_seen_at": now,
-                    "completed_at": now,
-                    "times_recommended": 1,
-                }).execute()
-        except Exception:
-            pass
+        if LearningHistoryService._remote_table_available is not False:
+            try:
+                res = supabase_client.table("user_content_activity").select("times_recommended").eq(
+                    "user_id", user_id
+                ).eq("content_id", content_id).execute()
+                if res.data:
+                    supabase_client.table("user_content_activity").update({
+                        "completed_at": now,
+                        "last_seen_at": now,
+                    }).eq("user_id", user_id).eq("content_id", content_id).execute()
+                else:
+                    supabase_client.table("user_content_activity").insert({
+                        "user_id": user_id,
+                        "content_id": content_id,
+                        "first_seen_at": now,
+                        "last_seen_at": now,
+                        "completed_at": now,
+                        "times_recommended": 1,
+                    }).execute()
+                LearningHistoryService._remote_table_available = True
+            except Exception as e:
+                if "PGRST205" in str(e) or "Could not find the table" in str(e):
+                    LearningHistoryService._remote_table_available = False
 
         # Local update / insert
-        try:
-            records = []
-            if os.path.exists(ACTIVITY_FILE):
-                try:
-                    with open(ACTIVITY_FILE, "r", encoding="utf-8") as f:
-                        records = json.load(f)
-                except Exception:
-                    records = []
-
-            found = False
-            for r in records:
-                if r.get("user_id") == user_id and r.get("content_id") == content_id:
-                    r["completed_at"] = now
-                    r["last_seen_at"] = now
-                    found = True
-                    break
-            if not found:
-                records.append({
-                    "user_id": user_id,
-                    "content_id": content_id,
-                    "first_seen_at": now,
-                    "last_seen_at": now,
-                    "opened_at": None,
-                    "completed_at": now,
-                    "times_recommended": 1,
-                })
-            with open(ACTIVITY_FILE, "w", encoding="utf-8") as f:
-                json.dump(records, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to record content completion locally: {e}")
+        records = _safe_load_json_list(ACTIVITY_FILE)
+        found = False
+        for r in records:
+            if r.get("user_id") == user_id and r.get("content_id") == content_id:
+                r["completed_at"] = now
+                r["last_seen_at"] = now
+                found = True
+                break
+        if not found:
+            records.append({
+                "user_id": user_id,
+                "content_id": content_id,
+                "first_seen_at": now,
+                "last_seen_at": now,
+                "opened_at": None,
+                "completed_at": now,
+                "times_recommended": 1,
+            })
+        _safe_save_json_list(ACTIVITY_FILE, records)

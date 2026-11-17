@@ -211,8 +211,14 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
   };
 
   const [overviewFeed, setOverviewFeed] = useState({ recommendations: [], completed: [], loading: true });
+  const [cachedDailyDrop, setCachedDailyDrop] = useState(null);
   const [skillSearch, setSkillSearch] = useState('');
   const [skillFilter, setSkillFilter] = useState('all'); // 'all' | 'gaps' | 'mastered'
+
+  useEffect(() => {
+    setCachedDailyDrop(null);
+    setOverviewFeed({ recommendations: [], completed: [], loading: true });
+  }, [user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -221,6 +227,7 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
       try {
         const dropRes = await getCurrentDailyDrop().catch(() => null);
         if (dropRes?.drop?.lessons?.length && isMounted) {
+          setCachedDailyDrop({ userId: user.id, drop: dropRes.drop });
           setOverviewFeed({
             recommendations: dropRes.drop.lessons.slice(0, 3),
             completed: [],
@@ -287,11 +294,13 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
     setActiveTab('mentorship');
   };
 
-  const navigateTo = (tab, subTab = 'daily', connectionId = null) => {
-    if (tab === 'feed') setFeedInitialSubTab(subTab);
+  const navigateTo = (tab, subTab = null, connectionId = null) => {
+    if (tab === 'feed') setFeedInitialSubTab(subTab || 'daily');
     if (tab === 'saved') setFeedInitialSubTab('completed');
     if (tab === 'mentorship') {
-      if (subTab) setMentorshipInitialSubTab(subTab);
+      const validMentorSubTabs = ['matches', 'pulse', 'qa', 'sessions'];
+      const targetSub = (subTab && validMentorSubTabs.includes(subTab)) ? subTab : 'matches';
+      setMentorshipInitialSubTab(targetSub);
       if (connectionId) setMentorshipInitialConnId(connectionId);
     }
     setActiveTab(tab);
@@ -593,6 +602,8 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
               career={career}
               skills={skills}
               initialSubTab={feedInitialSubTab}
+              initialDailyDrop={cachedDailyDrop?.userId === user?.id ? cachedDailyDrop.drop : null}
+              onDailyDropChange={(drop) => setCachedDailyDrop(drop ? { userId: user?.id, drop } : null)}
               onSkillUpdated={onSkillUpdated}
               onNavigateToGraph={() => navigateTo('graph')}
               onAskMentorAboutLesson={handleAskMentorAboutLesson}
@@ -603,6 +614,8 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
               career={career}
               skills={skills}
               initialSubTab="completed"
+              initialDailyDrop={cachedDailyDrop?.userId === user?.id ? cachedDailyDrop.drop : null}
+              onDailyDropChange={(drop) => setCachedDailyDrop(drop ? { userId: user?.id, drop } : null)}
               onSkillUpdated={onSkillUpdated}
               onNavigateToGraph={() => navigateTo('graph')}
               onAskMentorAboutLesson={handleAskMentorAboutLesson}
@@ -1198,23 +1211,10 @@ export default function Dashboard({ user, career, skills = [], onSkillUpdated, o
       )}
 
       {toastMessage && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '24px',
-            right: '24px',
-            background: 'var(--surface-elevated, #1e293b)',
-            color: 'var(--text-primary, #fff)',
-            border: '1px solid var(--border-subtle, #334155)',
-            boxShadow: 'var(--shadow-lg)',
-            padding: '12px 18px',
-            borderRadius: 'var(--r-md, 8px)',
-            fontSize: '0.86rem',
-            zIndex: 99,
-          }}
-        >
-          {toastMessage}
-        </div>
+        <Toast
+          message={toastMessage}
+          onClose={() => setToastMessage(null)}
+        />
       )}
 
       {showLogoutToast && (

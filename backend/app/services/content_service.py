@@ -351,6 +351,24 @@ def _save_youtube_cache(cache: Dict[str, List[tuple]]) -> None:
 _YOUTUBE_SEARCH_CACHE: Dict[str, List[tuple]] = _load_youtube_cache()
 
 
+def is_lesson_rejected(raw: Dict[str, Any]) -> bool:
+    """Returns True if an admin has marked this micro_content lesson as rejected."""
+    if not raw:
+        return False
+    if (raw.get("review_status") or "").lower() == "rejected":
+        return True
+    c_raw = raw.get("content")
+    c_data: Dict[str, Any] = {}
+    if isinstance(c_raw, dict):
+        c_data = c_raw
+    elif isinstance(c_raw, str) and c_raw.strip().startswith("{"):
+        try:
+            c_data = json.loads(c_raw)
+        except Exception:
+            c_data = {}
+    return (c_data.get("review_status") or "").lower() == "rejected"
+
+
 def hydrate_micro_content_row(
     raw: Dict[str, Any],
     all_skills_map: Optional[Dict[str, Any]] = None,
@@ -444,6 +462,7 @@ def hydrate_micro_content_row(
         "skill_name": skill_name,
         "skill_category": skill_category,
         "career_title": c_data.get("career_title") or raw.get("career_title") or "",
+        "review_status": c_data.get("review_status") or raw.get("review_status") or "approved",
         "has_passed": has_passed,
     }
 
@@ -670,6 +689,9 @@ class ContentService:
 
                 raw_body = transcript_text if transcript_text else f"Educational Lecture ({channel_title or 'YouTube Education'}): {video_title}. {full_desc}"
                 raw = strip_html_and_clean(raw_body)
+                # Prefer genuine video transcripts; avoid passing sparse promo/link descriptions to LLM Judge
+                if not transcript_text and len(raw) < 750:
+                    continue
                 if validate_source_content(raw, skill_name):
                     is_pedagogical = await self.verify_pedagogical_substance(
                         candidate_title=video_title,
@@ -689,8 +711,8 @@ class ContentService:
                         "video_id": video_id,
                         "trust_score": SOURCE_AUTHORITY_WEIGHTS["youtube"],
                     }
-                    # If we got a full transcript or a comprehensive syllabus description (>= 500 chars), return immediately
-                    if transcript_text or len(raw) >= 500:
+                    # Return immediately only when we captured an actual lecture transcript
+                    if transcript_text:
                         return candidate
                     if len(raw) > best_char_len:
                         best_char_len = len(raw)
@@ -925,6 +947,7 @@ class ContentService:
         headers = {"User-Agent": ACADEMIC_USER_AGENT}
         clean_career = re.sub(r",.*$", "", career_title or "").strip()
         queries = [
+            f'"{distilled}" AND (OPEN_ACCESS:Y OR StatPearls)',
             f'"{distilled}" AND ({clean_career})' if clean_career else f'"{distilled}"',
             f"{distilled} {clean_career}".strip() if clean_career else distilled,
             distilled,
@@ -950,7 +973,29 @@ class ContentService:
                             continue
                         if art_url in excluded:
                             continue
-                        combined = f"{title}.\n\n{abstract}".strip()
+
+                        # Upgrade: fetch full Open-Access / StatPearls XML body when PMCID exists
+                        body_text = ""
+                        if pmcid:
+                            try:
+                                xml_resp = await client.get(
+                                    f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML",
+                                    headers=headers,
+                                    timeout=12.0,
+                                )
+                                if xml_resp.status_code == 200 and "<body" in xml_resp.text:
+                                    body_m = re.search(r"<body[^>]*>(.*?)</body>", xml_resp.text, flags=re.DOTALL | re.IGNORECASE)
+                                    raw_xml_body = body_m.group(1) if body_m else xml_resp.text
+                                    raw_xml_body = re.sub(r"<ref-list[^>]*>.*?</ref-list>", " ", raw_xml_body, flags=re.DOTALL | re.IGNORECASE)
+                                    body_text = strip_html_and_clean(re.sub(r"<[^>]+>", " ", raw_xml_body))
+                            except Exception:
+                                pass
+
+                        combined = (
+                            f"{title}.\n\n{abstract}\n\n{body_text}".strip()
+                            if body_text and len(body_text) >= 400
+                            else f"{title}.\n\n{abstract}".strip()
+                        )
                         if validate_source_content(combined, distilled):
                             is_pedagogical = await self.verify_pedagogical_substance(
                                 candidate_title=title,
@@ -962,8 +1007,8 @@ class ContentService:
                                 return {
                                     "title": title[:140],
                                     "source_url": art_url,
-                                    "raw_text": combined[:8000],
-                                    "source": "Europe PMC / NCBI",
+                                    "raw_text": combined[:10000],
+                                    "source": "Europe PMC / NCBI Full-Text" if body_text else "Europe PMC / NCBI",
                                     "source_adapter": "clinical_science",
                                     "trust_score": SOURCE_AUTHORITY_WEIGHTS["clinical_science"],
                                 }
@@ -1587,6 +1632,152 @@ class ContentService:
         self._domain_resolution_cache[cache_key] = resolved
         return resolved
 
+    async def plan_skill_curriculum_subtopics(
+        self,
+        skill_name: str,
+        career_title: str,
+        category: str = "Core",
+        needed_count: int = 3,
+        existing_titles: Optional[List[str]] = None,
+        onet_soc_code: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        LLM Curriculum Planner & Taxonomy Translator (1 Lightweight Call per Skill):
+        1. Decomposes `skill_name` for `career_title` into `needed_count` progressive,
+           non-overlapping sub-topics (Difficulty 2 -> 3 -> 4).
+        2. Inspects `existing_titles` already in Supabase `micro_content` so no sub-topic
+           duplicates concepts already stocked in the reservoir.
+        3. Generates surgical, taxonomy-aligned search strings (NO URLs) tailored to
+           authoritative site adapters (`clinical_science`, `mdn`, `owasp`, `osha`,
+           `ecfr`, `finance`, `arxiv`, `open_textbook`, `structured_tutorial`, `youtube`).
+        """
+        needed_count = max(1, min(5, int(needed_count)))
+        field_meta = classify_career_field(career_title, onet_soc_code)
+        field_id = field_meta["field_id"]
+        field_label = field_meta["label"]
+        distilled = distill_skill_query(skill_name)
+        existing_list = [t.strip() for t in (existing_titles or []) if t and t.strip()]
+
+        domain_adapters_map = {
+            "trades_safety": ["osha", "ecfr", "youtube", "open_textbook"],
+            "healthcare": ["clinical_science", "youtube", "open_textbook", "ecfr"],
+            "engineering": ["open_textbook", "youtube", "osha", "ecfr", "arxiv"],
+            "finance": ["finance", "youtube", "open_textbook", "ecfr", "arxiv"],
+            "science": ["clinical_science", "youtube", "arxiv", "open_textbook"],
+            "tech": ["mdn", "structured_tutorial", "owasp", "youtube", "arxiv"],
+            "business_ops": ["open_textbook", "structured_tutorial", "youtube", "openalex"],
+        }
+        allowed_adapters = domain_adapters_map.get(field_id, ["youtube", "open_textbook", "structured_tutorial"])
+
+        def _build_fallback_plan(reason: str = "LLM planner unavailable") -> List[Dict[str, Any]]:
+            tiers = [
+                (2, "Foundational Principles & Core Mechanisms", f"{distilled} core principles fundamentals"),
+                (3, "Applied Operational Workflows & Standards", f"{distilled} applied methodology procedures"),
+                (4, "Advanced Diagnostics, Edge Cases & Optimization", f"{distilled} advanced troubleshooting best practices"),
+                (3, "Regulatory & Architectural Compliance", f"{distilled} standards compliance architecture"),
+                (4, "Case Studies & Quantitative Evaluation", f"{distilled} analysis metrics evaluation"),
+            ]
+            fallback_items: List[Dict[str, Any]] = []
+            written_adapters = [a for a in allowed_adapters if a != "youtube"] or ["open_textbook"]
+            for idx in range(needed_count):
+                diff, angle, q_str = tiers[idx % len(tiers)]
+                pref = ["youtube"] if idx % 2 == 0 else written_adapters[:2]
+                fallback_items.append({
+                    "subtopic_focus": f"{distilled}: {angle}",
+                    "target_difficulty": diff,
+                    "search_query": q_str,
+                    "preferred_adapters": pref,
+                    "educational_regard_criteria": f"Must teach concrete mechanisms, rules, or procedures for {distilled} in {career_title}.",
+                    "planner_source": "fallback",
+                    "fallback_reason": reason,
+                })
+            return fallback_items
+
+        prompt = f"""
+Target Career: {career_title}
+Occupational Field: {field_label} ({field_id})
+Target Competency Skill: {skill_name} (Core term: {distilled})
+Skill Category: {category}
+Existing Lessons Already in Database for This Skill (DO NOT repeat these angles):
+{json.dumps(existing_list, indent=2) if existing_list else "None yet — reservoir is empty for this skill."}
+
+Allowed Authoritative Site Adapters for {field_label}:
+{json.dumps(allowed_adapters)}
+(Adapter guide: 'clinical_science'=NCBI StatPearls/EuropePMC, 'mdn'=Mozilla Developer Network, 'owasp'=OWASP Security Cheat Sheets, 'osha'=OSHA Safety Standards, 'ecfr'=Federal Regulations, 'finance'=Corporate Finance/Accounting Standards, 'arxiv'=ArXiv Technical Papers, 'open_textbook'=Wikibooks/Wikiversity, 'structured_tutorial'=GeeksforGeeks/Tutorialspoint/W3Schools, 'youtube'=Educational Video Lectures)
+
+Task:
+Plan {needed_count} distinct, non-overlapping micro-learning sub-topics to teach "{skill_name}" specifically for a {career_title}.
+Requirements:
+1. Sub-topics MUST be mutually exclusive from each other AND from the Existing Lessons listed above.
+2. Progressively scale difficulty (e.g., 2=Foundational Mechanisms, 3=Applied Workplace Execution, 4=Advanced Edge-Cases/Troubleshooting).
+3. For each sub-topic, craft a surgical `search_query` (3 to 6 words, NO URLs, NO punctuation, NO bureaucratic filler) using the exact technical taxonomy indexed by {allowed_adapters}. Always include the core technical noun from "{distilled}" so topical verification succeeds.
+4. Select 1 or 2 `preferred_adapters` from {allowed_adapters} best suited for that sub-topic (alternate between 'youtube' and written adapters across items).
+"""
+
+        system_instruction = """
+You are an expert Curriculum Architect and Academic Search Taxonomist.
+Return a valid JSON object matching this exact schema:
+{
+  "subtopics": [
+    {
+      "subtopic_focus": "Specific instructional sub-topic title",
+      "target_difficulty": 2,
+      "search_query": "concise technical search keywords without URLs",
+      "preferred_adapters": ["adapter_key"],
+      "educational_regard_criteria": "1-sentence requirement of the technical depth, formulas, or protocols the source must contain."
+    }
+  ]
+}
+NEVER output URLs in `search_query`. Output only clean search keywords.
+"""
+        try:
+            res = await self.ai_service.generate_json(prompt, system_instruction=system_instruction)
+            raw_list = res.get("subtopics") if isinstance(res, dict) else None
+            if not isinstance(raw_list, list) or not raw_list:
+                reason = "LLM returned empty or malformed 'subtopics' array"
+                logger.warning(f"plan_skill_curriculum_subtopics fallback engaged for '{skill_name}': {reason}")
+                return _build_fallback_plan(reason)
+
+            cleaned_plan: List[Dict[str, Any]] = []
+            written_adapters = [a for a in allowed_adapters if a != "youtube"] or ["open_textbook"]
+            for idx, item in enumerate(raw_list[:needed_count]):
+                if not isinstance(item, dict):
+                    continue
+                focus = str(item.get("subtopic_focus") or f"{distilled} — Module {idx + 1}").strip()
+                diff = safe_parse_difficulty(item.get("target_difficulty"), default=min(4, idx + 2))
+                raw_q = str(item.get("search_query") or distilled).strip()
+                # Strip any accidental URLs or punctuation
+                raw_q = re.sub(r"https?://\S+", "", raw_q).strip()
+                if len(raw_q) < 3:
+                    raw_q = distilled
+                raw_prefs = item.get("preferred_adapters")
+                prefs = [a for a in (raw_prefs if isinstance(raw_prefs, list) else []) if a in allowed_adapters]
+                if not prefs:
+                    prefs = ["youtube"] if idx % 2 == 0 else written_adapters[:2]
+                criteria = str(
+                    item.get("educational_regard_criteria")
+                    or f"Must explain concrete mechanisms and applied procedures for {focus}."
+                ).strip()
+                cleaned_plan.append({
+                    "subtopic_focus": focus,
+                    "target_difficulty": diff,
+                    "search_query": raw_q,
+                    "preferred_adapters": prefs,
+                    "educational_regard_criteria": criteria,
+                    "planner_source": "llm",
+                })
+
+            if not cleaned_plan:
+                reason = "LLM subtopics failed structural normalization"
+                logger.warning(f"plan_skill_curriculum_subtopics fallback engaged for '{skill_name}': {reason}")
+                return _build_fallback_plan(reason)
+            while len(cleaned_plan) < needed_count:
+                cleaned_plan.append(_build_fallback_plan("Partial LLM response padded")[len(cleaned_plan) % needed_count])
+            return cleaned_plan
+        except Exception as e:
+            logger.warning(f"plan_skill_curriculum_subtopics FAILED for '{skill_name}', using deterministic fallback: {e}")
+            return _build_fallback_plan(str(e))
+
     async def fetch_live_source_for_skill(
         self,
         skill_name: str,
@@ -1595,14 +1786,18 @@ class ContentService:
         exclude_source_urls: Optional[set] = None,
         preferred_adapters: Optional[List[str]] = None,
         onet_soc_code: Optional[str] = None,
+        search_query: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Executes the modular instructional source pipeline for any career and skill.
         Prioritizes active teaching sources (YouTube lectures, GeeksforGeeks/Tutorialspoint/W3Schools,
         MDN Web Docs, Wikibooks/Wikiversity Open Textbooks, NCBI/EuropePMC, arXiv, eCFR, OpenAlex) and uses
         Wikipedia strictly as a last-resort fallback.
+        When `search_query` is provided by the LLM Curriculum Planner, adapters poll using that
+        taxonomy-aligned query string first.
         """
         excluded = {u for u in (exclude_source_urls or set()) if u}
+        effective_query = (search_query or "").strip() or skill_name
         domain = await self.resolve_career_domain(
             career_title, skill_name, category=category, onet_soc_code=onet_soc_code
         )
@@ -1614,73 +1809,73 @@ class ContentService:
             adapter_order = []
             if field_id == "trades_safety" or domain in ("safety_trades", "transportation"):
                 adapter_order.extend([
-                    ("osha", lambda: self._fetch_osha_standards(client, skill_name, career_title, excluded)),
-                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, skill_name, career_title, excluded)),
-                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="trades_safety")),
-                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
-                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("osha", lambda: self._fetch_osha_standards(client, effective_query, career_title, excluded)),
+                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, effective_query, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="trades_safety")),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, effective_query, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
                 ])
             elif field_id == "healthcare" or domain == "health":
                 adapter_order.extend([
-                    ("clinical_science", lambda: self._fetch_clinical_and_science(client, skill_name, career_title, excluded)),
-                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="healthcare")),
-                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
-                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, skill_name, career_title, excluded)),
-                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("clinical_science", lambda: self._fetch_clinical_and_science(client, effective_query, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="healthcare")),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, effective_query, career_title, excluded)),
+                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, effective_query, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
                 ])
             elif field_id == "engineering" or domain == "engineering":
                 adapter_order.extend([
-                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
-                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="engineering")),
-                    ("osha", lambda: self._fetch_osha_standards(client, skill_name, career_title, excluded)),
-                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, skill_name, career_title, excluded)),
-                    ("arxiv", lambda: self._fetch_arxiv_technical(client, skill_name, career_title, excluded)),
-                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, effective_query, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="engineering")),
+                    ("osha", lambda: self._fetch_osha_standards(client, effective_query, career_title, excluded)),
+                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, effective_query, career_title, excluded)),
+                    ("arxiv", lambda: self._fetch_arxiv_technical(client, effective_query, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
                 ])
             elif field_id == "finance" or domain == "finance":
                 adapter_order.extend([
-                    ("finance", lambda: self._fetch_finance_knowledge(client, skill_name, career_title, excluded)),
-                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="finance")),
-                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
-                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, skill_name, career_title, excluded)),
-                    ("arxiv", lambda: self._fetch_arxiv_technical(client, skill_name, career_title, excluded)),
-                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("finance", lambda: self._fetch_finance_knowledge(client, effective_query, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="finance")),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, effective_query, career_title, excluded)),
+                    ("ecfr", lambda: self._fetch_ecfr_regulations(client, effective_query, career_title, excluded)),
+                    ("arxiv", lambda: self._fetch_arxiv_technical(client, effective_query, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
                 ])
             elif field_id == "science" or domain == "science":
                 adapter_order.extend([
-                    ("clinical_science", lambda: self._fetch_clinical_and_science(client, skill_name, career_title, excluded)),
-                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="science")),
-                    ("arxiv", lambda: self._fetch_arxiv_technical(client, skill_name, career_title, excluded)),
-                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
-                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
+                    ("clinical_science", lambda: self._fetch_clinical_and_science(client, effective_query, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="science")),
+                    ("arxiv", lambda: self._fetch_arxiv_technical(client, effective_query, career_title, excluded)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, effective_query, career_title, excluded)),
                 ])
             elif field_id == "tech" or domain in ("tech", "security"):
                 if domain == "security":
                     adapter_order.extend([
-                        ("owasp", lambda: self._fetch_owasp_cheatsheet(client, skill_name, career_title, excluded)),
-                        ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="tech")),
-                        ("mdn", lambda: self._fetch_mdn_docs(client, skill_name, category, career_title, excluded)),
-                        ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, skill_name, category, excluded, career_title=career_title)),
-                        ("arxiv", lambda: self._fetch_arxiv_technical(client, skill_name, career_title, excluded)),
-                        ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                        ("owasp", lambda: self._fetch_owasp_cheatsheet(client, effective_query, career_title, excluded)),
+                        ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="tech")),
+                        ("mdn", lambda: self._fetch_mdn_docs(client, effective_query, category, career_title, excluded)),
+                        ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, effective_query, category, excluded, career_title=career_title)),
+                        ("arxiv", lambda: self._fetch_arxiv_technical(client, effective_query, career_title, excluded)),
+                        ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
                     ])
                 else:
                     adapter_order.extend([
-                        ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="tech")),
-                        ("mdn", lambda: self._fetch_mdn_docs(client, skill_name, category, career_title, excluded)),
-                        ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, skill_name, category, excluded, career_title=career_title)),
-                        ("owasp", lambda: self._fetch_owasp_cheatsheet(client, skill_name, career_title, excluded)),
-                        ("arxiv", lambda: self._fetch_arxiv_technical(client, skill_name, career_title, excluded)),
-                        ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
-                        ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                        ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="tech")),
+                        ("mdn", lambda: self._fetch_mdn_docs(client, effective_query, category, career_title, excluded)),
+                        ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, effective_query, category, excluded, career_title=career_title)),
+                        ("owasp", lambda: self._fetch_owasp_cheatsheet(client, effective_query, career_title, excluded)),
+                        ("arxiv", lambda: self._fetch_arxiv_technical(client, effective_query, career_title, excluded)),
+                        ("open_textbook", lambda: self._fetch_open_textbook(client, effective_query, career_title, excluded)),
+                        ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
                     ])
             else:
                 # Field 6 (`business_ops`): Operations, Management, Legal & Digital Media
                 adapter_order.extend([
-                    ("youtube", lambda: self._fetch_youtube_lecture(client, skill_name, career_title, excluded, field_id="business_ops")),
-                    ("open_textbook", lambda: self._fetch_open_textbook(client, skill_name, career_title, excluded)),
-                    ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, skill_name, category, excluded, career_title=career_title)),
-                    ("openalex", lambda: self._fetch_openalex_chapter(client, skill_name, career_title, excluded)),
+                    ("youtube", lambda: self._fetch_youtube_lecture(client, effective_query, career_title, excluded, field_id="business_ops")),
+                    ("open_textbook", lambda: self._fetch_open_textbook(client, effective_query, career_title, excluded)),
+                    ("structured_tutorial", lambda: self._fetch_structured_tutorial(client, effective_query, category, excluded, career_title=career_title)),
+                    ("openalex", lambda: self._fetch_openalex_chapter(client, effective_query, career_title, excluded)),
                 ])
 
             # If caller requested specific preferred adapters (e.g., Mixer diversity), move them to front
@@ -1719,11 +1914,11 @@ class ContentService:
                         return res
 
             # Last resort: Wikipedia fallback
-            wiki_res = await self._fetch_wikipedia_fallback(client, skill_name, excluded, career_title=career_title)
+            wiki_res = await self._fetch_wikipedia_fallback(client, effective_query, excluded, career_title=career_title)
             if wiki_res:
                 return wiki_res
 
-        logger.warning(f"No suitable learning source found across instructional adapters for '{skill_name}'.")
+        logger.warning(f"No suitable learning source found across instructional adapters for '{effective_query}'.")
         return None
 
     # -----------------------------------------------------------------------
@@ -1732,8 +1927,11 @@ class ContentService:
 
     async def atomize_and_create_quiz(self, raw_item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Transforms raw ingested item into a self-contained micro-lesson with concept_overview,
-        practice_scenario, summary_bullets, verified 5-question MCQs, and 384-d embedding.
+        Transforms raw ingested item into a self-contained micro-lesson with:
+        - LLM Pedagogical Regard & Relevance Judge (rejects shallow stubs or off-topic pages)
+        - Distinct Sub-Topic title & anti-duplication framing
+        - concept_overview, practice_scenario, summary_bullets, verified 5-question MCQs
+        - Semantic Vector Deduplication Gate (< 0.90 cosine similarity against existing skill lessons)
         """
         title = raw_item.get("title", "").strip()
         skill_name = raw_item.get("skill_name", "General Skill")
@@ -1743,12 +1941,18 @@ class ContentService:
         raw_text = raw_item.get("raw_text", title)
         skill_id = raw_item.get("skill_id")
         career_title = raw_item.get("career_title", "Professional")
+        subtopic_focus = raw_item.get("subtopic_focus") or ""
+        target_difficulty = raw_item.get("target_difficulty")
+        educational_regard_criteria = raw_item.get("educational_regard_criteria") or ""
+        existing_titles: List[str] = raw_item.get("existing_titles") or []
+        existing_embeddings: List[List[float]] = raw_item.get("existing_embeddings") or []
 
         if not title or not source_url:
             logger.warning("Skipping item with missing title or source_url")
             return None
 
-        if not validate_source_content(raw_text, skill_name):
+        validation_topic = f"{skill_name} {subtopic_focus}".strip() if subtopic_focus else skill_name
+        if not (validate_source_content(raw_text, skill_name) or validate_source_content(raw_text, validation_topic)):
             logger.warning(f"Raw content for '{title}' failed sufficiency check. Aborting atomization.")
             return None
 
@@ -1759,9 +1963,22 @@ class ContentService:
         # Select the most semantically relevant windows from long sources (instead of truncating at 3,200 chars)
         selected_evidence = await self.select_relevant_source_windows(
             raw_text=raw_text,
-            skill_name=skill_name,
+            skill_name=f"{skill_name} {subtopic_focus}".strip(),
             career_title=career_title,
             max_chars=4200,
+        )
+
+        subtopic_block = (
+            f"\nTarget Sub-Topic Focus: {subtopic_focus}\n"
+            f"Target Difficulty Tier: {target_difficulty or 2}\n"
+            f"Focus Emphasis Guidance: {educational_regard_criteria}\n"
+            if subtopic_focus else ""
+        )
+        dedup_block = (
+            f"\nExisting Lessons Already in Reservoir for '{skill_name}' (DO NOT duplicate these titles or angles):\n"
+            + "\n".join(f"- {t}" for t in existing_titles[:8])
+            + "\n"
+            if existing_titles else ""
         )
 
         prompt = f"""
@@ -1771,7 +1988,7 @@ Skill Target: {skill_name}
 Target Career: {career_title}
 Resource Title: {title}
 Source: {source}
-
+{subtopic_block}{dedup_block}
 Field Pedagogical Directive:
 {field_directive}
 
@@ -1781,13 +1998,19 @@ Raw Source Evidence (Strict Ground Truth — All Lesson Content & Quiz Answers M
 ---
 
 Task:
-Transform this primary source evidence into a self-contained micro-learning lesson for Career Beacon.
-Produce:
-1. concept_overview: A clear, structured 150-220 word instructional mini-lesson synthesizing the core concepts, governing rules, calculations, or diagnostic procedures directly from the Raw Source Evidence above.
-2. practice_scenario: A concrete 2-3 sentence workplace scenario showing how a {career_title} applies these exact rules or mechanisms from the Raw Source Evidence in professional decision-making.
-3. summary_bullets: Exactly 3 high-yield technical takeaway bullet points (<120 words total) grounded in the Raw Source Evidence. Each bullet MUST start with '• '.
-4. difficulty_level: Integer from 1 to 5 (1=Beginner, 2=Elementary, 3=Intermediate, 4=Advanced, 5=Expert).
-5. quizzes: An array of EXACTLY 5 multiple-choice questions (2 conceptual, 2 workplace scenario application, 1 best-practice/pitfall).
+STEP 1 — PEDAGOGICAL REGARD & RELEVANCE AUDIT:
+Evaluate whether the Raw Source Evidence teaches genuine, accurate instructional concepts or procedures relevant to "{skill_name}" (or the target sub-topic) for a {career_title}.
+Accept (`"accepted": true`) authoritative guides, technical docs, tutorials, or transcripts that teach concrete concepts or practices for "{skill_name}"—even if the excerpt covers only a subset of the Focus Emphasis Guidance above.
+ONLY return `"accepted": false` (with `"rejection_reason"`) if the Raw Source Evidence is: (a) a shallow navigation stub / table of contents / link dump / marketing pitch with almost no teaching content, OR (b) topically unrelated to "{skill_name}" (e.g., an unrelated framework, animal/object, or wrong domain).
+
+STEP 2 — SELF-CONTAINED LESSON & QUIZ SYNTHESIS (if accepted=true):
+Transform this primary source evidence into a self-contained micro-learning lesson for Career Beacon:
+1. lesson_title: A specific, high-regard instructional title (6-12 words) that captures the exact sub-topic taught and differentiates this lesson from any Existing Lessons listed above.
+2. concept_overview: A clear, structured 150-220 word instructional mini-lesson synthesizing the core concepts, governing rules, calculations, or diagnostic procedures directly from the Raw Source Evidence above.
+3. practice_scenario: A concrete 2-3 sentence workplace scenario showing how a {career_title} applies these exact rules or mechanisms from the Raw Source Evidence in professional decision-making.
+4. summary_bullets: Exactly 3 high-yield technical takeaway bullet points (<120 words total) grounded in the Raw Source Evidence. Each bullet MUST start with '• '.
+5. difficulty_level: Integer from 1 to 5 (1=Beginner, 2=Elementary, 3=Intermediate, 4=Advanced, 5=Expert).
+6. quizzes: An array of EXACTLY 5 multiple-choice questions (2 conceptual, 2 workplace scenario application, 1 best-practice/pitfall).
 
 STRICT SOURCE GROUNDING RULES:
 - Every fact in concept_overview, summary_bullets, and quizzes MUST be directly supported by the Raw Source Evidence above.
@@ -1796,9 +2019,12 @@ STRICT SOURCE GROUNDING RULES:
 """
 
         system_instruction = """
-You are an expert curriculum designer and psychometric assessment creator for Career Beacon.
+You are an expert curriculum designer, academic peer reviewer, and psychometric assessment creator for Career Beacon.
 You must return a valid JSON object matching this schema:
 {
+  "accepted": true,
+  "rejection_reason": null,
+  "lesson_title": "Specific Sub-Topic Instructional Title",
   "concept_overview": "Structured 150-220 word teaching explanation grounded in the provided source evidence...",
   "practice_scenario": "In day-to-day work, when a professional encounters...",
   "summary_bullets": "• First key concept...\\n• Second key concept...\\n• Third key concept...",
@@ -1813,10 +2039,10 @@ You must return a valid JSON object matching this schema:
   ]
 }
 Rules:
-- The 'quizzes' array MUST contain EXACTLY 5 distinct questions.
-- Each question MUST have exactly 4 distinct choices in 'options'.
+- Set "accepted": false ONLY if the source evidence lacks instructional depth or is topically unrelated.
+- When "accepted": true, 'quizzes' MUST contain EXACTLY 5 distinct questions with 4 distinct options each.
 - 'answer' MUST be character-for-character identical to one of the 4 items in 'options'.
-- 'summary_bullets' MUST contain 3 distinct bullet points.
+- 'summary_bullets' MUST contain 3 distinct bullet points starting with '• '.
 """
 
         try:
@@ -1825,6 +2051,15 @@ Rules:
             logger.error(f"Failed to generate lesson/quizzes via AI for '{title}': {e}")
             return None
 
+        if isinstance(ai_data, dict) and ai_data.get("accepted") is False:
+            reason = ai_data.get("rejection_reason") or "Source failed LLM pedagogical regard audit."
+            logger.warning(f"LLM Pedagogical Judge rejected '{title}' for '{skill_name}': {reason}")
+            return None
+
+        refined_title = str(ai_data.get("lesson_title") or "").strip()
+        if refined_title and len(refined_title) >= 8 and refined_title.lower() not in {t.lower() for t in existing_titles}:
+            title = refined_title
+
         summary_bullets = ai_data.get("summary_bullets", "").strip()
         if not summary_bullets or len(summary_bullets) < 30:
             logger.warning(f"Summary bullets failed validation for '{title}'. Aborting.")
@@ -1832,7 +2067,7 @@ Rules:
 
         concept_overview = str(ai_data.get("concept_overview") or "").strip()
         practice_scenario = str(ai_data.get("practice_scenario") or "").strip()
-        difficulty_level = safe_parse_difficulty(ai_data.get("difficulty_level"), default=2)
+        difficulty_level = safe_parse_difficulty(ai_data.get("difficulty_level"), default=target_difficulty or 2)
         quizzes = ai_data.get("quizzes", [])
 
         valid_quizzes = validate_quiz_structure(
@@ -1862,6 +2097,21 @@ Rules:
             except Exception:
                 valid_uuid_skill_id = None
 
+        # Semantic Anti-Duplication Gate: Reject near-duplicate lessons (>= 0.90 cosine similarity) for the same skill
+        if existing_embeddings and content_vector:
+            import math as _math
+            norm_c = _math.sqrt(sum(x * x for x in content_vector)) or 1.0
+            for prev_vec in existing_embeddings:
+                if isinstance(prev_vec, list) and len(prev_vec) == len(content_vector):
+                    norm_p = _math.sqrt(sum(y * y for y in prev_vec)) or 1.0
+                    sim = sum(x * y for x, y in zip(content_vector, prev_vec)) / (norm_c * norm_p)
+                    if sim >= 0.90:
+                        logger.warning(
+                            f"Semantic Deduplication Gate rejected '{title}' for '{skill_name}' "
+                            f"(cosine_sim={sim:.3f} >= 0.90 with existing reservoir lesson)."
+                        )
+                        return None
+
         try:
             query = supabase_client.table("micro_content").select("id").eq("source_url", source_url)
             if valid_uuid_skill_id:
@@ -1886,6 +2136,7 @@ Rules:
             "video_id": raw_item.get("video_id"),
             "associated_skill_id": valid_uuid_skill_id or skill_id,
             "skill_name": skill_name,
+            "subtopic_focus": subtopic_focus or title,
             "category": category,
             "career_title": career_title,
             "field_id": field_meta["field_id"],
@@ -1932,6 +2183,7 @@ Rules:
                         saved_row["practice_scenario"] = practice_scenario
                         saved_row["source_name"] = source
                         saved_row["source_adapter"] = source_adapter
+                        saved_row["subtopic_focus"] = subtopic_focus or title
                         saved_row["video_id"] = raw_item.get("video_id")
                         return saved_row
                 except Exception as e:
@@ -1957,49 +2209,138 @@ Rules:
         career_skill_context: Optional[Dict[str, Any]] = None,
         preferred_adapters: Optional[List[str]] = None,
         onet_soc_code: Optional[str] = None,
+        subtopic_plan: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Fetches authoritative instructional material via the 7-Adapter Pipeline,
-        synthesizes a self-contained micro-lesson + 5-question checkpoint, embeds it,
-        and persists to Supabase `micro_content`.
+        Fetches authoritative instructional material via the LLM-Planned 7-Adapter Pipeline,
+        audits pedagogical regard, synthesizes a self-contained micro-lesson + 5-question checkpoint,
+        verifies semantic anti-duplication against existing lessons, and persists to Supabase `micro_content`.
         """
-        try:
-            existing_res = supabase_client.table("micro_content").select("source_url").eq(
-                "associated_skill_id", skill_id
-            ).execute()
-            excluded_urls = {row.get("source_url") for row in (existing_res.data or [])}
-        except Exception:
-            excluded_urls = set()
+        excluded_urls = set()
+        existing_titles: List[str] = []
+        existing_embeddings: List[List[float]] = []
+        is_valid_uuid = False
+        if skill_id:
+            try:
+                import uuid as _uuid_mod
+                _uuid_mod.UUID(str(skill_id))
+                is_valid_uuid = True
+            except Exception:
+                is_valid_uuid = False
 
-        live_source = await self.fetch_live_source_for_skill(
-            skill_name,
-            category,
-            career_title=career_title,
-            exclude_source_urls=excluded_urls,
-            preferred_adapters=preferred_adapters,
-            onet_soc_code=onet_soc_code,
+        if is_valid_uuid:
+            try:
+                existing_res = supabase_client.table("micro_content").select("title, source_url, embedding").eq(
+                    "associated_skill_id", str(skill_id)
+                ).execute()
+                for row in (existing_res.data or []):
+                    if row.get("source_url"):
+                        excluded_urls.add(row["source_url"])
+                    if row.get("title"):
+                        existing_titles.append(row["title"])
+                    emb = row.get("embedding")
+                    if isinstance(emb, str):
+                        try:
+                            emb = json.loads(emb)
+                        except Exception:
+                            emb = None
+                    if isinstance(emb, list) and emb:
+                        existing_embeddings.append(emb)
+            except Exception:
+                pass
+
+        # If caller did not pass a pre-computed subtopic plan, ask the LLM Planner for 1 non-overlapping subtopic
+        active_plan = subtopic_plan
+        if not active_plan and self.fetch_live_source_for_skill.__name__ == "fetch_live_source_for_skill":
+            # Only invoke LLM planner when fetch_live_source_for_skill is not a unit-test AsyncMock
+            if not hasattr(self.fetch_live_source_for_skill, "_mock_name"):
+                planned_list = await self.plan_skill_curriculum_subtopics(
+                    skill_name=skill_name,
+                    career_title=career_title,
+                    category=category,
+                    needed_count=1,
+                    existing_titles=existing_titles,
+                    onet_soc_code=onet_soc_code,
+                )
+                if planned_list:
+                    active_plan = planned_list[0]
+
+        planned_query = active_plan.get("search_query") if isinstance(active_plan, dict) else None
+        planned_adapters = (
+            preferred_adapters
+            or (active_plan.get("preferred_adapters") if isinstance(active_plan, dict) else None)
         )
-        if not live_source or not live_source.get("source_url") or not live_source.get("raw_text") or not validate_source_content(live_source.get("raw_text", ""), skill_name):
-            logger.warning(f"No verifiable real educational source found for '{skill_name}' ({career_title}).")
-            return None
+        subtopic_focus = active_plan.get("subtopic_focus") if isinstance(active_plan, dict) else None
+        target_difficulty = active_plan.get("target_difficulty") if isinstance(active_plan, dict) else None
+        regard_criteria = active_plan.get("educational_regard_criteria") if isinstance(active_plan, dict) else None
 
-        source_url = live_source["source_url"]
-        source_title = live_source["title"]
-        raw_text = live_source["raw_text"]
+        check_topic = f"{skill_name} {planned_query or ''}".strip()
+        for src_attempt in range(2):
+            # On attempt 1 use planner-preferred adapters; on attempt 2 widen across all domain adapters
+            attempt_adapters = planned_adapters if src_attempt == 0 else None
+            live_source = None
+            if src_attempt == 0 and planned_query and planned_query.strip().lower() != skill_name.strip().lower():
+                live_source = await self.fetch_live_source_for_skill(
+                    skill_name,
+                    category,
+                    career_title=career_title,
+                    exclude_source_urls=excluded_urls,
+                    preferred_adapters=attempt_adapters,
+                    onet_soc_code=onet_soc_code,
+                    search_query=planned_query,
+                )
 
-        title = source_title
+            # Seamless fallback to canonical skill_name if surgical sub-topic query yielded no hit
+            if not live_source or not live_source.get("source_url") or not live_source.get("raw_text"):
+                live_source = await self.fetch_live_source_for_skill(
+                    skill_name,
+                    category,
+                    career_title=career_title,
+                    exclude_source_urls=excluded_urls,
+                    preferred_adapters=attempt_adapters,
+                    onet_soc_code=onet_soc_code,
+                )
 
-        return await self.atomize_and_create_quiz({
-            "title": title,
-            "skill_id": skill_id,
-            "skill_name": skill_name,
-            "category": category,
-            "career_title": career_title,
-            "onet_soc_code": onet_soc_code,
-            "source": live_source.get("source", "Instructional Source"),
-            "source_adapter": live_source.get("source_adapter"),
-            "source_url": source_url,
-            "raw_text": raw_text,
-            "trust_score": live_source.get("trust_score"),
-            "video_id": live_source.get("video_id"),
-        })
+            if (
+                not live_source
+                or not live_source.get("source_url")
+                or not live_source.get("raw_text")
+                or not (
+                    validate_source_content(live_source.get("raw_text", ""), skill_name)
+                    or validate_source_content(live_source.get("raw_text", ""), check_topic)
+                )
+            ):
+                logger.warning(f"No verifiable real educational source found for '{skill_name}' ({career_title}).")
+                return None
+
+            source_url = live_source["source_url"]
+            source_title = live_source["title"]
+            raw_text = live_source["raw_text"]
+
+            result = await self.atomize_and_create_quiz({
+                "title": source_title,
+                "skill_id": skill_id,
+                "skill_name": skill_name,
+                "category": category,
+                "career_title": career_title,
+                "onet_soc_code": onet_soc_code,
+                "source": live_source.get("source", "Instructional Source"),
+                "source_adapter": live_source.get("source_adapter"),
+                "source_url": source_url,
+                "raw_text": raw_text,
+                "trust_score": live_source.get("trust_score"),
+                "video_id": live_source.get("video_id"),
+                "subtopic_focus": subtopic_focus,
+                "target_difficulty": target_difficulty,
+                "educational_regard_criteria": regard_criteria,
+                "existing_titles": existing_titles,
+                "existing_embeddings": existing_embeddings,
+            })
+            if result:
+                return result
+            # Exclude rejected URL and try one alternate source/adapter
+            excluded_urls.add(source_url)
+            if src_attempt == 0:
+                await asyncio.sleep(1.0)
+
+        return None

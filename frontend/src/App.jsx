@@ -179,6 +179,7 @@ export default function App() {
           return;
         }
         console.error('Failed to resolve user routing:', err);
+        bootstrappedUserIdRef.current = null;
         const fallbackRole = session.user?.user_metadata?.role || 'learner';
         setAppState(fallbackRole === 'mentor' ? 'mentor_onboarding' : 'onboarding');
       }
@@ -224,6 +225,8 @@ export default function App() {
   };
 
   const handleBackToLanding = () => {
+    isRecoveryRef.current = false;
+    setIsRecovery(false);
     setAppState('landing');
   };
 
@@ -242,6 +245,7 @@ export default function App() {
   const handleRecoveryComplete = () => {
     isRecoveryRef.current = false;
     setIsRecovery(false);
+    bootstrappedUserIdRef.current = null;
     setUser(null);
     setAuthConfig({ mode: 'signin', role: 'learner' });
     setAppState('auth');
@@ -340,7 +344,11 @@ export default function App() {
       return (
         <AdminPortal
           user={user}
-          onSignOut={() => {
+          onSignOut={async () => {
+            bootstrappedUserIdRef.current = null;
+            try {
+              await supabase.auth.signOut();
+            } catch {}
             setAppState('landing');
             setUser(null);
             setUserProfile(null);
@@ -361,6 +369,7 @@ export default function App() {
     if (effectiveRole === 'mentor') {
       return (
         <MentorDashboard
+          key={user?.id || 'mentor'}
           user={user}
           userProfile={userProfile}
           onRecalibrateCareer={() => setAppState('mentor_onboarding')}
@@ -370,6 +379,7 @@ export default function App() {
 
     return (
       <Dashboard
+        key={user?.id || 'learner'}
         user={user}
         userProfile={userProfile}
         career={career}

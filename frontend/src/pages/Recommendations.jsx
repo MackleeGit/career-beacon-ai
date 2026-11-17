@@ -160,9 +160,11 @@ export default function Recommendations({
   onNavigateToGraph,
   onAskMentorAboutLesson,
   initialSubTab = 'daily',
+  initialDailyDrop = null,
+  onDailyDropChange,
 }) {
-  const [dailyDrop, setDailyDrop] = useState(null);
-  const [loadingDailyDrop, setLoadingDailyDrop] = useState(true);
+  const [dailyDrop, setDailyDrop] = useState(initialDailyDrop || null);
+  const [loadingDailyDrop, setLoadingDailyDrop] = useState(!initialDailyDrop);
   const [dailyDropError, setDailyDropError] = useState(null);
   const [rerollingDrop, setRerollingDrop] = useState(false);
   const [runningWorker, setRunningWorker] = useState(false);
@@ -303,9 +305,22 @@ export default function Recommendations({
     return () => clearInterval(timer);
   }, [loadingDailyDrop]);
 
-  const fetchDailyDrop = useCallback(async () => {
+  const onDailyDropChangeRef = useRef(onDailyDropChange);
+  useEffect(() => {
+    onDailyDropChangeRef.current = onDailyDropChange;
+  }, [onDailyDropChange]);
+
+  useEffect(() => {
+    if (dailyDrop && dailyDrop !== initialDailyDrop) {
+      onDailyDropChangeRef.current?.(dailyDrop);
+    }
+  }, [dailyDrop, initialDailyDrop]);
+
+  const fetchDailyDrop = useCallback(async ({ silent = false } = {}) => {
     if (!user?.id) return;
-    setLoadingDailyDrop(true);
+    if (!silent) {
+      setLoadingDailyDrop(true);
+    }
     setDailyDropError(null);
     try {
       const res = await getCurrentDailyDrop();
@@ -314,15 +329,24 @@ export default function Recommendations({
       }
     } catch (err) {
       console.error('Failed to load daily drop:', err);
-      setDailyDropError(err.message || 'Could not load daily drop');
+      if (!silent) {
+        setDailyDropError(err.message || 'Could not load daily drop');
+      }
     } finally {
-      setLoadingDailyDrop(false);
+      if (!silent) {
+        setLoadingDailyDrop(false);
+      }
     }
   }, [user?.id]);
 
   useEffect(() => {
+    if (initialDailyDrop?.lessons?.length) {
+      setDailyDrop(initialDailyDrop);
+      setLoadingDailyDrop(false);
+      return;
+    }
     fetchDailyDrop();
-  }, [fetchDailyDrop]);
+  }, [fetchDailyDrop, initialDailyDrop]);
 
   const fetchCompleted = useCallback(async () => {
     if (!user?.id) return;
@@ -352,7 +376,9 @@ export default function Recommendations({
       const res = await rerollDailyDrop();
       if (res?.drop) {
         setDailyDrop(res.drop);
-        setFeedbackToast('Daily drop shuffled to reserve 5-lesson set.');
+        setPassedLessons(new Set());
+        setExpandedLessons(new Set());
+        setFeedbackToast('Daily drop shuffled to reserve lesson set.');
       }
     } catch (err) {
       setFeedbackToast(err.message || 'Could not shuffle drop.');
@@ -370,8 +396,9 @@ export default function Recommendations({
       const res = await triggerDailyDropWorker();
       if (res?.drop) {
         setDailyDrop(res.drop);
+        setPassedLessons(new Set());
         setExpandedLessons(new Set());
-        setFeedbackToast('Daily Drop worker executed: curated 5 fresh lessons + 5 reserve lessons.');
+        setFeedbackToast('Daily Drop worker executed: curated fresh primary and reserve lessons.');
       }
     } catch (err) {
       console.error('Daily Drop worker error:', err);
@@ -433,9 +460,17 @@ export default function Recommendations({
         if (dailyDrop?.lessons?.some((l) => l.id === activeQuizLesson.id)) {
           setDailyDrop((prev) => {
             if (!prev) return prev;
-            const passedCount = (prev.passed_count || 0) + 1;
-            const isComplete = passedCount >= (prev.total_count || 5);
-            const streak = isComplete
+            const targetLesson = prev.lessons.find((l) => l.id === activeQuizLesson.id);
+            const alreadyPassedInDrop = Boolean(targetLesson?.has_passed) || Boolean(res.already_completed);
+            const updatedLessons = prev.lessons.map((l) =>
+              l.id === activeQuizLesson.id ? { ...l, has_passed: true } : l
+            );
+            const totalCount = prev.total_count || prev.lessons.length || 3;
+            const passedCount = alreadyPassedInDrop
+              ? (prev.passed_count || updatedLessons.filter((l) => l.has_passed).length)
+              : Math.min(totalCount, (prev.passed_count || 0) + 1);
+            const isComplete = passedCount >= totalCount;
+            const streak = isComplete && !prev.streak?.completed_today
               ? { ...prev.streak, current_streak: (prev.streak?.current_streak || 0) + 1, completed_today: true }
               : prev.streak;
             return {
@@ -443,9 +478,7 @@ export default function Recommendations({
               passed_count: passedCount,
               is_completed: isComplete,
               streak,
-              lessons: prev.lessons.map((l) =>
-                l.id === activeQuizLesson.id ? { ...l, has_passed: true } : l
-              ),
+              lessons: updatedLessons,
             };
           });
         }
@@ -577,7 +610,7 @@ export default function Recommendations({
             )}
             <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', maxWidth: '620px', lineHeight: 1.55 }}>
               {feedSubTab === 'daily'
-                ? 'Five curated modules calibrated to your priority skill gaps and proficiency history. Complete each 5-question checkpoint (60% to pass) to extend your daily streak.'
+                ? 'Curated modules calibrated to your priority skill gaps and proficiency history. Complete each 5-question checkpoint (60% to pass) to extend your daily streak.'
                 : feedSubTab === 'completed'
                 ? 'Archived micro-learning modules where you passed the 5-question checkpoint. Review concepts and re-take quizzes anytime.'
                 : 'Bookmarked lessons saved for reference during your study sessions.'}
@@ -591,7 +624,7 @@ export default function Recommendations({
                 className="btn btn--secondary btn--sm"
                 onClick={handleTriggerDailyWorker}
                 disabled={runningWorker || loadingDailyDrop}
-                title="Force-run the Daily Drop curation worker (curates 5 fresh lessons + 5 reserve lessons and resets daily shuffle)"
+                title="Force-run the Daily Drop curation worker (curates fresh primary + reserve lessons and resets daily shuffle)"
               >
                 <RotateCcw size={13} />
                 <span>{runningWorker ? 'Running Worker...' : 'Run Daily Drop Worker'}</span>
@@ -661,7 +694,7 @@ export default function Recommendations({
           >
             <Sparkles size={14} />
             <span>Daily Drop</span>
-            <span className="segmented-tab__count">{dailyDrop?.lessons?.length || 5}</span>
+            <span className="segmented-tab__count">{dailyDrop?.lessons?.length ?? 3}</span>
           </button>
 
           <button
@@ -722,10 +755,12 @@ export default function Recommendations({
                 </div>
                 <div>
                   <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Curating Daily Drop
+                    {runningWorker ? 'Curating Daily Drop' : "Loading Today's Daily Drop"}
                   </h4>
                   <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                    Synthesizing 3 personalized micro-lessons for {career?.title || 'your target career'}...
+                    {runningWorker
+                      ? `Curating fresh micro-lessons for ${career?.title || 'your target career'}...`
+                      : `Fetching your saved sprint for ${career?.title || 'your target career'}...`}
                   </p>
                 </div>
               </div>

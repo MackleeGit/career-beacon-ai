@@ -129,10 +129,11 @@ export default function Login({
 
     const timer = setTimeout(async () => {
       try {
+        const escapedClean = clean.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
         const { data, error } = await supabase
           .from('profiles')
           .select('id')
-          .ilike('username', clean)
+          .ilike('username', escapedClean)
           .maybeSingle();
 
         if (error && error.code !== 'PGRST116') {
@@ -291,10 +292,11 @@ export default function Login({
         }
         setLoading(true);
         try {
+          const escapedUser = cleanUser.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
           const { data: prof, error: profErr } = await supabase
             .from('profiles')
             .select('email')
-            .ilike('username', cleanUser)
+            .ilike('username', escapedUser)
             .limit(1)
             .maybeSingle();
 

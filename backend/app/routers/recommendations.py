@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import uuid
@@ -41,6 +41,7 @@ async def submit_lesson_feedback(payload: RecommendationFeedbackPayload, http_re
             record_flagged_item({
                 "id": f"flag-recom-{uuid.uuid4().hex[:8]}",
                 "item_type": "recommendation",
+                "original_item_id": payload.lesson_id,
                 "sender_name": f"Learner ({user_id[:8]}...)",
                 "target_context": f"Learning Sprint ({payload.lesson_title or payload.lesson_id})",
                 "content_snippet": f"Lesson: {payload.lesson_title or payload.lesson_id}",
@@ -117,7 +118,7 @@ async def get_user_recommendations(
     request: Request,
     limit: int = 10,
     offset: int = 0,
-    exclude_ids: Optional[List[str]] = None,
+    exclude_ids: Optional[List[str]] = Query(default=None),
 ):
     """
     Two-Stage Hybrid Recommendation Endpoint:

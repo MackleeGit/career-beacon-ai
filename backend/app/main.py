@@ -86,23 +86,53 @@ async def start_keepalive_ping():
 @app.on_event("startup")
 async def start_autonomous_maintenance_worker():
     """
-    Autonomous Daily Maintenance Worker for Production (Render):
+    Autonomous Scheduled Ingestion & Daily Drop Maintenance Worker for Production (Render):
     1. Runs after an initial 5-minute boot grace period.
-    2. Executes daily drop batch personalization across all enrolled learners once every 24 hours.
-    3. Guarantees that even if no user logs in, every enrolled learner's drop is pre-computed and fresh.
+    2. Operates on a paced 4-hour duty cycle (`14,400s` break between cycles):
+       - Executes a paced `run_nightly_batch(max_skills=4, inter_attempt_delay_sec=15.0)`
+         that cross-references the Commit Ledger (`ingestion_batch_service`) so untouched
+         skills are worked on first and already-worked skills rotate to the back of the queue.
+       - Once per UTC calendar day, executes `run_daily_drop_batch()` across all enrolled
+         learners so every learner's Daily Focus Drop is pre-computed and fresh.
     """
     import asyncio
+    from datetime import datetime, timezone
+
     async def _maintenance_loop():
-        await asyncio.sleep(300)  # Wait 5 minutes after startup before first background batch
+        await asyncio.sleep(300)  # Wait 5 minutes after startup before first background cycle
+        last_daily_drop_date = None
         while True:
             try:
                 from app.services.ingestion_worker import ingestion_worker_service
-                print("[autonomous-worker] Starting scheduled daily drop personalization batch...")
-                res = await ingestion_worker_service.run_daily_drop_batch()
-                print(f"[autonomous-worker] Batch completed: {res.get('curated_count', 0)} learner drops synchronized.")
+
+                # 1. Paced Commit-Ledger-Rotated Skill Ingestion Sweep (every 4h cycle)
+                print("[autonomous-worker] Starting paced 4-hour skill ingestion rotation...")
+                ing_res = await ingestion_worker_service.run_nightly_batch(
+                    max_skills=4,
+                    target_lessons_per_skill=3,
+                    force_all=False,
+                    inter_attempt_delay_sec=15.0,
+                )
+                print(
+                    f"[autonomous-worker] Ingestion rotation completed: "
+                    f"{ing_res.get('seeded_count', 0)} lesson(s) committed, "
+                    f"{ing_res.get('rejected_count', 0)} rejected."
+                )
+
+                # 2. Daily Drop Personalization Batch (once per UTC day)
+                today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if last_daily_drop_date != today_utc:
+                    print(f"[autonomous-worker] Starting scheduled daily drop personalization batch for {today_utc}...")
+                    drop_res = await ingestion_worker_service.run_daily_drop_batch()
+                    last_daily_drop_date = today_utc
+                    print(
+                        f"[autonomous-worker] Daily drop batch completed: "
+                        f"{drop_res.get('curated_count', 0)} learner drops synchronized."
+                    )
             except Exception as e:
                 print(f"[autonomous-worker] Maintenance loop notice: {e}")
-            await asyncio.sleep(86400)  # Run once every 24 hours
+
+            await asyncio.sleep(14400)  # 4-hour break between paced ingestion cycles
 
     asyncio.create_task(_maintenance_loop())
 

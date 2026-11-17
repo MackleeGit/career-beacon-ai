@@ -451,6 +451,8 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
     # simple singular/plural title matches even when query and catalogue vectors
     # were built from different text (for example query title vs title+description).
     CANONICAL_SOURCES = ("onet", "esco", "dual_sourced", "curated_list")
+    exact_matches: List[Dict[str, Any]] = []
+    top_exact: Optional[Dict[str, Any]] = None
     try:
         escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         exact_res = (
@@ -526,11 +528,14 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
                     candidates.append(merged)
 
         # If we had exact matches, prepend top_exact to candidate pool
-        if exact_matches and request.always_show_candidates:
+        if exact_matches and top_exact and request.always_show_candidates:
             top_exact_cand = {
                 "id": top_exact["id"],
                 "title": top_exact["title"],
                 "description": top_exact.get("description", ""),
+                "onet_soc_code": top_exact.get("onet_soc_code"),
+                "source_origin": top_exact.get("source_origin"),
+                "review_status": top_exact.get("review_status"),
                 "similarity": 0.99,
             }
             candidates = [top_exact_cand] + [c for c in candidates if c["id"] != top_exact["id"]]
@@ -546,7 +551,7 @@ async def search_career(request: CareerSearchRequest, http_req: Request):
 
             candidates.sort(
                 key=lambda c: (
-                    float(c.get("similarity") or 0.0) - (0.06 if c.get("track_type") == "licensing_companion" else 0.0)
+                    float(c.get("similarity") or 0.0) - (0.06 if c.get("track_type") == "companion_licensing" else 0.0)
                 ),
                 reverse=True,
             )
@@ -896,10 +901,6 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request, background_
         # The learner's session still proceeds using a provisional career_id
         # resolved at the end of their onboarding, but it carries provenance.
         if not career_id:
-            career_vector = await embedding_service.get_embedding(
-                f"{request.career_title}: {request.career_description}"
-            )
-
             # Write to pending_careers quarantine table
             provisional_skills = [
                 {
@@ -969,20 +970,39 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request, background_
                 is_ai_career = True
 
         # Atomic resolution of all skills
-        db_all_skills_res = supabase_client.table("skills").select("id, name, category").execute()
+        db_all_skills_res = supabase_client.table("skills").select("id, name, category").limit(5000).execute()
         all_canonical_skills = db_all_skills_res.data or []
         canonical_exact_map = {s["name"].lower().strip(): s for s in all_canonical_skills if s.get("name")}
+        valid_skill_ids = {s["id"] for s in all_canonical_skills if s.get("id")}
 
-        user_skills_to_insert = []
+        user_skills_by_id: Dict[str, Dict[str, Any]] = {}
         for sk in request.skills:
             # 1. Resolve real skill_id in database
-            real_skill_id = sk.skill_id
-            if not real_skill_id or real_skill_id.startswith("temp-"):
+            real_skill_id = sk.skill_id if (sk.skill_id and sk.skill_id in valid_skill_ids) else None
+            if not real_skill_id or str(real_skill_id).startswith("temp-"):
                 clean_name = sk.name.strip()
                 exact_hit = canonical_exact_map.get(clean_name.lower())
                 if exact_hit:
                     real_skill_id = exact_hit["id"]
                 else:
+                    # Direct DB check in case catalog exceeds initial limit
+                    try:
+                        direct_hit = (
+                            supabase_client.table("skills")
+                            .select("id, name, category")
+                            .ilike("name", clean_name)
+                            .limit(1)
+                            .execute()
+                        )
+                        if direct_hit.data:
+                            row = direct_hit.data[0]
+                            real_skill_id = row["id"]
+                            canonical_exact_map[clean_name.lower()] = row
+                            valid_skill_ids.add(real_skill_id)
+                    except Exception:
+                        pass
+
+                if not real_skill_id or str(real_skill_id).startswith("temp-"):
                     # Full-catalog semantic deduplication before inserting new skill row
                     try:
                         vec_match = await _match_canonical_skill_by_vector(clean_name, all_canonical_skills)
@@ -991,15 +1011,21 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request, background_
                     except Exception:
                         pass
 
-                    if not real_skill_id or real_skill_id.startswith("temp-"):
+                    if not real_skill_id or str(real_skill_id).startswith("temp-"):
                         new_skill_res = (
                             supabase_client.table("skills")
                             .insert({"name": clean_name, "category": sk.category})
                             .execute()
                         )
+                        if not new_skill_res.data:
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"Failed to persist skill '{clean_name}' to catalog.",
+                            )
                         real_skill_id = new_skill_res.data[0]["id"]
                         all_canonical_skills.append({"id": real_skill_id, "name": clean_name, "category": sk.category})
                         canonical_exact_map[clean_name.lower()] = {"id": real_skill_id, "name": clean_name, "category": sk.category}
+                        valid_skill_ids.add(real_skill_id)
 
             # 2. Bind skill to career_skills junction ONLY if career is an unreviewed AI proposal.
             # Canonical careers already have authoritative taxonomy relations from O*NET/ESCO.
@@ -1015,28 +1041,41 @@ async def save_skills(request: SaveSkillsRequest, http_req: Request, background_
                 except Exception as junction_err:
                     print(f"[save-skills] career_skills non-fatal warning: {junction_err}")
 
-            # 3. Prepare user_skill record with evidence provenance.
+            # 3. Prepare deduplicated user_skill record with evidence provenance.
             user_skill_record = {
                 "user_id":         user_id,
                 "skill_id":        real_skill_id,
                 "proficiency":     sk.proficiency,
                 "evidence_source": "self_reported",
             }
-            user_skills_to_insert.append(user_skill_record)
+            user_skills_by_id[real_skill_id] = user_skill_record
 
-        # 4. Link profile to career
-        supabase_client.table("profiles").update({
-            "target_career_id": career_id
-        }).eq("id", user_id).execute()
+        user_skills_to_insert = list(user_skills_by_id.values())
+
+        # 4. Ensure profiles row exists and link target_career_id (prevents FK violation for fresh Auth users)
+        prof_check = supabase_client.table("profiles").select("id").eq("id", user_id).limit(1).execute()
+        if prof_check.data:
+            supabase_client.table("profiles").update({
+                "target_career_id": career_id
+            }).eq("id", user_id).execute()
+        else:
+            supabase_client.table("profiles").insert({
+                "id": user_id,
+                "role": "learner",
+                "target_career_id": career_id,
+            }).execute()
 
         # 5. Replace learner's skill graph for the active career cleanly
         supabase_client.table("user_skills").delete().eq("user_id", user_id).execute()
         if user_skills_to_insert:
-            supabase_client.table("user_skills").upsert(user_skills_to_insert).execute()
+            supabase_client.table("user_skills").upsert(
+                user_skills_to_insert,
+                on_conflict="user_id,skill_id",
+            ).execute()
 
-        # 6. Immediately compile Day 1 Daily Drop in background so it's ready before learner opens drops
+        # 6. Pre-warm Day 1 Daily Drop cleanly from Supabase reservoir in background
         try:
-            background_tasks.add_task(daily_drop_service.trigger_daily_worker, user_id=user_id, force_fresh=True)
+            background_tasks.add_task(daily_drop_service.get_or_create_daily_drop, user_id=user_id)
         except Exception as bg_err:
             print(f"[save-skills] Non-fatal background drop trigger notice: {bg_err}")
 

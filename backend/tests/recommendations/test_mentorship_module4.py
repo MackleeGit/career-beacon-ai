@@ -152,7 +152,7 @@ async def test_qa_routing_and_pulse_feed(isolated_mentorship_service, monkeypatc
         },
     )
 
-    q = svc.ask_question(
+    q = await svc.ask_question(
         learner_id="learner-fin-1",
         title="How to handle negative free cash flow in terminal value?",
         body="When building a 5-year DCF for a high-growth firm, how do mentors normalize Year 5 FCF?",
@@ -172,3 +172,103 @@ async def test_qa_routing_and_pulse_feed(isolated_mentorship_service, monkeypatc
 
     upvoted = svc.upvote_answer(q["id"], answered["answers"][0]["id"], "learner-fin-1")
     assert upvoted["upvotes"] == 2
+
+
+@pytest.mark.asyncio
+async def test_seven_tier_vector_centroid_firewall_blocks_inter_tier_leaking(isolated_mentorship_service, monkeypatch):
+    """
+    Verifies that the 7-Tier Vector Centroid Firewall separates occupations sharing
+    generic words (e.g. 'Civil Engineer' vs 'Software Engineer', 'Financial Analyst'
+    vs 'Data Science / Analytics Engineer') with zero hardcoded keyword maps.
+    """
+    svc = isolated_mentorship_service
+
+    # Case 1: Civil Engineer (`engineering` tier) must match Engr. David Okafor (`engineering`)
+    # and must NOT leak to Dr. Marcus Vance or Elena Rostova (`tech`).
+    monkeypatch.setattr(
+        svc,
+        "_get_learner_context",
+        lambda learner_id: {
+            "learner_id": learner_id,
+            "full_name": "Civil Engineering Learner",
+            "career_title": "Civil Engineer",
+            "career_description": "Perform structural analysis, CAD blueprint design, fluid mechanics, and infrastructure project safety.",
+            "all_skills": [
+                {"skill_id": "e1", "name": "Structural Analysis", "proficiency": 25, "category": "Engineering"},
+                {"skill_id": "e2", "name": "AutoCAD", "proficiency": 30, "category": "Engineering"},
+            ],
+            "gap_skills": [
+                {"skill_id": "e1", "name": "Structural Analysis", "proficiency": 25, "category": "Engineering"},
+                {"skill_id": "e2", "name": "AutoCAD", "proficiency": 30, "category": "Engineering"},
+            ],
+        },
+    )
+    eng_res = await svc.match_mentors_for_learner("learner-civil-eng")
+    eng_names = [m["full_name"] for m in eng_res["matches"]]
+    assert eng_res["learner_tier"] == "engineering"
+    assert any("David Okafor" in name for name in eng_names)
+    assert not any("Marcus Vance" in name for name in eng_names)
+    assert not any("Elena Rostova" in name for name in eng_names)
+    assert not any("Sarah Jenkins" in name for name in eng_names)
+
+    # Case 2: Financial Analyst (`finance` tier) must match Jonathan Sterling, CFA (`finance`)
+    # and must NOT leak to Elena Rostova (`tech` analytics) or Chef Antoine (`trades_safety`).
+    monkeypatch.setattr(
+        svc,
+        "_get_learner_context",
+        lambda learner_id: {
+            "learner_id": learner_id,
+            "full_name": "Corporate Finance Learner",
+            "career_title": "Financial Analyst",
+            "career_description": "Build 3-statement financial models, DCF valuations, GAAP accounting audits, and variance budgets.",
+            "all_skills": [
+                {"skill_id": "f1", "name": "Financial Modeling", "proficiency": 20, "category": "Finance"},
+                {"skill_id": "f2", "name": "Corporate Finance", "proficiency": 35, "category": "Finance"},
+            ],
+            "gap_skills": [
+                {"skill_id": "f1", "name": "Financial Modeling", "proficiency": 20, "category": "Finance"},
+                {"skill_id": "f2", "name": "Corporate Finance", "proficiency": 35, "category": "Finance"},
+            ],
+        },
+    )
+    fin_res = await svc.match_mentors_for_learner("learner-fin-analyst")
+    fin_names = [m["full_name"] for m in fin_res["matches"]]
+    assert fin_res["learner_tier"] == "finance"
+    assert any("Jonathan Sterling" in name for name in fin_names)
+    assert not any("Elena Rostova" in name for name in fin_names)
+    assert not any("Antoine Moreau" in name for name in fin_names)
+
+    # Case 3 (Dr. Tabulu's Middle-Ground / Interdisciplinary Question):
+    # Bioinformatics Scientist sits on the Voronoi boundary between `science` and `tech`
+    # (genomics/biostatistics + Python/SQL/Machine Learning pipelines).
+    # `learner_active_tiers` bridges both `science` and `tech`, matching Elena Rostova
+    # (ML/Data Science/Statistics) while still blocking unrelated tiers (`finance`, `trades_safety`, `engineering`).
+    monkeypatch.setattr(
+        svc,
+        "_get_learner_context",
+        lambda learner_id: {
+            "learner_id": learner_id,
+            "full_name": "Bioinformatics Learner",
+            "career_title": "Bioinformatics Scientist",
+            "career_description": "Analyze genomic sequencing datasets, PCR assay outputs, biostatistics, and computational biology pipelines using Python and SQL.",
+            "all_skills": [
+                {"skill_id": "b1", "name": "Python", "proficiency": 25, "category": "Bioinformatics"},
+                {"skill_id": "b2", "name": "Statistics", "proficiency": 30, "category": "Bioinformatics"},
+                {"skill_id": "b3", "name": "Machine Learning", "proficiency": 20, "category": "Bioinformatics"},
+            ],
+            "gap_skills": [
+                {"skill_id": "b1", "name": "Python", "proficiency": 25, "category": "Bioinformatics"},
+                {"skill_id": "b2", "name": "Statistics", "proficiency": 30, "category": "Bioinformatics"},
+                {"skill_id": "b3", "name": "Machine Learning", "proficiency": 20, "category": "Bioinformatics"},
+            ],
+        },
+    )
+    bio_res = await svc.match_mentors_for_learner("learner-bioinformatics")
+    bio_names = [m["full_name"] for m in bio_res["matches"]]
+    assert "science" in bio_res["learner_active_tiers"]
+    assert "tech" in bio_res["learner_active_tiers"]
+    assert any("Elena Rostova" in name for name in bio_names)
+    assert not any("Jonathan Sterling" in name for name in bio_names)
+    assert not any("Antoine Moreau" in name for name in bio_names)
+
+

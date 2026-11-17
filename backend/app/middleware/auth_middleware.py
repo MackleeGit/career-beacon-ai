@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import asyncio
 from typing import Optional
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -30,6 +31,7 @@ SUPABASE_URL = settings.supabase_url or os.getenv("SUPABASE_URL", "")
 _jwks_cache: Optional[dict] = None
 _jwks_fetched_at: float = 0
 _JWKS_TTL = 3600  # seconds
+_jwks_lock = asyncio.Lock()
 
 EXCLUDED_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/api/onboarding/fields"}
 
@@ -50,17 +52,20 @@ def _needs_refresh() -> bool:
     return _jwks_cache is None or (time.time() - _jwks_fetched_at) > _JWKS_TTL
 
 
-async def _fetch_jwks() -> dict:
+async def _fetch_jwks(force_refresh: bool = False) -> dict:
     global _jwks_cache, _jwks_fetched_at
-    if not _needs_refresh():
+    if not force_refresh and not _needs_refresh():
         return _jwks_cache
-    supabase_url = settings.supabase_url or os.getenv("SUPABASE_URL", "")
-    url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(url, timeout=8)
-        resp.raise_for_status()
-        _jwks_cache = resp.json()
-        _jwks_fetched_at = time.time()
+    async with _jwks_lock:
+        if not force_refresh and not _needs_refresh():
+            return _jwks_cache
+        supabase_url = settings.supabase_url or os.getenv("SUPABASE_URL", "")
+        url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=8)
+            resp.raise_for_status()
+            _jwks_cache = resp.json()
+            _jwks_fetched_at = time.time()
     return _jwks_cache
 
 
@@ -109,9 +114,13 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             unverified = pyjwt.get_unverified_header(token)
             kid = unverified.get("kid")
 
-            # Fetch / use cached JWKS
+            # Fetch / use cached JWKS; refresh once if key ID was rotated
             jwks = await _fetch_jwks()
-            key_dict = _find_key(kid, jwks)
+            try:
+                key_dict = _find_key(kid, jwks)
+            except ValueError:
+                jwks = await _fetch_jwks(force_refresh=True)
+                key_dict = _find_key(kid, jwks)
 
             # Build public key from JWK (supports both EC/ES256 and RSA/RS256)
             public_key = pyjwt.PyJWK.from_dict(key_dict).key
@@ -133,6 +142,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Token expired"})
         except pyjwt.PyJWTError as jwt_err:
             return JSONResponse(status_code=401, content={"detail": f"Invalid authentication token: {jwt_err}"})
+        except ValueError:
+            return JSONResponse(status_code=401, content={"detail": "Invalid or unrecognized signing key"})
         except Exception as exc:
             import logging
             logging.getLogger("uvicorn.error").error(f"Internal auth error: {exc}", exc_info=True)

@@ -65,7 +65,7 @@ async def _call_groq(prompt: str, system_instruction: str, client: httpx.AsyncCl
             "response_format": {"type": "json_object"},
             "temperature": 0.3,
         },
-        timeout=30.0,
+        timeout=45.0,
     )
     if response.status_code != 200:
         raise httpx.HTTPStatusError(
@@ -74,7 +74,11 @@ async def _call_groq(prompt: str, system_instruction: str, client: httpx.AsyncCl
             response=response,
         )
     data = response.json()
-    return _parse_json_Clean(data["choices"][0]["message"]["content"])
+    choices = data.get("choices") or []
+    if not choices:
+        raise ValueError("Groq returned empty choices list.")
+    content = (choices[0].get("message") or {}).get("content", "")
+    return _parse_json_Clean(content)
 
 
 async def _call_gemini(prompt: str, system_instruction: str, client: httpx.AsyncClient) -> dict:
@@ -86,12 +90,12 @@ async def _call_gemini(prompt: str, system_instruction: str, client: httpx.Async
     if system_instruction:
         payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
-    for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+    for model_name in ("gemini-flash-lite-latest", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-2.5-flash"):
         response = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             f"?key={settings.gemini_api_key}",
             json=payload,
-            timeout=30.0,
+            timeout=45.0,
         )
         if response.status_code == 404:
             continue
@@ -102,7 +106,13 @@ async def _call_gemini(prompt: str, system_instruction: str, client: httpx.Async
                 response=response,
             )
         data = response.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        candidates = data.get("candidates") or []
+        if not candidates:
+            raise ValueError("Gemini returned empty candidates list (possibly safety-filtered).")
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        if not parts:
+            raise ValueError("Gemini returned candidate with empty parts.")
+        text = next((p.get("text", "") for p in parts if not p.get("thought") and p.get("text")), parts[0].get("text", ""))
         return _parse_json_Clean(text)
 
     raise httpx.HTTPStatusError(
@@ -166,7 +176,7 @@ class AIService:
         if settings.groq_api_key and settings.groq_api_key != "your_groq_api_key_here":
             self._providers.append(("Groq/gpt-oss-120b", _call_groq))
         if settings.gemini_api_key and settings.gemini_api_key != "your_gemini_api_key_here":
-            self._providers.append(("Gemini/gemini-2.0-flash", _call_gemini))
+            self._providers.append(("Gemini/gemini-flash-lite-latest", _call_gemini))
         if not self._providers:
             raise RuntimeError("No AI providers configured. Set GROQ_API_KEY or GEMINI_API_KEY in .env")
 

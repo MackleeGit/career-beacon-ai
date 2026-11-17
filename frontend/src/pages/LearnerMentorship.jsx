@@ -1,5 +1,6 @@
 // src/pages/LearnerMentorship.jsx
 import { useState, useEffect, useRef } from 'react';
+import { supabase } from '../lib/SupabaseClient';
 import {
   getMentorMatches,
   requestMentorConnection,
@@ -16,7 +17,7 @@ import {
   bookMentorshipSession,
   getMentorshipSessions,
   cancelMentorshipSession,
-  getSessionIcsDownloadUrl,
+  downloadSessionIcs,
   flagContentItem,
 } from '../lib/api';
 import Toast from '../components/Toast';
@@ -47,6 +48,12 @@ import {
   ArrowLeft,
 } from '../components/Icons';
 
+let _ecosystemCache = null;
+let _ecosystemCacheUserId = null;
+let _ecosystemCacheTime = 0;
+const ECOSYSTEM_CACHE_TTL = 90000;
+const VALID_SUBTABS = ['matches', 'pulse', 'qa', 'messages', 'sessions'];
+
 export default function LearnerMentorship({
   user,
   career,
@@ -56,8 +63,9 @@ export default function LearnerMentorship({
   prefillQuestion = null,
   onClearPrefillQuestion,
 }) {
-  const [subTab, setSubTab] = useState(initialSubTab); // 'matches' | 'pulse' | 'qa' | 'sessions'
-  const [matchData, setMatchData] = useState({ matches: [], filtered_out_by_anti_desperation: 0 });
+  const sanitizedSubTab = VALID_SUBTABS.includes(initialSubTab) ? initialSubTab : 'matches';
+  const [subTab, setSubTab] = useState(sanitizedSubTab); // 'matches' | 'pulse' | 'qa' | 'messages' | 'sessions'
+  const [matchData, setMatchData] = useState(() => _ecosystemCache?.matchData || { matches: [], filtered_out_by_anti_desperation: 0 });
 
   const formatMsgTime = (isoString) => {
     if (!isoString) return '';
@@ -113,12 +121,12 @@ export default function LearnerMentorship({
       setSavingLearnerGoogle(false);
     }
   };
-  const [connections, setConnections] = useState([]);
-  const [pulsePosts, setPulsePosts] = useState([]);
+  const [connections, setConnections] = useState(() => _ecosystemCache?.connections || []);
+  const [pulsePosts, setPulsePosts] = useState(() => _ecosystemCache?.pulsePosts || []);
   const [pulseFilter, setPulseFilter] = useState('');
-  const [questions, setQuestions] = useState([]);
-  const [sessions, setSessions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [questions, setQuestions] = useState(() => _ecosystemCache?.questions || []);
+  const [sessions, setSessions] = useState(() => _ecosystemCache?.sessions || []);
+  const [loading, setLoading] = useState(() => !_ecosystemCache);
   const [toastMessage, setToastMessage] = useState(null);
 
   // Connection modal state
@@ -180,7 +188,7 @@ export default function LearnerMentorship({
 
   useEffect(() => {
     if (initialSubTab) {
-      setSubTab(initialSubTab);
+      setSubTab(VALID_SUBTABS.includes(initialSubTab) ? initialSubTab : 'matches');
     }
     if (initialConnectionId) {
       setSelectedConnId(initialConnectionId);
@@ -199,16 +207,35 @@ export default function LearnerMentorship({
     }
   }, [prefillQuestion]);
 
-  const loadEcosystem = async () => {
-    setLoading(true);
+  const loadEcosystem = async (force = false) => {
+    const cacheMatchesUser = _ecosystemCacheUserId && _ecosystemCacheUserId === user?.id;
+    if (!cacheMatchesUser) {
+      _ecosystemCache = null;
+      _ecosystemCacheTime = 0;
+    }
+    const hasFreshCache = _ecosystemCache && cacheMatchesUser && (Date.now() - _ecosystemCacheTime < ECOSYSTEM_CACHE_TTL);
+    if (hasFreshCache && !force) {
+      setLoading(false);
+      return;
+    }
+    if (!_ecosystemCache || force) {
+      setLoading(true);
+    }
     try {
-      const [mRes, cRes, pRes, qRes, sRes] = await Promise.all([
+      const results = await Promise.allSettled([
         getMentorMatches(false),
         getMentorshipConnections('learner'),
         getMentorPulseFeed(),
         getMentorshipQuestions(),
         getMentorshipSessions('learner'),
       ]);
+
+      const mRes = results[0].status === 'fulfilled' ? results[0].value : (_ecosystemCache?.matchData || { matches: [], filtered_out_by_anti_desperation: 0 });
+      const cRes = results[1].status === 'fulfilled' ? results[1].value : (_ecosystemCache?.connections || { connections: [] });
+      const pRes = results[2].status === 'fulfilled' ? results[2].value : (_ecosystemCache?.pulsePosts || { posts: [] });
+      const qRes = results[3].status === 'fulfilled' ? results[3].value : (_ecosystemCache?.questions || { questions: [] });
+      const sRes = results[4].status === 'fulfilled' ? results[4].value : (_ecosystemCache?.sessions || { sessions: [] });
+
       setMatchData(mRes);
       const conns = cRes.connections || [];
       setConnections(conns);
@@ -218,12 +245,24 @@ export default function LearnerMentorship({
       } else if (accepted.length > 0 && !selectedConnId) {
         setSelectedConnId(accepted[0].id);
       }
-      setPulsePosts(pRes.posts || []);
-      setQuestions(qRes.questions || []);
+      const posts = pRes.posts || [];
+      setPulsePosts(posts);
+      const qList = qRes.questions || [];
+      setQuestions(qList);
       const sessList = (sRes.sessions || []).sort(
         (a, b) => new Date(a.slot_start_iso) - new Date(b.slot_start_iso)
       );
       setSessions(sessList);
+
+      _ecosystemCache = {
+        matchData: mRes,
+        connections: conns,
+        pulsePosts: posts,
+        questions: qList,
+        sessions: sessList,
+      };
+      _ecosystemCacheUserId = user?.id || null;
+      _ecosystemCacheTime = Date.now();
     } catch (err) {
       console.error('Failed to load learner mentorship hub:', err);
     } finally {
@@ -233,12 +272,24 @@ export default function LearnerMentorship({
 
   useEffect(() => {
     loadEcosystem();
-  }, []);
+  }, [user?.id]);
 
   const activeConnection = connections.find((c) => c.id === selectedConnId);
 
   useEffect(() => {
-    if (!selectedConnId || !activeConnection) return;
+    if (initialSubTab && VALID_SUBTABS.includes(initialSubTab)) {
+      setSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  useEffect(() => {
+    if (initialConnectionId) {
+      setSelectedConnId(initialConnectionId);
+    }
+  }, [initialConnectionId]);
+
+  useEffect(() => {
+    if (!selectedConnId || !activeConnection || subTab !== 'messages') return;
     let isMounted = true;
     const fetchMsgs = () => {
       getConnectionMessages(selectedConnId)
@@ -253,7 +304,7 @@ export default function LearnerMentorship({
       isMounted = false;
       clearInterval(interval);
     };
-  }, [selectedConnId, activeConnection?.id]);
+  }, [selectedConnId, activeConnection?.id, subTab]);
 
   const handleSendConnectionRequest = async (e) => {
     e.preventDefault();
@@ -267,7 +318,7 @@ export default function LearnerMentorship({
       );
       setConnectingMentor(null);
       setGoalNote('');
-      await loadEcosystem();
+      await loadEcosystem(true);
       if (res.connection?.status === 'accepted') {
         setSelectedConnId(res.connection.id);
         setToastMessage(
@@ -391,7 +442,6 @@ export default function LearnerMentorship({
       const newSlots = slotsRes.slots || [];
       setAvailableSlots(newSlots);
       setSelectedSlotIso(newSlots[0]?.slot_start_iso || '');
-      setSessionsSubView('chat');
     } catch (err) {
       setToastMessage(err.message || 'Failed to book session.');
     } finally {
@@ -415,6 +465,14 @@ export default function LearnerMentorship({
   };
 
   const acceptedConnections = connections.filter((c) => c.status === 'accepted');
+  const connectedMentorIds = new Set(acceptedConnections.map((c) => c.mentor_id));
+  const discoverMentors = (matchData.matches || []).filter(
+    (m) => m.connection_status !== 'accepted' && !connectedMentorIds.has(m.mentor_id)
+  );
+  const upcomingSessions = sessions.filter((s) => s.status === 'confirmed');
+  const previousSessions = [...sessions]
+    .filter((s) => s.status !== 'confirmed')
+    .sort((a, b) => new Date(b.slot_start_iso) - new Date(a.slot_start_iso));
   const displayedPulse = pulseFilter
     ? pulsePosts.filter((p) => p.post_type === pulseFilter)
     : pulsePosts;
@@ -441,8 +499,8 @@ export default function LearnerMentorship({
             onClick={() => setSubTab('matches')}
           >
             <Compass size={14} />
-            <span>Matched Mentors</span>
-            <span className="segmented-tab__count">{matchData.matches?.length || 0}</span>
+            <span>Find Mentor</span>
+            <span className="segmented-tab__count">{discoverMentors.length}</span>
           </button>
           <button
             type="button"
@@ -469,13 +527,24 @@ export default function LearnerMentorship({
           <button
             type="button"
             role="tab"
+            aria-selected={subTab === 'messages'}
+            className={`segmented-tab ${subTab === 'messages' ? 'segmented-tab--active' : ''}`}
+            onClick={() => setSubTab('messages')}
+          >
+            <MessageSquare size={14} />
+            <span>Direct Messages</span>
+            <span className="segmented-tab__count">{acceptedConnections.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={subTab === 'sessions'}
             className={`segmented-tab ${subTab === 'sessions' ? 'segmented-tab--active' : ''}`}
             onClick={() => setSubTab('sessions')}
           >
-            <MessageSquare size={14} />
-            <span>Messages &amp; 1:1 Sessions</span>
-            <span className="segmented-tab__count">{acceptedConnections.length}</span>
+            <Calendar size={14} />
+            <span>1:1 Sessions</span>
+            <span className="segmented-tab__count">{upcomingSessions.length}</span>
           </button>
         </div>
 
@@ -494,13 +563,118 @@ export default function LearnerMentorship({
       </div>
 
       {loading ? (
-        <MentorCardSkeleton count={3} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div
+            style={{
+              padding: '12px 16px',
+              borderRadius: 'var(--r-md)',
+              background: 'var(--surface-subtle)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              fontSize: '0.86rem',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <div className="spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }} />
+            <span>Matching verified mentors and calculating skill overlap...</span>
+          </div>
+          <MentorCardSkeleton count={3} />
+        </div>
       ) : (
         <>
-          {/* SUB-TAB 1: MATCHED MENTORS */}
+          {/* SUB-TAB 1: CONNECTED MENTORS + FIND MENTOR */}
           {subTab === 'matches' && (
             <div>
-              {/* Quiet, trustworthy explanation banner */}
+              {/* Connected Mentors Section (always visible separately from Find Mentor search/matching) */}
+              {acceptedConnections.length > 0 && (
+                <div style={{ marginBottom: '26px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '8px' }}>
+                    <h3 style={{ fontSize: '1.02rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <UserCheck size={16} style={{ color: 'var(--status-success)' }} />
+                      <span>Connected Mentors</span>
+                      <span className="badge badge--success" style={{ fontSize: '0.72rem' }}>
+                        {acceptedConnections.length}
+                      </span>
+                    </h3>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
+                    {acceptedConnections.map((conn) => {
+                      const m = conn.mentor || {};
+                      const mentorName = m.full_name || conn.mentor_name || 'Mentor';
+                      const mentorHeadline = m.headline || conn.mentor_headline || conn.mentor_domain || 'Industry Practitioner';
+                      return (
+                        <div
+                          key={conn.id}
+                          className="card"
+                          style={{
+                            padding: '18px 20px',
+                            borderColor: 'var(--status-success-bd, var(--border))',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            gap: '12px',
+                          }}
+                        >
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                              <span className="badge badge--success" style={{ fontSize: '0.7rem' }}>
+                                <Check size={11} /> Connected
+                              </span>
+                              {conn.unread_count > 0 && (
+                                <span className="badge badge--accent" style={{ fontSize: '0.7rem' }}>
+                                  {conn.unread_count} unread
+                                </span>
+                              )}
+                            </div>
+                            <h4 style={{ fontSize: '1.02rem', margin: '0 0 3px' }}>{mentorName}</h4>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--accent)', fontWeight: 500, marginBottom: '6px' }}>
+                              {mentorHeadline}
+                            </div>
+                            {(m.expertise_skills || []).length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '6px' }}>
+                                {m.expertise_skills.slice(0, 4).map((sk) => (
+                                  <span key={sk} className="badge badge--neutral" style={{ fontSize: '0.69rem' }}>
+                                    {sk}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                              {m.primary_domain || conn.mentor_domain || 'Active Mentorship'}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn--primary btn--sm"
+                              onClick={() => {
+                                setSelectedConnId(conn.id);
+                                setSubTab('messages');
+                              }}
+                            >
+                              <MessageSquare size={13} />
+                              <span>Open Chat</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Find Mentor Discovery Header + Explanation Banner */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h3 style={{ fontSize: '1.02rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Compass size={16} style={{ color: 'var(--accent)' }} />
+                  <span>Find Mentor</span>
+                </h3>
+              </div>
+
               <div
                 style={{
                   marginBottom: '18px',
@@ -518,7 +692,7 @@ export default function LearnerMentorship({
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                   <ShieldCheck size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                   <span>
-                    Showing mentors aligned with <strong style={{ color: 'var(--text-primary)' }}>{career?.title || matchData.learner_career}</strong> and your current skill gaps
+                    Discover mentors aligned with <strong style={{ color: 'var(--text-primary)' }}>{career?.title || matchData.learner_career}</strong> and your current skill gaps
                     {matchData.filtered_out_by_anti_desperation > 0
                       ? ` (${matchData.filtered_out_by_anti_desperation} unrelated profiles hidden)`
                       : ''}.
@@ -529,12 +703,18 @@ export default function LearnerMentorship({
                 </span>
               </div>
 
-              {matchData.matches?.length === 0 ? (
+              {discoverMentors.length === 0 ? (
                 <div className="card" style={{ textAlign: 'center', padding: '44px 24px' }}>
-                  <h3 style={{ marginBottom: '6px' }}>No direct mentor matches above threshold</h3>
+                  <h3 style={{ marginBottom: '6px' }}>
+                    {acceptedConnections.length > 0
+                      ? 'You are connected with all currently matched mentors'
+                      : 'No direct mentor matches above threshold'}
+                  </h3>
                   <p style={{ color: 'var(--text-secondary)', maxWidth: '520px', margin: '0 auto 18px', fontSize: '0.88rem' }}>
-                    {matchData.zero_match_reason ||
-                      'We only recommend 1-on-1 mentors whose verified skills overlap with your career path.'}
+                    {acceptedConnections.length > 0
+                      ? 'Message or book 1-on-1 sessions with your connected mentors above, or ask a question on the Q&A Board.'
+                      : matchData.zero_match_reason ||
+                        'We only recommend 1-on-1 mentors whose verified skills overlap with your career path.'}
                   </p>
                   <button
                     type="button"
@@ -550,7 +730,7 @@ export default function LearnerMentorship({
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
-                  {matchData.matches.map((mentor) => {
+                  {discoverMentors.map((mentor) => {
                     const connStatus = mentor.connection_status;
                     return (
                       <div
@@ -1137,14 +1317,14 @@ export default function LearnerMentorship({
             </div>
           )}
 
-          {/* SUB-TAB 4: DIRECT MESSAGES & 1-ON-1 BOOKING */}
-          {subTab === 'sessions' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          {/* SUB-TAB 4: DIRECT MESSAGES (Connected mentors sidebar + thread) */}
+          {subTab === 'messages' && (
+            <div>
               {acceptedConnections.length === 0 ? (
                 <div className="card" style={{ textAlign: 'center', padding: '44px 24px' }}>
                   <h3 style={{ marginBottom: '6px' }}>Connect with a mentor first</h3>
                   <p style={{ color: 'var(--text-secondary)', maxWidth: '480px', margin: '0 auto 16px', fontSize: '0.88rem' }}>
-                    Direct messaging and 1-on-1 session booking unlock once a mentor accepts your connection request.
+                    Direct messaging unlocks once a mentor accepts your connection request.
                   </p>
                   <button
                     type="button"
@@ -1152,40 +1332,94 @@ export default function LearnerMentorship({
                     onClick={() => setSubTab('matches')}
                   >
                     <Compass size={14} />
-                    <span>Browse Matched Mentors</span>
+                    <span>Find a Mentor</span>
                   </button>
                 </div>
               ) : (
-                /* Direct Messages & Scheduled Sessions (Sessions scheduled by mentors) */
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                  <div className="card">
-                    {/* Header */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                        <h3 style={{ fontSize: '1.05rem', margin: 0 }}>Direct Messages</h3>
-                        {acceptedConnections.length > 1 ? (
-                          <select
-                            className="input"
-                            value={selectedConnId || ''}
-                            onChange={(e) => setSelectedConnId(e.target.value)}
-                            style={{ width: 'auto', padding: '4px 10px', fontSize: '0.82rem' }}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                    gap: '16px',
+                    alignItems: 'start',
+                  }}
+                >
+                  {/* Left: Connected Mentors Switcher */}
+                  <div className="card" style={{ padding: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 4px' }}>
+                      <h3 style={{ fontSize: '0.96rem', margin: 0 }}>Connected Mentors ({acceptedConnections.length})</h3>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {acceptedConnections.map((c) => {
+                        const isSelected = c.id === selectedConnId;
+                        const mName = c.mentor?.full_name || c.mentor_name || 'Connected Mentor';
+                        const mHeadline = c.mentor?.headline || c.mentor_headline || c.mentor_domain || '';
+                        const lastText = c.last_message?.text || 'No messages yet';
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => setSelectedConnId(c.id)}
+                            style={{
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '10px 12px',
+                              borderRadius: 'var(--r-sm)',
+                              border: '1px solid',
+                              borderColor: isSelected ? 'var(--accent)' : 'var(--border-subtle)',
+                              background: isSelected ? 'var(--accent-soft)' : 'var(--surface-subtle)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '3px',
+                            }}
                           >
-                            {acceptedConnections.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.mentor?.full_name || 'Connected Mentor'}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="badge badge--accent" style={{ fontSize: '0.78rem' }}>
-                            {activeConnection?.mentor?.full_name || 'Connected Mentor'}
-                          </span>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                {mName}
+                              </span>
+                              {c.unread_count > 0 && (
+                                <span className="badge badge--accent" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
+                                  {c.unread_count} new
+                                </span>
+                              )}
+                            </div>
+                            {mHeadline && (
+                              <span style={{ fontSize: '0.74rem', color: 'var(--accent)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {mHeadline}
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {lastText}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Right: Active Conversation Thread */}
+                  <div className="card" style={{ gridColumn: 'span 2' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+                      <div>
+                        <h3 style={{ fontSize: '1.05rem', margin: 0 }}>
+                          {activeConnection?.mentor?.full_name || activeConnection?.mentor_name || 'Direct Messages'}
+                        </h3>
+                        {(activeConnection?.mentor?.headline || activeConnection?.mentor_headline) && (
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            {activeConnection?.mentor?.headline || activeConnection?.mentor_headline}
+                          </div>
                         )}
                       </div>
 
-                      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                        1-on-1 sessions are scheduled by mentors
-                      </span>
+                      <button
+                        type="button"
+                        className="btn btn--secondary btn--xs"
+                        onClick={() => setSubTab('sessions')}
+                      >
+                        <Calendar size={13} />
+                        <span>View 1:1 Sessions ({upcomingSessions.length})</span>
+                      </button>
                     </div>
 
                     {/* Messages Container */}
@@ -1205,7 +1439,7 @@ export default function LearnerMentorship({
                     >
                       {messages.length === 0 ? (
                         <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem', margin: 'auto', padding: '24px' }}>
-                          No messages yet. Say hello to {activeConnection?.mentor?.full_name || 'your mentor'}!
+                          No messages yet. Say hello to {activeConnection?.mentor?.full_name || activeConnection?.mentor_name || 'your mentor'}!
                         </div>
                       ) : (
                         messages.map((m) => {
@@ -1255,7 +1489,7 @@ export default function LearnerMentorship({
                       <input
                         type="text"
                         className="input"
-                        placeholder={`Write a message to ${activeConnection?.mentor?.full_name || 'your mentor'}...`}
+                        placeholder={`Write a message to ${activeConnection?.mentor?.full_name || activeConnection?.mentor_name || 'your mentor'}...`}
                         value={msgInput}
                         onChange={(e) => setMsgInput(e.target.value)}
                         style={{ flex: 1 }}
@@ -1266,120 +1500,208 @@ export default function LearnerMentorship({
                       </button>
                     </form>
                   </div>
+                </div>
+              )}
+            </div>
+          )}
 
-                  {/* Scheduled Sessions List below chat (Ranked by proximity in time) */}
-                  <div className="card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                      <div>
-                        <h3 style={{ fontSize: '1.02rem', margin: 0 }}>
-                          Scheduled 1-on-1 Sessions ({sessions.length})
-                        </h3>
-                        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
-                          Sessions scheduled by your mentors, ranked by proximity in time.
-                        </p>
-                      </div>
-                      <span className="badge badge--neutral" style={{ fontSize: '0.72rem' }}>
-                        Ranked by proximity
-                      </span>
-                    </div>
-
-                    {sessions.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--text-secondary)' }}>
-                        <Calendar size={28} style={{ color: 'var(--text-muted)', marginBottom: '8px', opacity: 0.7 }} />
-                        <h4 style={{ margin: '0 0 4px', fontSize: '0.94rem', color: 'var(--text-primary)' }}>
-                          No upcoming 1-on-1 sessions scheduled
-                        </h4>
-                        <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: '440px', marginLeft: 'auto', marginRight: 'auto' }}>
-                          Your mentor will schedule 1-on-1 review sessions with you based on your skill gaps. Message them above to coordinate availability.
-                        </p>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {sessions.map((sess) => (
-                          <div
-                            key={sess.id}
-                            style={{
-                              padding: '14px 16px',
-                              background: 'var(--surface-subtle)',
-                              border: '1px solid var(--border)',
-                              borderRadius: 'var(--r-sm)',
-                            }}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
-                              <div>
-                                <div style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
-                                  {sess.topic} · with <span style={{ color: 'var(--accent)' }}>{sess.mentor_name}</span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '3px', flexWrap: 'wrap' }}>
-                                  <Clock size={12} />
-                                  <span>{sess.display_label || new Date(sess.slot_start_iso).toLocaleString()}</span>
-                                  <span>· ID:</span>
-                                  <code>{sess.meeting_code}</code>
-                                </div>
-                                {sess.focus_skill && (
-                                  <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-                                    Focus skill: <strong>{sess.focus_skill}</strong>
-                                    {sess.endorsed_skill && (
-                                      <span style={{ color: 'var(--status-success)', marginLeft: '8px', fontWeight: 600 }}>
-                                        Endorsed (+15% Proficiency)
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              <div>
-                                {getTimeUntilBadge(sess.slot_start_iso)}
-                              </div>
-                            </div>
-
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
-                              {sess.meeting_url && sess.status === 'confirmed' && (
-                                <a
-                                  href={sess.meeting_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="btn btn--primary btn--xs"
-                                >
-                                  <Video size={13} />
-                                  <span>Join Video Room ({sess.meeting_code})</span>
-                                </a>
-                              )}
-                              {sess.google_calendar_url && (
-                                <a
-                                  href={sess.google_calendar_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="btn btn--secondary btn--xs"
-                                >
-                                  <Calendar size={13} />
-                                  <span>Google Calendar</span>
-                                </a>
-                              )}
-                              <a
-                                href={getSessionIcsDownloadUrl(sess.id)}
-                                download
-                                className="btn btn--secondary btn--xs"
-                              >
-                                <Download size={13} />
-                                <span>Download .ics</span>
-                              </a>
-                              {sess.status === 'confirmed' && (
-                                <button
-                                  type="button"
-                                  className="btn btn--ghost btn--xs"
-                                  onClick={() => handleCancelSession(sess.id)}
-                                >
-                                  Cancel Slot
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+          {/* SUB-TAB 5: 1-ON-1 SESSIONS (Upcoming & Previous separated cleanly) */}
+          {subTab === 'sessions' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              {/* Upcoming Confirmed Sessions */}
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.05rem', margin: 0 }}>
+                      Upcoming 1-on-1 Sessions ({upcomingSessions.length})
+                    </h3>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                      Confirmed sessions scheduled with your mentors, ranked by proximity in time.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="badge badge--neutral" style={{ fontSize: '0.72rem' }}>
+                      Ranked by proximity
+                    </span>
+                    {acceptedConnections.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn--secondary btn--xs"
+                        onClick={() => setSubTab('messages')}
+                      >
+                        <MessageSquare size={12} />
+                        <span>Message Mentor</span>
+                      </button>
                     )}
                   </div>
                 </div>
-              )}
+
+                {upcomingSessions.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--text-secondary)' }}>
+                    <Calendar size={28} style={{ color: 'var(--text-muted)', marginBottom: '8px', opacity: 0.7 }} />
+                    <h4 style={{ margin: '0 0 4px', fontSize: '0.94rem', color: 'var(--text-primary)' }}>
+                      No upcoming 1-on-1 sessions scheduled
+                    </h4>
+                    <p style={{ margin: '0 auto', fontSize: '0.82rem', color: 'var(--text-muted)', maxWidth: '440px' }}>
+                      {acceptedConnections.length > 0
+                        ? 'Your mentor will schedule 1-on-1 sessions with you based on your skill gaps. Message them in Direct Messages to coordinate availability.'
+                        : 'Connect with a mentor in Find Mentor first so they can schedule 1-on-1 coaching sessions with you.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {upcomingSessions.map((sess) => (
+                      <div
+                        key={sess.id}
+                        style={{
+                          padding: '14px 16px',
+                          background: 'var(--surface-subtle)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--r-sm)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-primary)' }}>
+                              {sess.topic} · with <span style={{ color: 'var(--accent)' }}>{sess.mentor_name}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '3px', flexWrap: 'wrap' }}>
+                              <Clock size={12} />
+                              <span>{sess.display_label || new Date(sess.slot_start_iso).toLocaleString()}</span>
+                              <span>· ID:</span>
+                              <code>{sess.meeting_code}</code>
+                            </div>
+                            {sess.focus_skill && (
+                              <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                                Focus skill: <strong>{sess.focus_skill}</strong>
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            {getTimeUntilBadge(sess.slot_start_iso)}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
+                          {sess.meeting_url && (
+                            <a
+                              href={sess.meeting_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn btn--primary btn--xs"
+                            >
+                              <Video size={13} />
+                              <span>Join Video Room ({sess.meeting_code})</span>
+                            </a>
+                          )}
+                          {sess.google_calendar_url && (
+                            <a
+                              href={sess.google_calendar_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn btn--secondary btn--xs"
+                            >
+                              <Calendar size={13} />
+                              <span>Google Calendar</span>
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn--secondary btn--xs"
+                            onClick={() =>
+                              downloadSessionIcs(sess.id).catch((err) =>
+                                setToastMessage(err.message || 'Failed to download calendar invite.')
+                              )
+                            }
+                          >
+                            <Download size={13} />
+                            <span>Download .ics</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn--ghost btn--xs"
+                            onClick={() => handleCancelSession(sess.id)}
+                          >
+                            Cancel Slot
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Previous / Completed & Cancelled Sessions */}
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.02rem', margin: 0 }}>
+                      Previous Sessions &amp; Endorsements ({previousSessions.length})
+                    </h3>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                      Completed mentorship sessions, mentor feedback notes, and skill proficiency endorsements.
+                    </p>
+                  </div>
+                </div>
+
+                {previousSessions.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '22px 16px', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                    No completed or past sessions yet.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {previousSessions.map((sess) => {
+                      const endorsedName =
+                        typeof sess.endorsed_skill === 'object'
+                          ? sess.endorsed_skill?.skill_name
+                          : sess.endorsed_skill;
+                      return (
+                        <div
+                          key={sess.id}
+                          style={{
+                            padding: '13px 16px',
+                            background: 'var(--surface-subtle)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--r-sm)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <div>
+                              <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                {sess.topic}
+                              </strong>
+                              <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                {' '}· with {sess.mentor_name}
+                              </span>
+                            </div>
+                            <span
+                              className={`badge ${sess.status === 'completed' ? 'badge--success' : 'badge--neutral'}`}
+                              style={{ textTransform: 'capitalize', fontSize: '0.72rem' }}
+                            >
+                              {sess.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                            {sess.display_label || new Date(sess.slot_start_iso).toLocaleString()}
+                            {sess.focus_skill ? ` · Focus: ${sess.focus_skill}` : ''}
+                          </div>
+                          {endorsedName && (
+                            <div style={{ marginTop: '6px', fontSize: '0.8rem', color: 'var(--status-success)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                              <ShieldCheck size={13} />
+                              <span>Endorsed Skill: {endorsedName} (+15% Proficiency)</span>
+                            </div>
+                          )}
+                          {sess.feedback_note && (
+                            <div style={{ marginTop: '6px', padding: '8px 10px', background: 'var(--surface)', borderRadius: 'var(--r-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
+                              &ldquo;{sess.feedback_note}&rdquo;
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </>

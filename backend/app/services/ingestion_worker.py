@@ -108,17 +108,26 @@ class IngestionWorkerService:
                 if cid and cid in career_names_map:
                     skill_to_career_name[sid] = career_names_map[cid]
 
-        # 6. Assemble ranked priority list
+        # 6. Cross-reference Commit Ledger so already-worked skills rotate to the back of the queue
+        try:
+            from app.services.ingestion_batch_service import ingestion_batch_service
+            work_ledger = ingestion_batch_service.get_skill_work_ledger()
+        except Exception:
+            work_ledger = {}
+
+        # 7. Assemble ranked priority list
         ranked: List[Dict[str, Any]] = []
         for sid, counts in skill_demand.items():
             sk_meta = skills_map.get(sid, {})
+            sname_val = sk_meta.get("name", "Core Competency")
             current_lessons = lesson_counts.get(sid, 0)
             career_title = skill_to_career_name.get(sid, "Professional Practice")
             field_meta = classify_career_field(career_title)
+            last_worked_at = work_ledger.get(sid) or work_ledger.get(sname_val.strip().lower()) or ""
 
             ranked.append({
                 "skill_id": sid,
-                "skill_name": sk_meta.get("name", "Core Competency"),
+                "skill_name": sname_val,
                 "category": sk_meta.get("category", "Core"),
                 "career_title": career_title,
                 "field_id": field_meta["field_id"],
@@ -127,10 +136,24 @@ class IngestionWorkerService:
                 "deficit_count": counts["deficit_count"],
                 "current_lesson_count": current_lessons,
                 "needs_ingestion": current_lessons < 4,
+                "has_commit": bool(last_worked_at),
+                "last_worked_at": last_worked_at,
             })
 
-        # Sort: first by needs_ingestion (fewer lessons), then by deficit demand
-        ranked.sort(key=lambda x: (0 if x["needs_ingestion"] else 1, x["current_lesson_count"], -x["deficit_count"]))
+        # Sort:
+        #   1) needs_ingestion first
+        #   2) untouched skills (has_commit=False) before already-worked skills
+        #   3) least-recently-worked (last_worked_at ascending) so cycles rotate cleanly across skills
+        #   4) lowest current lesson count, then highest deficit learner count
+        ranked.sort(
+            key=lambda x: (
+                0 if x["needs_ingestion"] else 1,
+                1 if x["has_commit"] else 0,
+                x["last_worked_at"],
+                x["current_lesson_count"],
+                -x["deficit_count"],
+            )
+        )
         return ranked
 
     async def run_nightly_batch(
@@ -138,6 +161,7 @@ class IngestionWorkerService:
         max_skills: int = 5,
         target_lessons_per_skill: int = 3,
         force_all: bool = False,
+        inter_attempt_delay_sec: float = 0.0,
     ) -> Dict[str, Any]:
         """
         Executes the nightly autonomous ingestion sweep:
@@ -171,10 +195,52 @@ class IngestionWorkerService:
             telemetry.emit(f"    Deficit Learners: {deficit_cnt} | Current Reservoir Count: {current_cnt} / {target_lessons_per_skill}")
 
             needed = max(1, target_lessons_per_skill - current_cnt)
-            for attempt_idx in range(needed):
-                # Alternate adapters to ensure media diversity (Video vs. Written Literature)
-                pref_adapters = ["youtube"] if attempt_idx % 2 == 0 else ["mdn", "open_textbook", "clinical_science", "arxiv", "finance", "owasp"]
-                telemetry.emit(f"    Attempt {attempt_idx + 1}/{needed}: Querying adapters {pref_adapters}...")
+
+            # Inspect existing titles in reservoir to prevent duplicate sub-topic generation
+            existing_titles: List[str] = []
+            try:
+                ex_res = supabase_client.table("micro_content").select("title").eq("associated_skill_id", sid).execute()
+                existing_titles = [r["title"] for r in (ex_res.data or []) if r.get("title")]
+            except Exception:
+                existing_titles = []
+
+            if existing_titles:
+                telemetry.emit(f"    Anti-Duplication Context: {len(existing_titles)} existing lesson(s) locked against overlap.")
+
+            # LLM Curriculum Planner: 1 call to decompose skill into `needed` orthogonal sub-topics & site queries
+            subtopic_plans = await self.content_service.plan_skill_curriculum_subtopics(
+                skill_name=sname,
+                career_title=ctitle,
+                category=item.get("category", "Core"),
+                needed_count=needed,
+                existing_titles=existing_titles,
+            )
+            if subtopic_plans and subtopic_plans[0].get("planner_source") == "fallback":
+                telemetry.emit(
+                    f"    [WARNING] LLM Curriculum Planner FAILED ({subtopic_plans[0].get('fallback_reason', 'error')}) -> Using deterministic fallback for '{sname}'."
+                )
+            else:
+                telemetry.emit(
+                    f"    LLM Curriculum Planner: Decomposed '{sname}' into {len(subtopic_plans)} progressive, non-overlapping sub-topics."
+                )
+
+            skill_seeded_sources = []
+            skill_seeded_ids = []
+
+            for attempt_idx, plan_item in enumerate(subtopic_plans):
+                pref_adapters = plan_item.get("preferred_adapters") or (
+                    ["youtube"] if attempt_idx % 2 == 0 else ["mdn", "open_textbook", "clinical_science", "arxiv", "finance", "owasp"]
+                )
+                sub_focus = plan_item.get("subtopic_focus", sname)
+                tax_query = plan_item.get("search_query", sname)
+                t_diff = plan_item.get("target_difficulty", 2)
+
+                telemetry.emit(
+                    f"    Attempt {attempt_idx + 1}/{needed} [Tier {t_diff} | Sub-Topic: '{sub_focus}']:"
+                )
+                telemetry.emit(
+                    f"      -> Taxonomy Query: '{tax_query}' | Target Adapters: {pref_adapters}"
+                )
 
                 try:
                     lesson = await self.content_service.generate_dynamic_lesson_for_skill(
@@ -184,17 +250,58 @@ class IngestionWorkerService:
                         career_title=ctitle,
                         target_proficiency=20,
                         preferred_adapters=pref_adapters,
+                        subtopic_plan=plan_item,
                     )
                     if lesson and lesson.get("id"):
                         telemetry.emit(f"    SUCCESS: Ingested '{lesson.get('title')}' via {lesson.get('source_adapter')} ({lesson.get('source_name')})")
-                        telemetry.emit(f"    Checkpoints: 5 Grounded MCQs verified with shuffled keys. Difficulty: {lesson.get('difficulty_level', 2)}")
+                        telemetry.emit(f"    Checkpoints: 5 Grounded MCQs + Pedagogical Regard & Anti-Duplication Gates passed (Difficulty: {lesson.get('difficulty_level', t_diff)}).")
                         seeded_lessons.append(lesson)
+                        skill_seeded_ids.append(lesson["id"])
+                        skill_seeded_sources.append({
+                            "name": lesson.get("source_name", "Authoritative Source"),
+                            "adapter": lesson.get("source_adapter", "web"),
+                            "url": lesson.get("source_url", ""),
+                            "trust_score": lesson.get("source_trust_score", 0.95),
+                        })
                     else:
-                        telemetry.emit(f"    REJECTED: Source failed pedagogical vector threshold or lexical grounding. Closed fail guard active.")
+                        telemetry.emit(f"    REJECTED: Source failed LLM pedagogical regard rubric, vector threshold, or semantic deduplication gate.")
                         failed_count += 1
                 except Exception as ex:
                     telemetry.emit(f"    NOTICE: Ingestion attempt exception: {ex}")
                     failed_count += 1
+
+                if inter_attempt_delay_sec > 0:
+                    await asyncio.sleep(inter_attempt_delay_sec)
+
+            try:
+                from app.services.ingestion_batch_service import ingestion_batch_service
+                if skill_seeded_ids:
+                    commit_rec = ingestion_batch_service.record_commit(
+                        career_title=ctitle,
+                        skill_name=sname,
+                        sources=skill_seeded_sources,
+                        lesson_ids=skill_seeded_ids,
+                        message=f"Nightly Worker: Seeded {len(skill_seeded_ids)} non-overlapping sub-topic lesson(s) for {sname}",
+                        author="Nightly Autonomous Worker",
+                        status="approved",
+                        skill_id=sid,
+                    )
+                    telemetry.emit(f"    Commit Ledger: Recorded batch #{commit_rec['commit_hash']} ({len(skill_seeded_ids)} lesson(s)).")
+                else:
+                    # Record rotation checkpoint so next scheduled cycle switches to the next skill instead of repeating
+                    checkpoint_rec = ingestion_batch_service.record_commit(
+                        career_title=ctitle,
+                        skill_name=sname,
+                        sources=[],
+                        lesson_ids=[],
+                        message=f"Rotation Checkpoint: Evaluated {sname} (0 new sources met strict gates; rotated to back of queue)",
+                        author="Nightly Autonomous Worker",
+                        status="pending",
+                        skill_id=sid,
+                    )
+                    telemetry.emit(f"    Commit Ledger: Recorded rotation checkpoint #{checkpoint_rec['commit_hash']} to prevent repeat polling.")
+            except Exception as batch_err:
+                logger.debug(f"Batch commit ledger warning: {batch_err}")
 
         telemetry.emit(f"Nightly Batch Completed: {len(seeded_lessons)} verified lessons committed, {failed_count} rejected by quality gates.")
         return {

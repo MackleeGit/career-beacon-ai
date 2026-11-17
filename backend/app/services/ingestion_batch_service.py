@@ -15,6 +15,8 @@ import os
 import json
 import uuid
 import hashlib
+import tempfile
+import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -22,6 +24,7 @@ from app.core.database import supabase_client
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 BATCHES_FILE = os.path.join(DATA_DIR, "ingestion_batches.json")
+_BATCH_IO_LOCK = threading.RLock()
 
 
 def _utc_now_iso() -> str:
@@ -166,27 +169,85 @@ class IngestionBatchService:
             self._save_batches(initial_commits)
 
     def _load_batches(self) -> List[Dict[str, Any]]:
-        try:
-            if os.path.exists(BATCHES_FILE):
-                with open(BATCHES_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-        except Exception as e:
-            print(f"[ingestion-batch] Error loading local batches: {e}")
-        return []
+        with _BATCH_IO_LOCK:
+            try:
+                if os.path.exists(BATCHES_FILE):
+                    with open(BATCHES_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        return data if isinstance(data, list) else []
+            except Exception as e:
+                print(f"[ingestion-batch] Error loading local batches: {e}")
+            return []
 
     def _save_batches(self, batches: List[Dict[str, Any]]) -> None:
-        try:
-            with open(BATCHES_FILE, "w", encoding="utf-8") as f:
-                json.dump(batches, f, indent=2)
-        except Exception as e:
-            print(f"[ingestion-batch] Error saving local batches: {e}")
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with _BATCH_IO_LOCK:
+            fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(batches, f, indent=2)
+                os.replace(tmp_path, BATCHES_FILE)
+            except Exception as e:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                print(f"[ingestion-batch] Error saving local batches: {e}")
+
+    @staticmethod
+    def _to_db_row(record: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": record["id"],
+            "commit_hash": record["commit_hash"],
+            "message": record.get("message") or "",
+            "career_title": record.get("career_title"),
+            "skill_name": record.get("skill_name"),
+            "status": record.get("status") or "approved",
+            "author": record.get("author") or "Admin / Ingestion Worker",
+            "sources": record.get("sources") or [],
+            "lesson_ids": record.get("lesson_ids") or [],
+            "lesson_count": int(record.get("lesson_count") or 0),
+            "quiz_count": int(record.get("quiz_count") or 0),
+            "summary": record.get("summary") or "",
+            "created_at": record.get("created_at") or _utc_now_iso(),
+            "updated_at": record.get("updated_at") or record.get("created_at") or _utc_now_iso(),
+        }
 
     def list_batches(self) -> List[Dict[str, Any]]:
-        return self._load_batches()
+        local_batches = self._load_batches()
+        try:
+            res = (
+                supabase_client.table("ingestion_batches")
+                .select("*")
+                .order("created_at", desc=True)
+                .execute()
+            )
+            rows = res.data or []
+            if rows:
+                # Merge any local-only metadata like skill_id by id
+                local_by_id = {b.get("id"): b for b in local_batches if b.get("id")}
+                merged: List[Dict[str, Any]] = []
+                for row in rows:
+                    item = dict(row)
+                    if item.get("id") in local_by_id and local_by_id[item["id"]].get("skill_id"):
+                        item["skill_id"] = local_by_id[item["id"]]["skill_id"]
+                    merged.append(item)
+                return merged
+            if local_batches:
+                try:
+                    supabase_client.table("ingestion_batches").upsert(
+                        [self._to_db_row(b) for b in local_batches],
+                        on_conflict="id",
+                    ).execute()
+                except Exception as sync_err:
+                    print(f"[ingestion-batch] Initial Supabase batch backfill warning: {sync_err}")
+        except Exception as e:
+            print(f"[ingestion-batch] Supabase list fallback to JSON: {e}")
+        return local_batches
 
     def get_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
-        batches = self._load_batches()
-        for b in batches:
+        for b in self.list_batches():
             if b.get("id") == batch_id or b.get("commit_hash") == batch_id:
                 return b
         return None
@@ -200,21 +261,25 @@ class IngestionBatchService:
         message: Optional[str] = None,
         author: str = "Admin / Ingestion Worker",
         status: str = "approved",
+        skill_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Creates a new git-commit style record for an ingestion sweep or live probe."""
         commit_hash = _generate_commit_hash(f"{career_title}-{skill_name}")
         batch_id = f"commit-{commit_hash}"
         commit_msg = message or f"Ingested {len(lesson_ids)} lesson(s) for {career_title} ({skill_name})"
 
+        now_iso = _utc_now_iso()
         record = {
             "id": batch_id,
             "commit_hash": commit_hash,
             "message": commit_msg,
             "career_title": career_title,
+            "skill_id": skill_id,
             "skill_name": skill_name,
             "status": status,
             "author": author,
-            "created_at": _utc_now_iso(),
+            "created_at": now_iso,
+            "updated_at": now_iso,
             "sources": sources,
             "lesson_ids": lesson_ids,
             "lesson_count": len(lesson_ids),
@@ -222,26 +287,74 @@ class IngestionBatchService:
             "summary": f"Autonomous ingestion sweep targeting {skill_name} across {len(sources)} verified sources."
         }
 
+        try:
+            supabase_client.table("ingestion_batches").upsert(
+                self._to_db_row(record),
+                on_conflict="id",
+            ).execute()
+        except Exception as db_err:
+            print(f"[ingestion-batch] Supabase record_commit warning: {db_err}")
+
         batches = self._load_batches()
         batches.insert(0, record)
         self._save_batches(batches)
         return record
+
+    def get_skill_work_ledger(self) -> Dict[str, str]:
+        """
+        Returns a mapping of normalized skill keys (`skill_id` and lowercase `skill_name`)
+        to the ISO timestamp of their most recent ingestion commit, enabling round-robin
+        skill rotation across scheduled worker cycles without repeating recently worked skills.
+        """
+        ledger: Dict[str, str] = {}
+        for b in self.list_batches():
+            ts = b.get("created_at") or ""
+            sid = (b.get("skill_id") or "").strip()
+            sname = (b.get("skill_name") or "").strip().lower()
+            if sid and (sid not in ledger or ts > ledger[sid]):
+                ledger[sid] = ts
+            if sname and (sname not in ledger or ts > ledger[sname]):
+                ledger[sname] = ts
+        return ledger
 
     def set_batch_status(self, batch_id: str, new_status: str) -> Optional[Dict[str, Any]]:
         """Approve or reject an entire ingestion batch."""
         if new_status not in ("approved", "rejected", "pending"):
             raise ValueError("Status must be approved, rejected, or pending")
 
+        now_iso = _utc_now_iso()
+        target_batch: Optional[Dict[str, Any]] = None
+
+        try:
+            res = (
+                supabase_client.table("ingestion_batches")
+                .select("*")
+                .or_(f"id.eq.{batch_id},commit_hash.eq.{batch_id}")
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                target_batch = dict(res.data[0])
+                target_batch["status"] = new_status
+                target_batch["updated_at"] = now_iso
+                supabase_client.table("ingestion_batches").update({
+                    "status": new_status,
+                    "updated_at": now_iso,
+                }).eq("id", target_batch["id"]).execute()
+        except Exception as db_err:
+            print(f"[ingestion-batch] Supabase set_batch_status warning: {db_err}")
+
         batches = self._load_batches()
-        target_batch = None
         for b in batches:
             if b.get("id") == batch_id or b.get("commit_hash") == batch_id:
                 b["status"] = new_status
-                b["updated_at"] = _utc_now_iso()
-                target_batch = b
+                b["updated_at"] = now_iso
+                if target_batch is None:
+                    target_batch = b
                 break
-
-        if target_batch:
+        if target_batch is not None:
+            if not any(b.get("id") == target_batch.get("id") for b in batches):
+                batches.insert(0, target_batch)
             self._save_batches(batches)
 
             # Cascade review_status to all associated lessons in micro_content
@@ -288,8 +401,10 @@ class IngestionBatchService:
             c_dict["title"] = title.strip()
 
         if summary is not None:
-            update_fields["summary"] = summary.strip()
-            c_dict["summary"] = summary.strip()
+            clean_sum = summary.strip()
+            update_fields["summary"] = clean_sum
+            c_dict["summary"] = clean_sum
+            c_dict["summary_bullets"] = [line.strip("-• ").strip() for line in clean_sum.splitlines() if line.strip()]
 
         if concept_overview is not None:
             c_dict["concept_overview"] = concept_overview.strip()
@@ -311,12 +426,30 @@ class IngestionBatchService:
 
         update_fields["content"] = json.dumps(c_dict)
 
-        supabase_client.table("micro_content").update(update_fields).eq("id", lesson_id).execute()
+        # Schema-resilient progressive update: drop optional columns if DB schema omits them
+        attempt_fields = dict(update_fields)
+        for _ in range(len(update_fields)):
+            try:
+                supabase_client.table("micro_content").update(attempt_fields).eq("id", lesson_id).execute()
+                break
+            except Exception as col_err:
+                err_msg = str(col_err)
+                dropped = False
+                for col in list(attempt_fields.keys()):
+                    if col != "content" and col in err_msg:
+                        attempt_fields.pop(col, None)
+                        dropped = True
+                        break
+                if not dropped:
+                    if attempt_fields != {"content": update_fields["content"]}:
+                        attempt_fields = {"content": update_fields["content"]}
+                    else:
+                        raise
         return {
             "status": "success",
             "lesson_id": lesson_id,
             "message": "Lesson content and checkpoint questions successfully updated.",
-            "updated_fields": list(update_fields.keys()),
+            "updated_fields": list(attempt_fields.keys()),
         }
 
 

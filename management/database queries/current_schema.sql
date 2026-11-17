@@ -1,11 +1,12 @@
 -- =============================================================================
 -- CAREER BEACON: COMPLETE CURRENT DATABASE SCHEMA
 -- Target Environment: Supabase PostgreSQL 15 + pgvector Extension
--- Date / State: Current Active Database Schema (Post V2/V3 Combined Migration)
+-- Date / State: Current Active Database Schema (Production Verified)
 -- Description: Unified, single-file DDL script reflecting the exact active
 --              state of the database, including vector(384) HNSW indexes,
 --              external taxonomy identifiers (O*NET & ESCO), DAG prerequisites,
---              AI quarantine tables, relational constraints, and pgvector RPCs.
+--              AI quarantine tables, microlearning cognitive drops & streaks,
+--              ingestion audit batches, relational constraints, and pgvector RPCs.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -148,7 +149,7 @@ CREATE TABLE IF NOT EXISTS public.pending_careers (
 );
 
 -- -----------------------------------------------------------------------------
--- 3. MICRO-LEARNING CONTENT & QUIZZES
+-- 3. MICRO-LEARNING CONTENT, RESERVOIR & INGESTION BATCHES
 -- -----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS public.micro_content (
@@ -162,6 +163,25 @@ CREATE TABLE IF NOT EXISTS public.micro_content (
     quizzes             jsonb DEFAULT '[]'::jsonb,
     embedding           vector(384),
     source_url          text UNIQUE,
+    checkpoint_type     text DEFAULT '5_question_adaptive',
+    created_at          timestamp with time zone DEFAULT now(),
+    updated_at          timestamp with time zone DEFAULT now()
+);
+
+-- Ingestion Batches & Git-Commit Style Ledger
+CREATE TABLE IF NOT EXISTS public.ingestion_batches (
+    id                  text PRIMARY KEY,
+    commit_hash         varchar(16) NOT NULL UNIQUE,
+    message             text NOT NULL,
+    career_title        text,
+    skill_name          text,
+    status              varchar(32) NOT NULL DEFAULT 'approved',
+    author              text DEFAULT 'Admin / Ingestion Worker',
+    sources             jsonb DEFAULT '[]'::jsonb,
+    lesson_ids          jsonb DEFAULT '[]'::jsonb,
+    lesson_count        int DEFAULT 0,
+    quiz_count          int DEFAULT 0,
+    summary             text,
     created_at          timestamp with time zone DEFAULT now(),
     updated_at          timestamp with time zone DEFAULT now()
 );
@@ -170,23 +190,21 @@ CREATE TABLE IF NOT EXISTS public.micro_content (
 CREATE TABLE IF NOT EXISTS public.assessment_attempts (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         uuid REFERENCES public.profiles(id) ON DELETE CASCADE,
-    lesson_id       uuid REFERENCES public.micro_content(id) ON DELETE CASCADE,
+    lesson_id       uuid REFERENCES public.micro_content(id) ON DELETE SET NULL,
     skill_id        uuid REFERENCES public.skills(id) ON DELETE SET NULL,
     attempt_number  int NOT NULL DEFAULT 1,
     answers         jsonb DEFAULT '{}'::jsonb,
     score           int NOT NULL,
-    total           int NOT NULL,
+    total           int NOT NULL DEFAULT 5,
     percentage      numeric(4,1) NOT NULL,
-    passed          boolean NOT NULL,
+    passed          boolean NOT NULL DEFAULT false,
     created_at      timestamp with time zone DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_assessment_attempts_user_lesson ON public.assessment_attempts (user_id, lesson_id, attempt_number);
 
 -- User Content Activity Table (Interaction tracking: impressions, opens, completions)
 CREATE TABLE IF NOT EXISTS public.user_content_activity (
     user_id           uuid REFERENCES public.profiles(id) ON DELETE CASCADE,
-    content_id        uuid REFERENCES public.micro_content(id) ON DELETE CASCADE,
+    content_id        text NOT NULL,
     first_seen_at     timestamp with time zone DEFAULT now(),
     last_seen_at      timestamp with time zone DEFAULT now(),
     opened_at         timestamp with time zone,
@@ -195,44 +213,120 @@ CREATE TABLE IF NOT EXISTS public.user_content_activity (
     PRIMARY KEY (user_id, content_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_content_activity_user_last_seen ON public.user_content_activity (user_id, last_seen_at);
+-- User Learning Streaks
+CREATE TABLE IF NOT EXISTS public.user_streaks (
+    user_id            uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+    current_streak     int NOT NULL DEFAULT 0,
+    longest_streak     int NOT NULL DEFAULT 0,
+    last_activity_date date,
+    freeze_count       int NOT NULL DEFAULT 0,
+    updated_at         timestamp with time zone DEFAULT now()
+);
+
+-- Daily Drop Bundles (3-Lesson Cognitive Microlearning)
+CREATE TABLE IF NOT EXISTS public.daily_drops (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    drop_date  date NOT NULL,
+    status     text NOT NULL DEFAULT 'in_progress', -- 'in_progress', 'completed'
+    payload    jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    UNIQUE(user_id, drop_date)
+);
 
 -- -----------------------------------------------------------------------------
--- 4. MENTORSHIP & EXPERT MARKETPLACE
+-- 4. MENTORSHIP ECOSYSTEM & EXPERT MARKETPLACE
 -- -----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS public.mentors (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    profile_id    uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
-    bio           text,
-    expertise     text,
-    rating_avg    numeric(3,2) DEFAULT 0.00,
-    rating_count  int DEFAULT 0,
-    mentor_vector vector(384),
-    created_at    timestamp with time zone DEFAULT now(),
-    updated_at    timestamp with time zone DEFAULT now()
+    id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    profile_id              uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+    full_name               text,
+    primary_domain          text,
+    headline                text,
+    bio                     text,
+    expertise               text,
+    expertise_skills        text[] DEFAULT '{}'::text[],
+    rating_avg              numeric(3,2) DEFAULT 5.00,
+    rating_count            int DEFAULT 0,
+    weekly_hours            int DEFAULT 5,
+    available_days          text[] DEFAULT '{"Tue", "Thu"}'::text[],
+    preferred_time_window   text DEFAULT 'Evening',
+    max_mentees             int DEFAULT 5,
+    active_mentees_count    int DEFAULT 0,
+    verified_sessions_count int DEFAULT 0,
+    is_verified             boolean DEFAULT true,
+    is_seeded               boolean DEFAULT false,
+    google_email            text,
+    google_verified         boolean DEFAULT false,
+    linkedin_url            text,
+    linkedin_verified       boolean DEFAULT false,
+    mentor_vector           vector(384),
+    domain_vector           vector(384),
+    skills_vector           vector(384),
+    created_at              timestamp with time zone DEFAULT now(),
+    updated_at              timestamp with time zone DEFAULT now()
 );
 
+-- Mentorship Connections (Handshake & State Machine)
+CREATE TABLE IF NOT EXISTS public.mentor_connections (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    mentor_id       uuid NOT NULL REFERENCES public.mentors(id) ON DELETE CASCADE,
+    learner_id      uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    status          text NOT NULL DEFAULT 'accepted', -- 'pending', 'accepted', 'declined', 'archived'
+    initial_message text,
+    created_at      timestamp with time zone DEFAULT now(),
+    updated_at      timestamp with time zone DEFAULT now(),
+    UNIQUE(mentor_id, learner_id)
+);
+
+-- Mentorship Real-Time Direct Messaging
+CREATE TABLE IF NOT EXISTS public.mentor_messages (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    connection_id uuid NOT NULL REFERENCES public.mentor_connections(id) ON DELETE CASCADE,
+    sender_id     uuid NOT NULL,
+    recipient_id  uuid NOT NULL,
+    content       text NOT NULL,
+    is_read       boolean NOT NULL DEFAULT false,
+    created_at    timestamp with time zone DEFAULT now()
+);
+
+-- Mentorship 1-on-1 Scheduled Sessions
+CREATE TABLE IF NOT EXISTS public.mentor_sessions (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    connection_id  uuid REFERENCES public.mentor_connections(id) ON DELETE SET NULL,
+    mentor_id      uuid NOT NULL REFERENCES public.mentors(id) ON DELETE CASCADE,
+    learner_id     uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    slot_start_iso timestamp with time zone NOT NULL,
+    slot_end_iso   timestamp with time zone NOT NULL,
+    status         text NOT NULL DEFAULT 'confirmed', -- 'confirmed', 'completed', 'cancelled'
+    meet_url       text,
+    created_at     timestamp with time zone DEFAULT now(),
+    updated_at     timestamp with time zone DEFAULT now()
+);
+
+-- Mentorship Q&A Knowledge Base
 CREATE TABLE IF NOT EXISTS public.mentor_qa (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    mentor_id     uuid REFERENCES public.mentors(id) ON DELETE CASCADE,
-    question      text NOT NULL,
-    answer        text NOT NULL,
-    embedding     vector(384),
-    created_at    timestamp with time zone DEFAULT now(),
-    updated_at    timestamp with time zone DEFAULT now()
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    mentor_id  uuid REFERENCES public.mentors(id) ON DELETE CASCADE,
+    question   text NOT NULL,
+    answer     text NOT NULL,
+    embedding  vector(384),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
 );
 
+-- Bookings (General Calendar Bookings)
 CREATE TABLE IF NOT EXISTS public.bookings (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    mentor_id     uuid REFERENCES public.mentors(id) ON DELETE SET NULL,
-    user_id       uuid REFERENCES public.profiles(id) ON DELETE CASCADE,
-    start_time    timestamp with time zone NOT NULL,
-    end_time      timestamp with time zone NOT NULL,
-    status        text NOT NULL CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
-    meeting_link  text,
-    created_at    timestamp with time zone DEFAULT now(),
-    updated_at    timestamp with time zone DEFAULT now()
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    mentor_id    uuid REFERENCES public.mentors(id) ON DELETE SET NULL,
+    user_id      uuid REFERENCES public.profiles(id) ON DELETE CASCADE,
+    start_time   timestamp with time zone NOT NULL,
+    end_time     timestamp with time zone NOT NULL,
+    status       text NOT NULL CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
+    meeting_link text,
+    created_at   timestamp with time zone DEFAULT now(),
+    updated_at   timestamp with time zone DEFAULT now()
 );
 
 -- -----------------------------------------------------------------------------
@@ -246,6 +340,20 @@ CREATE INDEX IF NOT EXISTS idx_careers_title ON public.careers(title);
 CREATE INDEX IF NOT EXISTS idx_careers_proposing_user ON public.careers(proposing_user_id);
 CREATE INDEX IF NOT EXISTS idx_skills_name ON public.skills(name);
 CREATE INDEX IF NOT EXISTS idx_micro_content_skill ON public.micro_content(associated_skill_id);
+CREATE INDEX IF NOT EXISTS idx_micro_content_level ON public.micro_content(associated_skill_id, difficulty_level);
+CREATE INDEX IF NOT EXISTS idx_ingestion_batches_hash ON public.ingestion_batches(commit_hash);
+CREATE INDEX IF NOT EXISTS idx_ingestion_batches_status ON public.ingestion_batches(status);
+CREATE INDEX IF NOT EXISTS idx_assessment_attempts_user_lesson ON public.assessment_attempts(user_id, lesson_id, attempt_number);
+CREATE INDEX IF NOT EXISTS idx_assessment_attempts_user_skill ON public.assessment_attempts(user_id, skill_id);
+CREATE INDEX IF NOT EXISTS idx_user_content_activity_user_last_seen ON public.user_content_activity(user_id, last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_daily_drops_user_date ON public.daily_drops(user_id, drop_date);
+CREATE INDEX IF NOT EXISTS idx_mentor_connections_learner ON public.mentor_connections(learner_id);
+CREATE INDEX IF NOT EXISTS idx_mentor_connections_mentor ON public.mentor_connections(mentor_id);
+CREATE INDEX IF NOT EXISTS idx_mentor_messages_connection ON public.mentor_messages(connection_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mentor_messages_unread ON public.mentor_messages(recipient_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_mentor_sessions_proximity ON public.mentor_sessions(slot_start_iso, status);
+CREATE INDEX IF NOT EXISTS idx_mentor_sessions_mentor ON public.mentor_sessions(mentor_id, status);
+CREATE INDEX IF NOT EXISTS idx_mentor_sessions_learner ON public.mentor_sessions(learner_id, status);
 CREATE INDEX IF NOT EXISTS idx_bookings_user_id ON public.bookings(user_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_mentor_id ON public.bookings(mentor_id);
 CREATE INDEX IF NOT EXISTS idx_skill_deps_prereq ON public.skill_dependencies(prerequisite_id);
@@ -278,6 +386,9 @@ CREATE INDEX IF NOT EXISTS idx_micro_content_embedding
 
 CREATE INDEX IF NOT EXISTS idx_mentor_qa_embedding 
     ON public.mentor_qa USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS idx_mentors_vector 
+    ON public.mentors USING hnsw (mentor_vector vector_cosine_ops);
 
 -- -----------------------------------------------------------------------------
 -- 6. STORED PROCEDURES (pgvector RPC Functions)

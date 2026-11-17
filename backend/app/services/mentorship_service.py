@@ -23,16 +23,21 @@ Implements:
 """
 
 import os
+import re
 import json
 import uuid
 import math
+import time
 import logging
+import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
+from app.core.career_fields import CAREER_FIELDS
 from app.core.database import supabase_client
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding_service import EmbeddingService, _embedding_cache
 
 logger = logging.getLogger("career_beacon.mentorship_service")
 
@@ -44,6 +49,8 @@ ECOSYSTEM_STORE_PATH = os.path.join(
 
 ANTI_DESPERATION_THRESHOLD = 0.45
 STRONG_MATCH_THRESHOLD = 0.62
+SEMANTIC_SKILL_SIM_THRESHOLD = 0.80
+_FIELD_CENTROIDS_CACHE: Dict[str, List[float]] = {}
 
 
 def _utc_now_iso() -> str:
@@ -92,54 +99,78 @@ SEEDED_PULSE_POSTS: List[Dict[str, Any]] = _SEEDS_CACHE.get("pulse_posts", [])
 SEEDED_QUESTIONS: List[Dict[str, Any]] = _SEEDS_CACHE.get("questions", [])
 
 
+_STORE_LOCK = threading.RLock()
+
+
 class MentorshipService:
     def __init__(self):
         self.embedding_service = EmbeddingService()
         self._ensure_store()
 
     def _ensure_store(self) -> Dict[str, Any]:
-        os.makedirs(os.path.dirname(ECOSYSTEM_STORE_PATH), exist_ok=True)
-        if not os.path.exists(ECOSYSTEM_STORE_PATH):
-            initial_state = {
-                "mentors": SEEDED_MENTORS,
-                "connections": [],
-                "messages": [],
-                "pulse_posts": SEEDED_PULSE_POSTS,
-                "questions": SEEDED_QUESTIONS,
-                "sessions": [],
-            }
-            self._save_store(initial_state)
-            return initial_state
+        with _STORE_LOCK:
+            os.makedirs(os.path.dirname(ECOSYSTEM_STORE_PATH), exist_ok=True)
+            if not os.path.exists(ECOSYSTEM_STORE_PATH):
+                initial_state = {
+                    "mentors": list(SEEDED_MENTORS),
+                    "connections": [],
+                    "messages": [],
+                    "pulse_posts": list(SEEDED_PULSE_POSTS),
+                    "questions": list(SEEDED_QUESTIONS),
+                    "sessions": [],
+                }
+                self._save_store(initial_state)
+                return initial_state
 
-        try:
-            with open(ECOSYSTEM_STORE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
+            try:
+                with open(ECOSYSTEM_STORE_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.error(f"[MentorshipService] Failed to load store {ECOSYSTEM_STORE_PATH}: {e}")
+                data = {}
 
-        changed = False
-        if "mentors" not in data or not data["mentors"]:
-            data["mentors"] = SEEDED_MENTORS
-            changed = True
-        if "pulse_posts" not in data or not data["pulse_posts"]:
-            data["pulse_posts"] = SEEDED_PULSE_POSTS
-            changed = True
-        if "questions" not in data or not data["questions"]:
-            data["questions"] = SEEDED_QUESTIONS
-            changed = True
-        for k in ("connections", "messages", "sessions"):
-            if k not in data:
-                data[k] = []
+            changed = False
+            if "mentors" not in data or not data["mentors"]:
+                data["mentors"] = list(SEEDED_MENTORS)
                 changed = True
+            else:
+                existing_mentor_ids = {m["mentor_id"] for m in data["mentors"]}
+                for sm in SEEDED_MENTORS:
+                    if sm["mentor_id"] not in existing_mentor_ids:
+                        data["mentors"].append(sm)
+                        existing_mentor_ids.add(sm["mentor_id"])
+                        changed = True
+            if "pulse_posts" not in data or not data["pulse_posts"]:
+                data["pulse_posts"] = list(SEEDED_PULSE_POSTS)
+                changed = True
+            if "questions" not in data or not data["questions"]:
+                data["questions"] = list(SEEDED_QUESTIONS)
+                changed = True
+            for k in ("connections", "messages", "sessions"):
+                if k not in data:
+                    data[k] = []
+                    changed = True
 
-        if changed:
-            self._save_store(data)
-        return data
+            if changed:
+                self._save_store(data)
+            return data
 
     def _save_store(self, data: Dict[str, Any]) -> None:
-        os.makedirs(os.path.dirname(ECOSYSTEM_STORE_PATH), exist_ok=True)
-        with open(ECOSYSTEM_STORE_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        with _STORE_LOCK:
+            store_dir = os.path.dirname(os.path.abspath(ECOSYSTEM_STORE_PATH))
+            os.makedirs(store_dir, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=store_dir, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, ECOSYSTEM_STORE_PATH)
+            except Exception as e:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                logger.error(f"[MentorshipService] Failed to save store: {e}")
 
     async def _ensure_mentor_vectors(self, store: Dict[str, Any]) -> None:
         """Lazily computes and caches dual 384-d vectors (`domain_vector` and `skills_vector`) for mentors using batch inference."""
@@ -268,53 +299,57 @@ class MentorshipService:
         store = self._ensure_store()
         await self._ensure_mentor_vectors(store)
 
-        try:
-            db_mentors = supabase_client.table("mentors").select("*").execute()
-            known_ids = {m["mentor_id"] for m in store["mentors"]}
-            for row in db_mentors.data or []:
-                mid = row.get("profile_id")
-                if not mid or mid in known_ids:
-                    continue
-                prof = (
-                    supabase_client.table("profiles")
-                    .select("full_name, bio")
-                    .eq("id", mid)
-                    .limit(1)
-                    .execute()
-                )
-                p_data = prof.data[0] if prof.data else {}
-                if not p_data:
-                    continue
-                    exp_raw = row.get("expertise") or ""
-                    parts = [p.strip() for p in exp_raw.split("|") if p.strip()]
-                    p_domain = parts[0] if len(parts) >= 1 else "Software Architecture & Full-Stack"
-                    p_headline = parts[1] if len(parts) >= 2 else "Verified Career Mentor"
-                    p_skills = (
-                        [s.strip() for s in parts[2].split(",") if s.strip()]
-                        if len(parts) >= 3
-                        else []
+        now_ts = time.time()
+        # Avoid hammering Supabase with N+1 queries on every HTTP request; cache DB sync for 60s
+        if now_ts - getattr(self, "_last_mentor_db_sync", 0) > 60:
+            self._last_mentor_db_sync = now_ts
+            try:
+                db_mentors = supabase_client.table("mentors").select("*").execute()
+                known_ids = {m["mentor_id"] for m in store["mentors"]}
+                new_mentor_rows = [row for row in (db_mentors.data or []) if row.get("profile_id") and row["profile_id"] not in known_ids]
+                if new_mentor_rows:
+                    new_ids = [r["profile_id"] for r in new_mentor_rows]
+                    prof_res = (
+                        supabase_client.table("profiles")
+                        .select("id, full_name, bio")
+                        .in_("id", new_ids)
+                        .execute()
                     )
-                    store["mentors"].append({
-                        "mentor_id": mid,
-                        "full_name": p_data.get("full_name") or "Verified Mentor",
-                        "primary_domain": p_domain,
-                        "headline": p_headline,
-                        "bio": row.get("bio") or p_data.get("bio") or "",
-                        "expertise_skills": p_skills,
-                        "weekly_hours": 4,
-                        "available_days": ["Tue", "Thu"],
-                        "preferred_time_window": "Evening",
-                        "max_mentees": 5,
-                        "active_mentees_count": 0,
-                        "verified_sessions_count": int(row.get("rating_count") or 1),
-                        "avg_rating": float(row.get("rating_avg") or 5.0),
-                        "is_seeded": False,
-                        "mentor_vector": None,
-                    })
-            await self._ensure_mentor_vectors(store)
-            self._save_store(store)
-        except Exception:
-            pass
+                    prof_map = {p["id"]: p for p in (prof_res.data or [])}
+                    for row in new_mentor_rows:
+                        mid = row["profile_id"]
+                        p_data = prof_map.get(mid) or {}
+                        exp_raw = row.get("expertise") or ""
+                        parts = [p.strip() for p in exp_raw.split("|") if p.strip()]
+                        p_domain = parts[0] if len(parts) >= 1 else "Software Architecture & Full-Stack"
+                        p_headline = parts[1] if len(parts) >= 2 else "Verified Career Mentor"
+                        p_skills = (
+                            [s.strip() for s in parts[2].split(",") if s.strip()]
+                            if len(parts) >= 3
+                            else []
+                        )
+                        store["mentors"].append({
+                            "mentor_id": mid,
+                            "full_name": p_data.get("full_name") or "Verified Mentor",
+                            "primary_domain": p_domain,
+                            "headline": p_headline,
+                            "bio": row.get("bio") or p_data.get("bio") or "",
+                            "expertise_skills": p_skills,
+                            "weekly_hours": 4,
+                            "available_days": ["Tue", "Thu"],
+                            "preferred_time_window": "Evening",
+                            "max_mentees": 5,
+                            "active_mentees_count": 0,
+                            "verified_sessions_count": int(row.get("rating_count") or 1),
+                            "avg_rating": float(row.get("rating_avg") or 5.0),
+                            "is_verified": bool(row.get("is_verified", True)),
+                            "is_seeded": False,
+                            "mentor_vector": None,
+                        })
+                    await self._ensure_mentor_vectors(store)
+                    self._save_store(store)
+            except Exception as e:
+                logger.debug(f"[MentorshipService] DB mentors sync skipped: {e}")
 
         return store["mentors"]
 
@@ -384,8 +419,60 @@ class MentorshipService:
         }
 
     # -----------------------------------------------------------------------
-    # 1. 2-Stage Anti-Desperation Semantic Matcher
+    # 1. 2-Stage Anti-Desperation Semantic Matcher (7-Tier Vector Centroid Firewall)
     # -----------------------------------------------------------------------
+    async def _ensure_field_centroids(self) -> Dict[str, List[float]]:
+        """
+        Lazily embeds and caches the 7 canonical occupational field definitions
+        from `CAREER_FIELDS` (`tech`, `engineering`, `healthcare`, `science`,
+        `finance`, `business_ops`, `trades_safety`) into 384-D centroid vectors.
+        """
+        global _FIELD_CENTROIDS_CACHE
+        if _FIELD_CENTROIDS_CACHE and len(_FIELD_CENTROIDS_CACHE) == len(CAREER_FIELDS):
+            return _FIELD_CENTROIDS_CACHE
+
+        field_ids = list(CAREER_FIELDS.keys())
+        centroid_texts = [
+            f"{CAREER_FIELDS[fid]['label']}. {CAREER_FIELDS[fid]['extraction_directive']}"
+            for fid in field_ids
+        ]
+        try:
+            vecs = await self.embedding_service.get_embeddings_batch(centroid_texts)
+            if len(vecs) == len(field_ids):
+                _FIELD_CENTROIDS_CACHE = dict(zip(field_ids, vecs))
+        except Exception as err:
+            logger.warning(f"[MentorshipService] Failed to embed 7-tier field centroids: {err}")
+        return _FIELD_CENTROIDS_CACHE
+
+    @staticmethod
+    def _resolve_tier_via_centroid(
+        vec: Optional[List[float]],
+        field_centroids: Dict[str, List[float]],
+        bridge_margin: float = 0.06,
+    ) -> tuple[Optional[str], float, float, List[str]]:
+        """
+        Projects a 384-D career/mentor vector onto the 7 canonical occupational field
+        centroids and returns `(best_field_id, best_cosine, margin_over_runner_up, active_tiers)`.
+        When a middle-ground / interdisciplinary career (e.g., Bioinformatics = science + tech,
+        Biomedical Engineering = engineering + healthcare, FinTech = finance + tech) sits near
+        the Voronoi boundary between two centroids (`best_sim - runner_up_sim <= bridge_margin`),
+        both centroids are included in `active_tiers`.
+        """
+        if not vec or not field_centroids:
+            return None, 0.0, 0.0, []
+        scored = [
+            (fid, _cosine_similarity(vec, c_vec))
+            for fid, c_vec in field_centroids.items()
+        ]
+        scored.sort(key=lambda item: item[1], reverse=True)
+        best_fid, best_sim = scored[0]
+        runner_up_fid, runner_up_sim = scored[1] if len(scored) > 1 else (None, 0.0)
+        margin = best_sim - runner_up_sim
+        active_tiers = [best_fid]
+        if runner_up_fid and margin <= bridge_margin and runner_up_sim >= 0.35:
+            active_tiers.append(runner_up_fid)
+        return best_fid, best_sim, margin, active_tiers
+
     async def match_mentors_for_learner(
         self,
         learner_id: str,
@@ -393,26 +480,70 @@ class MentorshipService:
     ) -> Dict[str, Any]:
         """
         Computes a transparent hybrid match score for each available mentor:
-          MatchScore = 0.55 * SemanticCosine + 0.30 * SkillGapOverlap + 0.15 * DomainAlignment
-        Enforces the Anti-Desperation Gate (`MatchScore >= 0.45`) so learners are never
-        paired with irrelevant mentors out of desperation.
+          MatchScore = 0.30 * DomainCosine + 0.30 * SkillsCosine + 0.25 * SkillGapOverlap + 0.15 * TierCentroidAlignment
+        Enforces a zero-hardcode 7-Tier Vector Centroid Firewall + Anti-Desperation Gate (`MatchScore >= 0.45`)
+        so learners are never leaked across the 7 occupational tiers or paired out of desperation.
         """
         store = self._ensure_store()
         mentors = await self.get_all_mentors()
+        field_centroids = await self._ensure_field_centroids()
         ctx = self._get_learner_context(learner_id)
 
         top_gaps = [g["name"] for g in ctx["gap_skills"][:8]]
         all_skill_names = [s["name"] for s in ctx["all_skills"]]
         gaps_str = ", ".join(top_gaps if top_gaps else all_skill_names)
-        # Dual-vector mentor queries matching stored mentor `domain_vector` and `skills_vector`
-        domain_query = f"Occupational Domain: {ctx['career_title']}. Role: {ctx['career_title']}."
+        career_desc_snippet = (ctx.get("career_description") or "").strip()[:240]
+
+        # Dual-vector learner queries + pure occupational profile for 7-tier centroid projection
+        domain_query = (
+            f"Occupational Domain: {ctx['career_title']}. Role: {ctx['career_title']}. "
+            f"Scope: {career_desc_snippet if career_desc_snippet else gaps_str}."
+        )
         skills_query = f"Domain: {ctx['career_title']}. Core Technical Competencies: {gaps_str}."
+        learner_tier_query = f"{ctx['career_title']}. {career_desc_snippet} Competencies: {gaps_str}."
+
+        # Collect unique skill strings across learner and mentors for semantic skill equivalence
+        unique_skill_norms: List[str] = []
+        seen_norms = set()
+        for sk in all_skill_names + [g["name"] for g in ctx["gap_skills"]]:
+            norm = sk.lower().strip()
+            if norm and norm not in seen_norms:
+                seen_norms.add(norm)
+                unique_skill_norms.append(norm)
+        for m in mentors:
+            for m_sk in m.get("expertise_skills", []):
+                norm = m_sk.lower().strip()
+                if norm and norm not in seen_norms:
+                    seen_norms.add(norm)
+                    unique_skill_norms.append(norm)
+
+        skill_vec_map: Dict[str, List[float]] = {}
         try:
-            q_vecs = await self.embedding_service.get_embeddings_batch([domain_query, skills_query])
-            learner_domain_vec = q_vecs[0] if len(q_vecs) == 2 else None
-            learner_skills_vec = q_vecs[1] if len(q_vecs) == 2 else None
+            batch_inputs = [domain_query, skills_query, learner_tier_query] + unique_skill_norms
+            batch_vecs = await self.embedding_service.get_embeddings_batch(batch_inputs)
+            learner_domain_vec = batch_vecs[0] if len(batch_vecs) >= 3 else None
+            learner_skills_vec = batch_vecs[1] if len(batch_vecs) >= 3 else None
+            learner_tier_vec = batch_vecs[2] if len(batch_vecs) >= 3 else learner_domain_vec
+            for idx, norm in enumerate(unique_skill_norms):
+                if 3 + idx < len(batch_vecs):
+                    skill_vec_map[norm] = batch_vecs[3 + idx]
         except Exception:
-            learner_domain_vec, learner_skills_vec = None, None
+            learner_domain_vec, learner_skills_vec, learner_tier_vec = None, None, None
+
+        learner_field_id, learner_field_sim, _, learner_active_tiers = self._resolve_tier_via_centroid(
+            learner_tier_vec or learner_domain_vec,
+            field_centroids,
+        )
+        # For interdisciplinary / middle-ground careers (e.g., Bioinformatics = science + tech,
+        # FinTech = finance + tech, Health Informatics = healthcare + tech), also resolve the
+        # competency vector (`learner_skills_vec`) so if the role is in Tier A (`science`) while
+        # the technical skill stack is in Tier B (`tech`), Tier B is included as an active bridge tier.
+        skills_field_id, _, _, _ = self._resolve_tier_via_centroid(
+            learner_skills_vec,
+            field_centroids,
+        )
+        if skills_field_id and skills_field_id not in learner_active_tiers:
+            learner_active_tiers.append(skills_field_id)
 
         learner_conns = {
             c["mentor_id"]: c
@@ -423,7 +554,6 @@ class MentorshipService:
         qualified_matches: List[Dict[str, Any]] = []
         filtered_out_count = 0
 
-        career_lower = ctx["career_title"].lower()
         gap_lower_map = {g["name"].lower().strip(): g["name"] for g in ctx["gap_skills"]}
         all_lower_map = {s["name"].lower().strip(): s["name"] for s in ctx["all_skills"]}
 
@@ -432,8 +562,12 @@ class MentorshipService:
                 return True
             m_toks = set(m_skill.replace("-", " ").split())
             l_toks = set(l_skill.replace("-", " ").split())
-            # Require at least 2 shared tokens to avoid single-word false positives ("design" vs "system design")
+            # Require at least 2 shared tokens for lexical subset, or high semantic vector cosine similarity
             if len(m_toks) >= 2 and len(l_toks) >= 2 and (m_toks.issubset(l_toks) or l_toks.issubset(m_toks)):
+                return True
+            v_m = skill_vec_map.get(m_skill)
+            v_l = skill_vec_map.get(l_skill)
+            if v_m and v_l and _cosine_similarity(v_m, v_l) >= SEMANTIC_SKILL_SIM_THRESHOLD:
                 return True
             return False
 
@@ -445,9 +579,29 @@ class MentorshipService:
             max_cap = int(m.get("max_mentees", 5))
             has_capacity = active_count < max_cap
 
-            domain_sim = _cosine_similarity(learner_domain_vec, m.get("domain_vector") or m.get("mentor_vector"))
-            skills_sim = _cosine_similarity(learner_skills_vec, m.get("skills_vector") or m.get("mentor_vector"))
+            m_dom_vec = m.get("domain_vector") or m.get("mentor_vector")
+            m_sk_vec = m.get("skills_vector") or m.get("mentor_vector")
+            domain_sim = _cosine_similarity(learner_domain_vec, m_dom_vec)
+            skills_sim = _cosine_similarity(learner_skills_vec, m_sk_vec)
             sem_sim = (0.50 * domain_sim) + (0.50 * skills_sim)
+
+            mentor_field_id, mentor_field_sim, _, mentor_active_tiers = self._resolve_tier_via_centroid(
+                m_dom_vec,
+                field_centroids,
+            )
+            same_tier = bool(
+                learner_field_id
+                and mentor_field_id
+                and learner_field_id == mentor_field_id
+            )
+            is_bridge_tier = bool(
+                not same_tier
+                and mentor_field_id
+                and (
+                    mentor_field_id in learner_active_tiers
+                    or (learner_field_id and learner_field_id in mentor_active_tiers)
+                )
+            )
 
             mentor_skills = m.get("expertise_skills", [])
             shared_gap_skills: List[str] = []
@@ -475,27 +629,55 @@ class MentorshipService:
                 (len(shared_gap_skills) + 0.5 * len(shared_general_skills)) / denom,
             )
 
-            domain_str = f"{m.get('primary_domain', '')} {m.get('headline', '')} {m.get('bio', '')}".lower()
-            career_tokens = [t for t in career_lower.replace(",", " ").split() if len(t) > 3]
-            token_hits = sum(1 for tok in career_tokens if tok in domain_str)
-            domain_score = 1.0 if token_hits > 0 else (0.75 if domain_sim >= 0.65 else (0.4 if shared_gap_skills else 0.0))
+            # Continuous 7-Tier Vector Centroid Alignment Score (Zero Hardcoding)
+            mentor_sim_to_learner_tier = (
+                _cosine_similarity(m_dom_vec, field_centroids[learner_field_id])
+                if learner_field_id and learner_field_id in field_centroids
+                else domain_sim
+            )
+            if same_tier:
+                domain_score = 1.0
+            elif is_bridge_tier and (shared_gap_skills or shared_general_skills):
+                domain_score = 0.85
+            elif shared_gap_skills and mentor_sim_to_learner_tier >= max(0.35, mentor_field_sim - 0.06):
+                domain_score = 0.5
+            elif shared_general_skills and mentor_sim_to_learner_tier >= max(0.35, mentor_field_sim - 0.04):
+                domain_score = 0.25
+            else:
+                domain_score = 0.0
 
             composite_score = (0.30 * domain_sim) + (0.30 * skills_sim) + (0.25 * overlap_score) + (0.15 * domain_score)
             match_pct = int(round(composite_score * 100))
 
-            passes_anti_desperation = (
-                domain_sim >= 0.56
-                and (
-                    composite_score >= ANTI_DESPERATION_THRESHOLD
-                    or (len(shared_gap_skills) >= 1 and domain_sim >= 0.60)
+            has_any_shared_skill = bool(shared_gap_skills or shared_general_skills)
+            # 7-Tier Anti-Leak Firewall + Voronoi Boundary Bridge + Anti-Desperation Gate:
+            # - Intra-tier (`same_tier=True`): Passes via shared gap skill, strong domain-aligned composite score, or shared skill with solid domain cosine.
+            # - Interdisciplinary Bridge (`is_bridge_tier=True`, e.g. Bioinformatics = science + tech): Passes when sharing >=1 priority gap skill and solid skill vector alignment.
+            # - Strict Inter-tier (`same_tier=False` and `is_bridge_tier=False`): Strictly blocks title/domain leakage across unrelated tiers.
+            if same_tier:
+                passes_anti_desperation = (
+                    (len(shared_gap_skills) >= 1 and domain_sim >= 0.48)
+                    or (composite_score >= ANTI_DESPERATION_THRESHOLD and domain_sim >= 0.50)
+                    or (has_any_shared_skill and domain_sim >= 0.54)
                 )
-            )
+            elif is_bridge_tier:
+                passes_anti_desperation = (
+                    len(shared_gap_skills) >= 1
+                    and skills_sim >= 0.48
+                    and composite_score >= ANTI_DESPERATION_THRESHOLD
+                )
+            else:
+                passes_anti_desperation = (
+                    len(shared_gap_skills) >= 2
+                    and skills_sim >= 0.65
+                    and domain_sim >= 0.52
+                )
 
             if not passes_anti_desperation and not include_below_threshold:
                 filtered_out_count += 1
                 continue
 
-            if composite_score >= STRONG_MATCH_THRESHOLD or len(shared_gap_skills) >= 2:
+            if composite_score >= STRONG_MATCH_THRESHOLD and (len(shared_gap_skills) >= 1 or len(shared_general_skills) >= 2):
                 match_tier = "strong"
                 match_badge = "Strong Semantic & Skill Match"
             elif passes_anti_desperation:
@@ -524,9 +706,18 @@ class MentorshipService:
             mentor_card = {
                 k: v for k, v in m.items() if k not in ("mentor_vector", "domain_vector", "skills_vector")
             }
+            if shared_gap_skills:
+                match_explanation = f"Directly covers {len(shared_gap_skills)} of your priority skill gaps ({', '.join(shared_gap_skills[:3])})"
+            elif shared_general_skills:
+                match_explanation = f"Covers {len(shared_general_skills)} relevant competencies ({', '.join(shared_general_skills[:3])})"
+            else:
+                match_explanation = f"Domain-aligned advisor with {ctx['career_title']} expertise"
+
             mentor_card.update({
                 "match_score": round(composite_score, 3),
                 "match_percent": match_pct,
+                "occupational_tier": mentor_field_id,
+                "same_occupational_tier": same_tier,
                 "trust_score": trust_score,
                 "has_google": has_google,
                 "has_linkedin": has_linkedin,
@@ -540,21 +731,24 @@ class MentorshipService:
                 "has_capacity": has_capacity,
                 "connection_status": conn["status"] if conn else "none",
                 "connection_id": conn["id"] if conn else None,
-                "match_explanation": (
-                    f"Directly covers {len(shared_gap_skills)} of your priority skill gaps ({', '.join(shared_gap_skills[:3])})"
-                    if shared_gap_skills
-                    else f"Aligned with {ctx['career_title']} ({int(round(sem_sim * 100))}% semantic vector similarity)"
-                ),
+                "match_explanation": match_explanation,
             })
             qualified_matches.append(mentor_card)
 
         qualified_matches.sort(
-            key=lambda x: (x["has_capacity"], len(x["shared_gap_skills"]), x["match_score"]),
+            key=lambda x: (
+                x["has_capacity"],
+                x["same_occupational_tier"],
+                len(x["shared_gap_skills"]),
+                x["match_score"],
+            ),
             reverse=True,
         )
 
         return {
             "learner_career": ctx["career_title"],
+            "learner_tier": learner_field_id,
+            "learner_active_tiers": learner_active_tiers,
             "priority_gaps": top_gaps[:5],
             "anti_desperation_threshold": ANTI_DESPERATION_THRESHOLD,
             "filtered_out_by_anti_desperation": filtered_out_count,
@@ -610,7 +804,7 @@ class MentorshipService:
         if existing:
             existing["goal_note"] = goal_note or existing.get("goal_note", "")
             existing["learner_snapshot"] = skill_gap_snapshot
-            if auto_accept_demo:
+            if auto_accept_demo and is_seeded:
                 existing["status"] = "accepted"
             self._save_store(store)
             return existing
@@ -801,15 +995,46 @@ class MentorshipService:
 
         if learner_id:
             ctx = self._get_learner_context(learner_id)
-            learner_skills = {s["name"].lower() for s in ctx["all_skills"]}
-            career_tokens = set(ctx["career_title"].lower().replace(",", " ").split())
+            learner_skills = {s["name"].lower().strip() for s in ctx["all_skills"]}
+            mentor_vec_map = {
+                m["mentor_id"]: (m.get("domain_vector") or m.get("mentor_vector"))
+                for m in store.get("mentors", [])
+            }
+            learner_tier_query = (
+                f"{ctx['career_title']}. {(ctx.get('career_description') or '').strip()[:240]} "
+                f"Competencies: {', '.join(s['name'] for s in ctx['gap_skills'][:8] or ctx['all_skills'])}."
+            )
+            learner_cached_vec = _embedding_cache.get(learner_tier_query.strip().lower())
+            learner_field_id, _, _, learner_active_tiers = self._resolve_tier_via_centroid(
+                learner_cached_vec,
+                _FIELD_CENTROIDS_CACHE,
+            )
 
             def _score_post(post: Dict[str, Any]) -> float:
-                tags = [t.lower() for t in post.get("skill_tags", [])]
-                overlap = sum(1 for t in tags if any(t in ls or ls in t for ls in learner_skills))
-                dom_words = set(post.get("primary_domain", "").lower().split())
-                dom_hit = 1 if (career_tokens & dom_words) else 0
-                return (overlap * 2.0) + dom_hit + (0.1 * int(post.get("likes_count", 0)))
+                tags = [t.lower().strip() for t in post.get("skill_tags", [])]
+                overlap = sum(
+                    1
+                    for t in tags
+                    if t in learner_skills
+                    or any(
+                        len(set(t.split()) & set(ls.split())) >= 2
+                        for ls in learner_skills
+                    )
+                )
+                author_vec = mentor_vec_map.get(post.get("mentor_id"))
+                tier_bonus = 0.0
+                if author_vec and _FIELD_CENTROIDS_CACHE and learner_field_id:
+                    post_field_id, _, _, _ = self._resolve_tier_via_centroid(
+                        author_vec,
+                        _FIELD_CENTROIDS_CACHE,
+                    )
+                    if post_field_id == learner_field_id:
+                        tier_bonus = 1.5
+                    elif post_field_id in learner_active_tiers:
+                        tier_bonus = 1.0
+                elif author_vec and learner_cached_vec:
+                    tier_bonus = _cosine_similarity(learner_cached_vec, author_vec)
+                return (overlap * 2.0) + tier_bonus + (0.05 * int(post.get("likes_count", 0)))
 
             posts.sort(key=_score_post, reverse=True)
         else:
@@ -1160,16 +1385,26 @@ class MentorshipService:
             start_hours = [9, 10, 11]
         elif window == "Afternoon":
             start_hours = [14, 15, 16]
+        elif window == "Flexible":
+            start_hours = [10, 14, 18]
         else:
             start_hours = [18, 19, 20]
 
-        booked_starts = {
-            s["slot_start_iso"]
-            for s in store.get("sessions", [])
+        booked_intervals = []
+        for s in store.get("sessions", []):
             if s.get("status") != "cancelled" and (
-                s["mentor_id"] == mentor_id or (learner_id and s.get("learner_id") == learner_id)
-            )
-        }
+                s.get("mentor_id") == mentor_id or (learner_id and s.get("learner_id") == learner_id)
+            ):
+                try:
+                    ex_start = datetime.fromisoformat(str(s["slot_start_iso"]).replace("Z", "+00:00"))
+                    ex_end = datetime.fromisoformat(str(s["slot_end_iso"]).replace("Z", "+00:00"))
+                    if ex_start.tzinfo is None:
+                        ex_start = ex_start.replace(tzinfo=timezone.utc)
+                    if ex_end.tzinfo is None:
+                        ex_end = ex_end.replace(tzinfo=timezone.utc)
+                    booked_intervals.append((ex_start.astimezone(timezone.utc), ex_end.astimezone(timezone.utc)))
+                except Exception:
+                    continue
 
         now = datetime.now(timezone.utc)
         day_abbrs = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -1196,7 +1431,7 @@ class MentorshipService:
                 # Enforce minimum 24-hour advance booking notice
                 if start_dt < now + timedelta(hours=24):
                     continue
-                if start_iso in booked_starts:
+                if any(start_dt < ex_end and end_dt > ex_start for ex_start, ex_end in booked_intervals):
                     continue
 
                 slots.append({
@@ -1231,6 +1466,10 @@ class MentorshipService:
 
         try:
             start_dt = datetime.fromisoformat(slot_start_iso.replace("Z", "+00:00"))
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            else:
+                start_dt = start_dt.astimezone(timezone.utc)
         except Exception:
             raise ValueError("Invalid ISO timestamp for session start.")
         end_dt = start_dt + timedelta(minutes=45)
@@ -1247,6 +1486,10 @@ class MentorshipService:
                 continue
             ex_start = datetime.fromisoformat(existing["slot_start_iso"].replace("Z", "+00:00"))
             ex_end = datetime.fromisoformat(existing["slot_end_iso"].replace("Z", "+00:00"))
+            if ex_start.tzinfo is None:
+                ex_start = ex_start.replace(tzinfo=timezone.utc)
+            if ex_end.tzinfo is None:
+                ex_end = ex_end.replace(tzinfo=timezone.utc)
             overlaps = start_dt < ex_end and end_dt > ex_start
             if overlaps and existing["mentor_id"] == mentor_id:
                 raise ValueError(
@@ -1331,7 +1574,10 @@ class MentorshipService:
             if m_uuid:
                 booking_payload["mentor_id"] = m_uuid
 
-            supabase_client.table("bookings").insert(booking_payload).execute()
+            bookings_res = supabase_client.table("bookings").insert(booking_payload).execute()
+            if bookings_res.data and bookings_res.data[0].get("id"):
+                session_record["supabase_booking_id"] = bookings_res.data[0]["id"]
+                self._save_store(store)
         except Exception as db_sync_err:
             logger.debug(f"[MentorshipService] Supabase bookings dual-sync skipped: {db_sync_err}")
 
@@ -1360,12 +1606,13 @@ class MentorshipService:
         sess["status"] = "cancelled"
         self._save_store(store)
 
-        # Dual-layer sync: update Supabase bookings status
-        try:
-            uuid.UUID(str(user_id))
-            supabase_client.table("bookings").update({"status": "cancelled"}).eq("user_id", user_id).execute()
-        except Exception:
-            pass
+        # Dual-layer sync: update exact Supabase booking record when linked
+        booking_id = sess.get("supabase_booking_id")
+        if booking_id:
+            try:
+                supabase_client.table("bookings").update({"status": "cancelled"}).eq("id", booking_id).execute()
+            except Exception:
+                pass
 
         return sess
 
@@ -1391,15 +1638,57 @@ class MentorshipService:
         skill_to_endorse = (endorse_skill_name or sess.get("focus_skill") or "").strip()
 
         if skill_to_endorse:
-            sess["endorsed_skill"] = {
+            endorsed_payload = {
                 "skill_name": skill_to_endorse,
                 "endorsement_type": "mentor_reviewed",
+                "proficiency_boost": 15,
                 "feedback_note": feedback_note.strip(),
                 "endorsed_at": _utc_now_iso(),
             }
+            learner_id = sess.get("learner_id")
+            if learner_id:
+                try:
+                    uuid.UUID(str(learner_id))
+                    sk_res = (
+                        supabase_client.table("skills")
+                        .select("id, name")
+                        .ilike("name", skill_to_endorse)
+                        .limit(1)
+                        .execute()
+                    )
+                    if sk_res.data:
+                        skill_id = sk_res.data[0]["id"]
+                        usk_res = (
+                            supabase_client.table("user_skills")
+                            .select("proficiency")
+                            .eq("user_id", learner_id)
+                            .eq("skill_id", skill_id)
+                            .limit(1)
+                            .execute()
+                        )
+                        if usk_res.data:
+                            curr_prof = int(usk_res.data[0].get("proficiency") or 20)
+                            new_prof = min(100, curr_prof + 15)
+                            supabase_client.table("user_skills").update({
+                                "proficiency": new_prof,
+                                "evidence_source": "mentor_verified",
+                            }).eq("user_id", learner_id).eq("skill_id", skill_id).execute()
+                            endorsed_payload["new_proficiency"] = new_prof
+                        else:
+                            new_prof = 35
+                            supabase_client.table("user_skills").insert({
+                                "user_id": learner_id,
+                                "skill_id": skill_id,
+                                "proficiency": new_prof,
+                                "evidence_source": "mentor_verified",
+                            }).execute()
+                            endorsed_payload["new_proficiency"] = new_prof
+                except Exception as endorse_err:
+                    logger.debug(f"[MentorshipService] user_skills endorsement DB sync skipped: {endorse_err}")
+
+            sess["endorsed_skill"] = endorsed_payload
 
         self._save_store(store)
-        return sess
         return sess
 
     def get_session_ics(self, session_id: str) -> str:

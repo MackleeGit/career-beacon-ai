@@ -13,6 +13,8 @@ import json
 import uuid
 import logging
 import asyncio
+import tempfile
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from app.core.database import supabase_client
@@ -23,7 +25,7 @@ from app.services.recommendation_service import (
     _source_quality_multiplier,
     _cosine_similarity
 )
-from app.services.content_service import classify_source_adapter, hydrate_micro_content_row
+from app.services.content_service import classify_source_adapter, hydrate_micro_content_row, is_lesson_rejected
 
 logger = logging.getLogger("career_beacon.daily_drop_service")
 
@@ -43,30 +45,113 @@ def _today_str() -> str:
     return _now_utc().strftime("%Y-%m-%d")
 
 
+_DAILY_DROP_IO_LOCK = threading.RLock()
+
+
 def _load_json_file(file_path: str) -> List[Dict[str, Any]]:
-    if not os.path.exists(file_path):
-        return []
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading {file_path}: {e}")
-        return []
+    with _DAILY_DROP_IO_LOCK:
+        if not os.path.exists(file_path):
+            return []
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Error loading {file_path}: {e}")
+            return []
 
 
 def _save_json_file(file_path: str, data: Any) -> None:
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"Error saving {file_path}: {e}")
+    with _DAILY_DROP_IO_LOCK:
+        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(file_path), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, file_path)
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            logger.error(f"Error saving {file_path}: {e}")
 
 
 class DailyDropService:
     def __init__(self):
         os.makedirs(DATA_DIR, exist_ok=True)
         self.rec_service = RecommendationService()
+        self._user_locks: Dict[str, asyncio.Lock] = {}
+
+    def _get_user_lock(self, user_id: str) -> asyncio.Lock:
+        lock = self._user_locks.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._user_locks[user_id] = lock
+        return lock
+
+    # -------------------------------------------------------------------------
+    # 0. Supabase + Local JSON Dual-Layer Persistence Helpers
+    # -------------------------------------------------------------------------
+
+    def _get_sprint_record(self, user_id: str, sprint_date: str) -> Optional[Dict[str, Any]]:
+        try:
+            res = (
+                supabase_client.table("daily_drops")
+                .select("payload")
+                .eq("user_id", user_id)
+                .eq("drop_date", sprint_date)
+                .limit(1)
+                .execute()
+            )
+            if res.data and isinstance(res.data[0].get("payload"), dict):
+                return res.data[0]["payload"]
+        except Exception as e:
+            logger.debug(f"Supabase daily_drops read fallback: {e}")
+
+        sprints = _load_json_file(DAILY_SPRINTS_FILE)
+        local = next(
+            (s for s in sprints if s.get("user_id") == user_id and s.get("sprint_date") == sprint_date),
+            None,
+        )
+        if local:
+            self._save_sprint_record(local)
+        return local
+
+    def _save_sprint_record(self, drop_record: Dict[str, Any]) -> None:
+        user_id = drop_record.get("user_id")
+        sprint_date = drop_record.get("sprint_date")
+        if not user_id or not sprint_date:
+            return
+
+        try:
+            supabase_client.table("daily_drops").upsert(
+                {
+                    "user_id": user_id,
+                    "drop_date": sprint_date,
+                    "status": "completed" if drop_record.get("is_completed") else "in_progress",
+                    "payload": drop_record,
+                },
+                on_conflict="user_id,drop_date",
+            ).execute()
+        except Exception as e:
+            logger.debug(f"Supabase daily_drops save fallback: {e}")
+
+        sprints = _load_json_file(DAILY_SPRINTS_FILE)
+        sprints = [s for s in sprints if not (s.get("user_id") == user_id and s.get("sprint_date") == sprint_date)]
+        sprints.append(drop_record)
+        _save_json_file(DAILY_SPRINTS_FILE, sprints)
+
+    def _delete_sprint_record(self, user_id: str, sprint_date: str) -> None:
+        try:
+            supabase_client.table("daily_drops").delete().eq("user_id", user_id).eq("drop_date", sprint_date).execute()
+        except Exception as e:
+            logger.debug(f"Supabase daily_drops delete fallback: {e}")
+
+        sprints = _load_json_file(DAILY_SPRINTS_FILE)
+        sprints = [s for s in sprints if not (s.get("user_id") == user_id and s.get("sprint_date") == sprint_date)]
+        _save_json_file(DAILY_SPRINTS_FILE, sprints)
 
     # -------------------------------------------------------------------------
     # 1. Streak Management
@@ -74,8 +159,25 @@ class DailyDropService:
 
     def get_streak_info(self, user_id: str) -> Dict[str, Any]:
         """Returns the user's current streak, longest streak, and last active date."""
-        streaks = _load_json_file(STREAKS_FILE)
-        user_streak = next((s for s in streaks if s.get("user_id") == user_id), None)
+        user_streak = None
+        try:
+            res = supabase_client.table("user_streaks").select("*").eq("user_id", user_id).limit(1).execute()
+            if res.data:
+                row = res.data[0]
+                raw_last = row.get("last_activity_date")
+                user_streak = {
+                    "user_id": user_id,
+                    "current_streak": int(row.get("current_streak") or 0),
+                    "longest_streak": int(row.get("longest_streak") or 0),
+                    "last_active_date": str(raw_last)[:10] if raw_last else None,
+                }
+        except Exception as e:
+            logger.debug(f"Supabase user_streaks read fallback: {e}")
+
+        if not user_streak:
+            streaks = _load_json_file(STREAKS_FILE)
+            user_streak = next((s for s in streaks if s.get("user_id") == user_id), None)
+
         if not user_streak:
             return {
                 "user_id": user_id,
@@ -93,7 +195,7 @@ class DailyDropService:
         current = user_streak.get("current_streak", 0)
         if last_date and not completed_today:
             try:
-                last_dt = datetime.strptime(last_date, "%Y-%m-%d").date()
+                last_dt = datetime.strptime(str(last_date), "%Y-%m-%d").date()
                 today_dt = datetime.strptime(today, "%Y-%m-%d").date()
                 if (today_dt - last_dt).days > 1:
                     current = 0  # Streak broke
@@ -110,33 +212,50 @@ class DailyDropService:
 
     def _increment_streak(self, user_id: str) -> Dict[str, Any]:
         """Increments streak when a learner passes all lessons in today's daily drop."""
-        streaks = _load_json_file(STREAKS_FILE)
         today = _today_str()
         yesterday = (_now_utc() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        user_streak = next((s for s in streaks if s.get("user_id") == user_id), None)
-        if not user_streak:
-            user_streak = {
-                "user_id": user_id,
-                "current_streak": 1,
-                "longest_streak": 1,
-                "last_active_date": today,
-            }
-            streaks.append(user_streak)
+        existing_info = self.get_streak_info(user_id)
+        last_date = existing_info.get("last_active_date")
+        if last_date == today:
+            return existing_info
+
+        if last_date == yesterday:
+            new_current = int(existing_info.get("current_streak") or 0) + 1
         else:
-            last_date = user_streak.get("last_active_date")
-            if last_date == today:
-                # Already marked for today
-                return user_streak
-            elif last_date == yesterday:
-                user_streak["current_streak"] = user_streak.get("current_streak", 0) + 1
-            else:
-                user_streak["current_streak"] = 1
+            new_current = 1
+        new_longest = max(int(existing_info.get("longest_streak") or 0), new_current)
 
-            if user_streak["current_streak"] > user_streak.get("longest_streak", 0):
-                user_streak["longest_streak"] = user_streak["current_streak"]
-            user_streak["last_active_date"] = today
+        user_streak = {
+            "user_id": user_id,
+            "current_streak": new_current,
+            "longest_streak": new_longest,
+            "last_active_date": today,
+            "completed_today": True,
+        }
 
+        try:
+            supabase_client.table("user_streaks").upsert(
+                {
+                    "user_id": user_id,
+                    "current_streak": new_current,
+                    "longest_streak": new_longest,
+                    "last_activity_date": today,
+                    "updated_at": _now_utc().isoformat(),
+                },
+                on_conflict="user_id",
+            ).execute()
+        except Exception as e:
+            logger.debug(f"Supabase user_streaks upsert fallback: {e}")
+
+        streaks = _load_json_file(STREAKS_FILE)
+        streaks = [s for s in streaks if s.get("user_id") != user_id]
+        streaks.append({
+            "user_id": user_id,
+            "current_streak": new_current,
+            "longest_streak": new_longest,
+            "last_active_date": today,
+        })
         _save_json_file(STREAKS_FILE, streaks)
         return user_streak
 
@@ -158,6 +277,9 @@ class DailyDropService:
         2. Direct skill assignment (associated_skill_id == skill_id).
         3. Sufficient text substance and valid checkpoint quizzes.
         """
+        if is_lesson_rejected(lesson):
+            return False
+
         # 1. Adapter compatibility check
         if not _is_adapter_compatible_with_career(lesson, career_title, onet_soc_code=onet_soc_code):
             return False
@@ -207,44 +329,45 @@ class DailyDropService:
 
     async def get_or_create_daily_drop(self, user_id: str) -> Dict[str, Any]:
         """
-        Returns today's 5-lesson Daily Drop. If not pre-computed, curates it and records impressions.
+        Returns today's Daily Drop. If not pre-computed, curates it and records impressions.
         """
+        async with self._get_user_lock(user_id):
+            return await self._get_or_create_daily_drop_unlocked(user_id)
+
+    async def _get_or_create_daily_drop_unlocked(self, user_id: str) -> Dict[str, Any]:
         today = _today_str()
-        sprints = _load_json_file(DAILY_SPRINTS_FILE)
-        existing = next(
-            (s for s in sprints if s.get("user_id") == user_id and s.get("sprint_date") == today),
-            None
-        )
+        existing = self._get_sprint_record(user_id, today)
 
-        if existing:
-            has_target = existing.get("target_skill_id") is not None
-            has_enough = len(existing.get("lesson_ids", [])) >= 3
-            if has_target and has_enough:
-                hydrated = await self._hydrate_drop(existing, user_id)
-                if hydrated.get("lessons") and len(hydrated["lessons"]) >= 3:
-                    prof_res = supabase_client.table("profiles").select("target_career_id").eq("id", user_id).execute()
-                    cid = prof_res.data[0]["target_career_id"] if prof_res.data else None
-                    career_obj = self.rec_service.get_cached_career(cid) if cid else {}
-                    c_title = career_obj.get("title", "")
-                    c_soc = career_obj.get("onet_soc_code")
-                    if all(
-                        _lesson_matches_career(
-                            l,
-                            c_title,
-                            onet_soc_code=c_soc,
-                            enrolled_skill_ids={l.get("skill_id") or l.get("associated_skill_id")},
-                        )
-                        for l in hydrated["lessons"]
-                    ):
-                        return hydrated
+        if existing and existing.get("target_skill_id") and existing.get("lesson_ids"):
+            hydrated = await self._hydrate_drop(existing, user_id)
+            lessons = hydrated.get("lessons") or []
+            if lessons:
+                prof_res = supabase_client.table("profiles").select("target_career_id").eq("id", user_id).execute()
+                cid = prof_res.data[0]["target_career_id"] if prof_res.data else None
+                career_obj = self.rec_service.get_cached_career(cid) if cid else {}
+                c_title = career_obj.get("title", "")
+                c_soc = career_obj.get("onet_soc_code")
+                usk_res = supabase_client.table("user_skills").select("skill_id").eq("user_id", user_id).execute()
+                user_skill_ids = {r["skill_id"] for r in (usk_res.data or []) if r.get("skill_id")}
+                valid_lessons = [
+                    l for l in lessons
+                    if _lesson_matches_career(
+                        l,
+                        c_title,
+                        onet_soc_code=c_soc,
+                        enrolled_skill_ids=user_skill_ids,
+                    )
+                ]
+                if valid_lessons:
+                    hydrated["lessons"] = valid_lessons
+                    hydrated["total_count"] = len(valid_lessons)
+                    return hydrated
 
-            sprints = [s for s in sprints if not (s.get("user_id") == user_id and s.get("sprint_date") == today)]
-            _save_json_file(DAILY_SPRINTS_FILE, sprints)
+            self._delete_sprint_record(user_id, today)
 
         new_drop = await self._curate_daily_drop(user_id=user_id, sprint_date=today, priority_index=0)
         if new_drop.get("target_skill_id") and len(new_drop.get("lesson_ids", [])) > 0:
-            sprints.append(new_drop)
-            _save_json_file(DAILY_SPRINTS_FILE, sprints)
+            self._save_sprint_record(new_drop)
             self.rec_service.history_service.record_impressions(user_id, new_drop.get("lesson_ids", []))
         return await self._hydrate_drop(new_drop, user_id)
 
@@ -252,51 +375,41 @@ class DailyDropService:
         """
         Debug & On-Demand Daily Update Worker:
         Clears today's cached sprint for the user, resets the daily reroll lock (`rerolls_used = 0`),
-        runs the multi-skill 5-primary + 5-reserve ingestion & ranking pipeline, and returns the hydrated drop.
+        runs the multi-skill ingestion & ranking pipeline, and returns the hydrated drop.
         """
-        today = _today_str()
-        sprints = _load_json_file(DAILY_SPRINTS_FILE)
-        old_sprint = next(
-            (s for s in sprints if s.get("user_id") == user_id and s.get("sprint_date") == today),
-            None,
-        )
-        prev_ids = list(old_sprint.get("active_lesson_ids", [])) if old_sprint else []
+        async with self._get_user_lock(user_id):
+            today = _today_str()
+            old_sprint = self._get_sprint_record(user_id, today)
+            prev_ids = list(old_sprint.get("active_lesson_ids", [])) if old_sprint else []
 
-        sprints = [s for s in sprints if not (s.get("user_id") == user_id and s.get("sprint_date") == today)]
-        _save_json_file(DAILY_SPRINTS_FILE, sprints)
+            self._delete_sprint_record(user_id, today)
 
-        new_drop = await self._curate_daily_drop(
-            user_id=user_id,
-            sprint_date=today,
-            priority_index=0,
-            excluded_ids=prev_ids if not force_fresh else [],
-            rerolls_used=0,
-            force_worker_topup=force_fresh,
-        )
-        if new_drop.get("target_skill_id") and len(new_drop.get("lesson_ids", [])) > 0:
-            sprints.append(new_drop)
-            _save_json_file(DAILY_SPRINTS_FILE, sprints)
-            self.rec_service.history_service.record_impressions(user_id, new_drop.get("lesson_ids", []))
-        return await self._hydrate_drop(new_drop, user_id)
+            new_drop = await self._curate_daily_drop(
+                user_id=user_id,
+                sprint_date=today,
+                priority_index=0,
+                excluded_ids=prev_ids if not force_fresh else [],
+                rerolls_used=0,
+                force_worker_topup=force_fresh,
+            )
+            if new_drop.get("target_skill_id") and len(new_drop.get("lesson_ids", [])) > 0:
+                self._save_sprint_record(new_drop)
+                self.rec_service.history_service.record_impressions(user_id, new_drop.get("lesson_ids", []))
+            return await self._hydrate_drop(new_drop, user_id)
 
     async def reroll_daily_drop(self, user_id: str) -> Dict[str, Any]:
         """
-        Shuffles today's drop to the 5 reserve lessons (1-shot free reroll).
-        If the pre-cached reserve set has fewer than 5 lessons, tops up from secondary priority skills.
+        Shuffles today's drop to the reserve lessons (1-shot free reroll).
+        If the pre-cached reserve set is short, tops up from secondary priority skills.
         Raises ValueError if re-roll was already used today.
         """
         today = _today_str()
-        sprints = _load_json_file(DAILY_SPRINTS_FILE)
-        drop_idx = next(
-            (i for i, s in enumerate(sprints) if s.get("user_id") == user_id and s.get("sprint_date") == today),
-            None
-        )
+        existing = self._get_sprint_record(user_id, today)
 
-        if drop_idx is None:
+        if existing is None:
             drop = await self.get_or_create_daily_drop(user_id)
             return drop
 
-        existing = sprints[drop_idx]
         if existing.get("rerolls_used", 0) >= 1:
             raise ValueError("You have already used your daily shuffle. Complete today's drop to unlock tomorrow's sprint.")
 
@@ -349,8 +462,7 @@ class DailyDropService:
         existing["passed_lesson_ids"] = []
         existing["is_completed"] = False
 
-        sprints[drop_idx] = existing
-        _save_json_file(DAILY_SPRINTS_FILE, sprints)
+        self._save_sprint_record(existing)
         return await self._hydrate_drop(existing, user_id)
 
     async def record_lesson_passed(self, user_id: str, lesson_id: str) -> Dict[str, Any]:
@@ -358,20 +470,17 @@ class DailyDropService:
         Marks a lesson passed in today's drop and checks for sprint completion.
         """
         today = _today_str()
-        sprints = _load_json_file(DAILY_SPRINTS_FILE)
-        drop = next(
-            (s for s in sprints if s.get("user_id") == user_id and s.get("sprint_date") == today),
-            None
-        )
+        drop = self._get_sprint_record(user_id, today)
 
         if not drop:
             return {"status": "ignored", "reason": "No active drop for today"}
 
+        lesson_ids = drop.get("lesson_ids") or drop.get("active_lesson_ids") or []
         passed_set = set(drop.get("passed_lesson_ids", []))
-        passed_set.add(lesson_id)
-        drop["passed_lesson_ids"] = list(passed_set)
+        if lesson_id in lesson_ids:
+            passed_set.add(lesson_id)
+            drop["passed_lesson_ids"] = list(passed_set)
 
-        lesson_ids = drop.get("lesson_ids", [])
         is_now_completed = bool(lesson_ids) and all(lid in passed_set for lid in lesson_ids)
         was_completed = drop.get("is_completed", False)
 
@@ -381,7 +490,7 @@ class DailyDropService:
         else:
             streak_info = self.get_streak_info(user_id)
 
-        _save_json_file(DAILY_SPRINTS_FILE, sprints)
+        self._save_sprint_record(drop)
         return {
             "status": "success",
             "is_completed": drop.get("is_completed", False),
@@ -539,9 +648,32 @@ class DailyDropService:
                     candidates.append(item)
                     seen_cand_ids.add(lid)
 
-        # 3B. Multi-Source Worker / Ingestion Acceleration
-        # Ensure we have a rich pool across the learner's focus skills using strict domain-compatible adapters
+        # 3A-2. Multi-Competency Career Reservoir Top-up FIRST: check all remaining enrolled career skills in Supabase
+        # before incurring live web/LLM ingestion latency.
         target_pool_size = (DAILY_DROP_SIZE + RESERVE_DROP_SIZE) if force_worker_topup else DAILY_DROP_SIZE
+        if len(candidates) < (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
+            other_skill_ids = [s["id"] for s in skills if s.get("id") and s["id"] not in focus_skill_ids]
+            if other_skill_ids:
+                other_res = supabase_client.table("micro_content").select("*").in_(
+                    "associated_skill_id", other_skill_ids
+                ).order("source_trust_score", desc=True).limit(30).execute()
+                all_skills_map = self.rec_service.get_cached_all_skills()
+                for item in (other_res.data or []):
+                    lid = item.get("id")
+                    sid = item.get("associated_skill_id")
+                    sk_obj = skill_by_id.get(sid) or all_skills_map.get(sid)
+                    if not lid or lid in excluded or lid in seen_cand_ids or not sk_obj:
+                        continue
+                    if self.rec_service.history_service.has_passed_lesson(user_id, lid):
+                        continue
+                    if not self._verify_lesson_relevance(item, sk_obj.get("name", ""), sid, career_title, onet_soc_code=onet_soc_code):
+                        continue
+                    candidates.append(item)
+                    seen_cand_ids.add(lid)
+                    if len(candidates) >= (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
+                        break
+
+        # 3B. Multi-Source Worker / Ingestion Acceleration (ONLY if Supabase reservoir lacks enough career-skill lessons)
         if len(candidates) < target_pool_size and focus_skills:
             by_skill_count: Dict[str, int] = {}
             for c in candidates:
@@ -563,6 +695,7 @@ class DailyDropService:
                 non_video_adapters = ["structured_tutorial", "open_textbook"]
 
             gen_specs = []
+            max_jit = 2
             for idx, sk in enumerate(focus_skills):
                 sid = sk["id"]
                 have = by_skill_count.get(sid, 0)
@@ -570,7 +703,9 @@ class DailyDropService:
                 for slot in range(max(0, want - have)):
                     pref = ["youtube"] if (idx + slot) % 2 == 0 else non_video_adapters
                     gen_specs.append((sk, pref))
-                if len(gen_specs) >= (6 if force_worker_topup else 2):
+                    if len(gen_specs) >= max_jit:
+                        break
+                if len(gen_specs) >= max_jit:
                     break
 
             sem = asyncio.Semaphore(2)
@@ -589,7 +724,7 @@ class DailyDropService:
                                 preferred_adapters=pref_adapters,
                                 onet_soc_code=onet_soc_code,
                             ),
-                            timeout=8.0 if force_worker_topup else 4.0,
+                            timeout=12.0 if force_worker_topup else 8.0,
                         )
                     except Exception as e:
                         logger.warning(f"Daily Drop worker ingestion notice for {sk_item.get('name')}: {e}")
@@ -621,29 +756,6 @@ class DailyDropService:
                 if self.rec_service.history_service.has_passed_lesson(user_id, lid):
                     continue
                 if self._verify_lesson_relevance(item, sk_obj["name"], sid, career_title, onet_soc_code=onet_soc_code):
-                    candidates.append(item)
-                    seen_cand_ids.add(lid)
-                    if len(candidates) >= (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
-                        break
-
-        # 3C-2. Multi-Competency Career Reservoir Top-up: strictly guarantee DAILY_DROP_SIZE (5 lessons)
-        if len(candidates) < (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):
-            other_skill_ids = [s["id"] for s in skills if s.get("id") and s["id"] not in seen_cand_ids]
-            if other_skill_ids:
-                other_res = supabase_client.table("micro_content").select("*").in_(
-                    "associated_skill_id", other_skill_ids
-                ).order("source_trust_score", desc=True).limit(30).execute()
-                all_skills_map = self.rec_service.get_cached_all_skills()
-                for item in (other_res.data or []):
-                    lid = item.get("id")
-                    sid = item.get("associated_skill_id")
-                    sk_obj = skill_by_id.get(sid) or all_skills_map.get(sid)
-                    if not lid or lid in seen_cand_ids or not sk_obj:
-                        continue
-                    if self.rec_service.history_service.has_passed_lesson(user_id, lid):
-                        continue
-                    if not self._verify_lesson_relevance(item, sk_obj.get("name", ""), sid, career_title, onet_soc_code=onet_soc_code):
-                        continue
                     candidates.append(item)
                     seen_cand_ids.add(lid)
                     if len(candidates) >= (DAILY_DROP_SIZE + RESERVE_DROP_SIZE):

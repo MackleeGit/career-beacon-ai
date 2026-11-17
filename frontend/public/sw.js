@@ -1,5 +1,5 @@
 // Service Worker for Career Beacon PWA
-const CACHE_NAME = 'career-beacon-shell-v1';
+const CACHE_NAME = 'career-beacon-shell-v2';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -36,16 +36,17 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // 1. Bypass cache completely for API calls, auth, Supabase, and non-GET requests
+  // 1. Only intercept same-origin HTTP(S) GET requests; bypass extensions, external origins, APIs, and Supabase
   if (
     event.request.method !== 'GET' ||
-    url.pathname.startsWith('/api') ||
-    url.hostname.includes('supabase.co')
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith('/api')
   ) {
     return;
   }
 
-  // 2. Stale-While-Revalidate for app assets, fallback to network
+  // 2. Stale-While-Revalidate for same-origin app assets, always resolving to a valid Response
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request)
@@ -62,11 +63,15 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         })
-        .catch(() => {
-          // If offline and requesting navigation, return cached root/index.html
-          if (event.request.mode === 'navigate') {
-            return caches.match('/');
+        .catch(async () => {
+          if (cachedResponse) {
+            return cachedResponse;
           }
+          if (event.request.mode === 'navigate') {
+            const shell = (await caches.match('/index.html')) || (await caches.match('/'));
+            if (shell) return shell;
+          }
+          return Response.error();
         });
 
       return cachedResponse || fetchPromise;

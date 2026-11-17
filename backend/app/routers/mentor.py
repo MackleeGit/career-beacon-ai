@@ -730,11 +730,12 @@ async def complete_mentorship_session(
 
 
 @router.get("/sessions/{session_id}/calendar.ics")
-async def download_session_ics(session_id: str):
+async def download_session_ics(session_id: str, http_req: Request):
     """
     Returns an RFC 5545 iCalendar (.ics) file with valid Conference Room URL
     and two VALARM reminders (24 hours before and 15 minutes before).
     """
+    _ = get_verified_user_id(http_req)
     try:
         ics_content = mentorship_service.get_session_ics(session_id=session_id)
         return Response(
@@ -764,11 +765,17 @@ async def reset_mentor_account(http_req: Request):
         supabase_client.table("mentors").delete().eq("profile_id", user_id).execute()
         # 2. Clear bio in profiles table
         supabase_client.table("profiles").update({"bio": ""}).eq("id", user_id).execute()
-        # 3. Clean up active mentorship service memory/records
-        mentorship_service.mentors = [m for m in mentorship_service.mentors if m.get("mentor_id") != user_id]
-        mentorship_service.connections = [c for c in mentorship_service.connections if c.get("mentor_id") != user_id]
-        mentorship_service.sessions = [s for s in mentorship_service.sessions if s.get("mentor_id") != user_id]
-        mentorship_service.pulse_posts = [p for p in mentorship_service.pulse_posts if p.get("mentor_id") != user_id]
+        # 3. Clean up active mentorship service store and persist atomically
+        store = mentorship_service._ensure_store()
+        removed_conn_ids = {
+            c.get("id") for c in store.get("connections", []) if c.get("mentor_id") == user_id
+        }
+        store["mentors"] = [m for m in store.get("mentors", []) if m.get("mentor_id") != user_id]
+        store["connections"] = [c for c in store.get("connections", []) if c.get("mentor_id") != user_id]
+        store["messages"] = [m for m in store.get("messages", []) if m.get("connection_id") not in removed_conn_ids]
+        store["sessions"] = [s for s in store.get("sessions", []) if s.get("mentor_id") != user_id]
+        store["pulse_posts"] = [p for p in store.get("pulse_posts", []) if p.get("mentor_id") != user_id]
+        mentorship_service._save_store(store)
 
         return {
             "status": "success",

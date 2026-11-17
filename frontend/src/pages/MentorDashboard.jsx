@@ -16,7 +16,7 @@ import {
   getMentorshipSessions,
   bookMentorshipSession,
   completeMentorshipSession,
-  getSessionIcsDownloadUrl,
+  downloadSessionIcs,
   resetMentorAccount,
   flagContentItem,
 } from '../lib/api';
@@ -225,7 +225,7 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
   }, []);
 
   useEffect(() => {
-    if (!selectedConnId) return;
+    if (!selectedConnId || activeTab !== 'messages') return;
     let isMounted = true;
     const fetchMsgs = () => {
       getConnectionMessages(selectedConnId)
@@ -240,7 +240,7 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
       isMounted = false;
       clearInterval(interval);
     };
-  }, [selectedConnId]);
+  }, [selectedConnId, activeTab]);
 
   const activeConnection = connections.find((c) => c.id === selectedConnId);
 
@@ -1584,14 +1584,18 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
                                     <span>Google Calendar</span>
                                   </a>
                                 )}
-                                <a
-                                  href={getSessionIcsDownloadUrl(sess.id)}
-                                  download
+                                <button
+                                  type="button"
                                   className="btn btn--secondary btn--xs"
+                                  onClick={() =>
+                                    downloadSessionIcs(sess.id).catch((err) =>
+                                      setToastMessage(err.message || 'Failed to download calendar invite.')
+                                    )
+                                  }
                                 >
                                   <Download size={13} />
                                   <span>Download .ics</span>
-                                </a>
+                                </button>
                                 <button
                                   type="button"
                                   className="btn btn--secondary btn--xs"
@@ -1848,7 +1852,15 @@ export default function MentorDashboard({ user, userProfile, onRecalibrateCareer
                               </div>
                               {sess.endorsed_skill && (
                                 <div style={{ marginTop: '6px', fontSize: '0.82rem', color: 'var(--accent)' }}>
-                                  <ShieldCheck size={12} /> Endorsed Skill: <strong>{sess.endorsed_skill}</strong>
+                                  <ShieldCheck size={12} /> Endorsed Skill:{' '}
+                                  <strong>
+                                    {typeof sess.endorsed_skill === 'object'
+                                      ? sess.endorsed_skill.skill_name
+                                      : sess.endorsed_skill}
+                                  </strong>
+                                  {typeof sess.endorsed_skill === 'object' && sess.endorsed_skill.proficiency_boost
+                                    ? ` (+${sess.endorsed_skill.proficiency_boost}%)`
+                                    : ''}
                                 </div>
                               )}
                               {sess.feedback_note && (

@@ -13,6 +13,8 @@ from typing import List, Optional, Dict, Any
 import os
 import json
 import uuid
+import tempfile
+import threading
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -59,7 +61,7 @@ def require_admin_role(http_req: Request) -> str:
         if res.data:
             role = res.data[0].get("role")
             email = (res.data[0].get("email") or "").lower()
-            if role == "admin" or email.startswith("admin@") or "admin" in email:
+            if role == "admin" or email.startswith("admin@"):
                 return user_id
     except HTTPException:
         raise
@@ -232,6 +234,29 @@ async def review_career(career_id: str, payload: CareerReviewActionPayload, http
             except Exception:
                 pass
 
+            if payload.custom_skills:
+                for sk_raw in payload.custom_skills:
+                    sk_name = (sk_raw or "").strip()
+                    if not sk_name:
+                        continue
+                    try:
+                        sk_res = supabase_client.table("skills").select("id").ilike("name", sk_name).limit(1).execute()
+                        if sk_res.data:
+                            sid = sk_res.data[0]["id"]
+                        else:
+                            ins_res = supabase_client.table("skills").insert({"name": sk_name, "category": "Core"}).execute()
+                            sid = ins_res.data[0]["id"] if ins_res.data else None
+                        if sid:
+                            supabase_client.table("career_skills").upsert({
+                                "career_id": career_id,
+                                "skill_id": sid,
+                                "importance": "essential",
+                                "source_origin": "admin",
+                                "review_status": "reviewed",
+                            }, on_conflict="career_id,skill_id").execute()
+                    except Exception as cs_err:
+                        print(f"[admin-review-career] Custom skill persistence warning ({sk_name}): {cs_err}")
+
             return {"status": "approved", "career_id": career_id, "message": "Career approved, embedded, and verified in taxonomy."}
         else:
             # Reject: mark rejected
@@ -275,11 +300,31 @@ async def toggle_mentor_verification(mentor_id: str, payload: MentorVerifyPayloa
     require_admin_role(http_req)
     try:
         store = mentorship_service._ensure_store()
+        updated = False
         for m in store.get("mentors", []):
             if m.get("mentor_id") == mentor_id:
                 m["is_verified"] = payload.verified
                 mentorship_service._save_store(store)
+                updated = True
                 break
+
+        # Also persist to Supabase mentors table (by profile_id or id) when present
+        try:
+            res = supabase_client.table("mentors").update({"is_verified": payload.verified}).eq("profile_id", mentor_id).execute()
+            if not (res.data):
+                supabase_client.table("mentors").update({"is_verified": payload.verified}).eq("id", mentor_id).execute()
+        except Exception as db_err:
+            print(f"[admin-verify-mentor] Supabase sync notice: {db_err}")
+
+        if not updated:
+            await mentorship_service.get_all_mentors()
+            store = mentorship_service._ensure_store()
+            for m in store.get("mentors", []):
+                if m.get("mentor_id") == mentor_id:
+                    m["is_verified"] = payload.verified
+                    mentorship_service._save_store(store)
+                    break
+
         return {
             "status": "success",
             "mentor_id": mentor_id,
@@ -292,49 +337,93 @@ async def toggle_mentor_verification(mentor_id: str, payload: MentorVerifyPayloa
 
 
 # ---------------------------------------------------------------------------
-# 4. Moderation & Flagged Content (Durable File-Backed Store)
+# 4. Moderation & Flagged Content (Supabase-Backed + JSON Fallback)
 # ---------------------------------------------------------------------------
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 FLAGGED_FILE = os.path.join(DATA_DIR, "flagged_items.json")
+_FLAGGED_IO_LOCK = threading.RLock()
+
+def _load_local_flagged_items() -> List[Dict[str, Any]]:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with _FLAGGED_IO_LOCK:
+        if os.path.exists(FLAGGED_FILE):
+            try:
+                with open(FLAGGED_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+            except Exception as e:
+                print(f"[admin-moderation] Error loading flagged items: {e}")
+                return []
+        initial = [
+            {
+                "id": "flag-sample-1",
+                "item_type": "message",
+                "original_item_id": None,
+                "sender_name": "Anonymous User",
+                "target_context": "Direct Message to Mentor",
+                "content_snippet": "Spam promotional link: http://buycrypto-token-fast.biz",
+                "reason": "Suspected spam / external link solicitation",
+                "created_at": "2026-11-01T08:15:00Z",
+                "status": "pending_review",
+            }
+        ]
+        _save_flagged_items(initial)
+        return initial
 
 def _load_flagged_items() -> List[Dict[str, Any]]:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if os.path.exists(FLAGGED_FILE):
-        try:
-            with open(FLAGGED_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[admin-moderation] Error loading flagged items: {e}")
-    initial = [
-        {
-            "id": "flag-sample-1",
-            "item_type": "message",
-            "sender_name": "Anonymous User",
-            "target_context": "Direct Message to Mentor",
-            "content_snippet": "Spam promotional link: http://buycrypto-token-fast.biz",
-            "reason": "Suspected spam / external link solicitation",
-            "created_at": "2026-11-01T08:15:00Z",
-            "status": "pending_review",
-        }
-    ]
-    _save_flagged_items(initial)
-    return initial
+    local_items = _load_local_flagged_items()
+    try:
+        res = (
+            supabase_client.table("flagged_items")
+            .select("*")
+            .eq("status", "pending_review")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        if res.data is not None:
+            return res.data
+    except Exception:
+        pass
+    return local_items
 
 def _save_flagged_items(items: List[Dict[str, Any]]) -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
-    try:
-        with open(FLAGGED_FILE, "w", encoding="utf-8") as f:
-            json.dump(items, f, indent=2)
-    except Exception as e:
-        print(f"[admin-moderation] Failed to save flagged items: {e}")
+    with _FLAGGED_IO_LOCK:
+        fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(items, f, indent=2)
+            os.replace(tmp_path, FLAGGED_FILE)
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            print(f"[admin-moderation] Failed to save flagged items: {e}")
 
 def record_flagged_item(item: Dict[str, Any]) -> None:
-    items = _load_flagged_items()
+    try:
+        supabase_client.table("flagged_items").upsert({
+            "id": item["id"],
+            "item_type": item.get("item_type") or "message",
+            "original_item_id": item.get("original_item_id"),
+            "sender_name": item.get("sender_name"),
+            "target_context": item.get("target_context"),
+            "content_snippet": item.get("content_snippet") or "",
+            "reason": item.get("reason"),
+            "status": item.get("status") or "pending_review",
+            "created_at": item.get("created_at") or datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="id").execute()
+    except Exception:
+        pass
+    items = _load_local_flagged_items()
     items.insert(0, item)
     _save_flagged_items(items)
 
 # Expose _FLAGGED_ITEMS for backward-compatibility with imports
-_FLAGGED_ITEMS = _load_flagged_items()
+_FLAGGED_ITEMS = _load_local_flagged_items()
 
 
 @router.get("/moderation/flagged")
@@ -348,12 +437,85 @@ async def get_flagged_content(http_req: Request):
 async def act_on_moderation_item(payload: ModerationActionPayload, http_req: Request):
     require_admin_role(http_req)
     items = _load_flagged_items()
+    target_item = next((f for f in items if f["id"] == payload.item_id), None)
     if payload.action in ("dismiss", "delete"):
-        filtered = [f for f in items if f["id"] != payload.item_id]
+        if payload.action == "delete" and target_item:
+            orig_id = target_item.get("original_item_id") or payload.item_id
+            snippet = (target_item.get("content_snippet") or "").strip()
+
+            if payload.item_type == "recommendation":
+                try:
+                    lesson_rows = []
+                    if target_item.get("original_item_id"):
+                        res = supabase_client.table("micro_content").select("id, content").eq("id", orig_id).execute()
+                        lesson_rows = res.data or []
+                    if not lesson_rows and snippet:
+                        clean_title = snippet.removeprefix("Lesson:").strip()
+                        if clean_title:
+                            res = supabase_client.table("micro_content").select("id, content").eq("title", clean_title).execute()
+                            lesson_rows = res.data or []
+                    for row in lesson_rows:
+                        raw_c = row.get("content")
+                        c_dict = json.loads(raw_c) if isinstance(raw_c, str) else (raw_c or {})
+                        c_dict["review_status"] = "rejected"
+                        supabase_client.table("micro_content").update({
+                            "content": json.dumps(c_dict)
+                        }).eq("id", row["id"]).execute()
+                except Exception as rec_del_err:
+                    print(f"[admin-moderation] Non-fatal recommendation reject notice: {rec_del_err}")
+            else:
+                try:
+                    store = mentorship_service._ensure_store()
+                    if payload.item_type == "pulse_post":
+                        store["pulse_posts"] = [
+                            p for p in store.get("pulse_posts", [])
+                            if p.get("id") != orig_id
+                            and (p.get("body") or "").strip() != snippet
+                            and (p.get("title") or "").strip() != snippet
+                        ]
+                    elif payload.item_type == "question":
+                        store["questions"] = [
+                            q for q in store.get("questions", [])
+                            if q.get("id") != orig_id
+                            and (q.get("title") or "").strip() != snippet
+                            and (q.get("body") or "").strip() != snippet
+                        ]
+                        try:
+                            if target_item.get("original_item_id"):
+                                supabase_client.table("mentor_qa").delete().eq("id", orig_id).execute()
+                        except Exception:
+                            pass
+                    elif payload.item_type == "answer":
+                        for q in store.get("questions", []):
+                            q["answers"] = [
+                                a for a in q.get("answers", [])
+                                if a.get("id") != orig_id and (a.get("body") or "").strip() != snippet
+                            ]
+                    elif payload.item_type == "message":
+                        store["messages"] = [
+                            m for m in store.get("messages", [])
+                            if m.get("id") != orig_id and (m.get("text") or "").strip() != snippet
+                        ]
+                    mentorship_service._save_store(store)
+                except Exception as del_err:
+                    print(f"[admin-moderation] Non-fatal content delete notice: {del_err}")
+
+        try:
+            supabase_client.table("flagged_items").delete().eq("id", payload.item_id).execute()
+        except Exception:
+            pass
+
+        local_items = _load_local_flagged_items()
+        filtered = [f for f in local_items if f["id"] != payload.item_id]
         _save_flagged_items(filtered)
         global _FLAGGED_ITEMS
         _FLAGGED_ITEMS = filtered
-        msg = "Flag dismissed." if payload.action == "dismiss" else "Content removed and user warned."
+        if payload.action == "dismiss":
+            msg = "Flag dismissed."
+        elif payload.item_type == "recommendation":
+            msg = "Lesson quarantined (marked rejected) and excluded from recommendations."
+        else:
+            msg = "Content removed and moderation record updated."
         return {"status": payload.action, "message": msg}
     return {"status": "no_action"}
 
@@ -372,6 +534,7 @@ async def flag_item_for_moderation(payload: FlagReportPayload, http_req: Request
     new_flag = {
         "id": f"flag-{uuid.uuid4().hex[:8]}",
         "item_type": payload.item_type,
+        "original_item_id": payload.item_id,
         "sender_name": f"User ({user_id[:8]}...)",
         "target_context": payload.target_context,
         "content_snippet": payload.content_snippet,
@@ -500,27 +663,75 @@ async def trigger_ingestion_pipeline(payload: IngestionTriggerPayload, http_req:
 
     svc = ContentService()
     try:
-        # Step 1: Look up or resolve skill UUID
+        # Step 1: Look up or create skill UUID in skills table (never invent an orphan UUID)
         resolved_skill_id = payload.skill_id
         if not resolved_skill_id:
-            s_res = supabase_client.table("skills").select("id").ilike("name", f"%{payload.skill_name}%").limit(1).execute()
+            s_res = supabase_client.table("skills").select("id").ilike("name", f"%{payload.skill_name.strip()}%").limit(1).execute()
             if s_res.data:
                 resolved_skill_id = s_res.data[0]["id"]
                 logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Matched Canonical Skill UUID: {resolved_skill_id}")
+            else:
+                try:
+                    ins_res = supabase_client.table("skills").insert({
+                        "name": payload.skill_name.strip(),
+                        "category": payload.category or "Core",
+                    }).execute()
+                    if ins_res.data:
+                        resolved_skill_id = ins_res.data[0]["id"]
+                        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Created Canonical Skill UUID: {resolved_skill_id}")
+                except Exception as sk_err:
+                    logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Skill creation warning: {sk_err}")
+
+        # Step 1.5: Inspect existing reservoir lessons & run LLM Curriculum Planner
+        existing_titles: List[str] = []
+        if resolved_skill_id:
+            try:
+                ex_res = supabase_client.table("micro_content").select("title").eq("associated_skill_id", resolved_skill_id).execute()
+                existing_titles = [r["title"] for r in (ex_res.data or []) if r.get("title")]
+            except Exception:
+                existing_titles = []
+
+        if existing_titles:
+            logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Anti-Duplication Lock: {len(existing_titles)} existing lesson(s) found for '{payload.skill_name}'.")
+
+        subtopic_plans = await svc.plan_skill_curriculum_subtopics(
+            skill_name=payload.skill_name,
+            career_title=payload.career_title,
+            category=payload.category or "Core",
+            needed_count=1,
+            existing_titles=existing_titles,
+        )
+        active_plan = subtopic_plans[0] if subtopic_plans else None
+        if active_plan:
+            if active_plan.get("planner_source") == "fallback":
+                logs.append(
+                    f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [WARNING] LLM Curriculum Planner FAILED ({active_plan.get('fallback_reason', 'error')}) -> Deterministic fallback used: '{active_plan.get('subtopic_focus')}'"
+                )
+            else:
+                logs.append(
+                    f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] LLM Curriculum Planner -> Sub-Topic: '{active_plan.get('subtopic_focus')}' (Difficulty Tier {active_plan.get('target_difficulty', 2)})"
+                )
+            logs.append(
+                f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Taxonomy Query: '{active_plan.get('search_query')}' | Target Adapters: {active_plan.get('preferred_adapters')}"
+            )
 
         logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Polling Authoritative Adapters for {field_id}...")
 
         # Step 2: Ingest and synthesize
+        if not resolved_skill_id:
+            raise HTTPException(status_code=400, detail=f"Could not resolve or create canonical skill '{payload.skill_name}'.")
+
         lesson = await svc.generate_dynamic_lesson_for_skill(
-            skill_id=resolved_skill_id or str(uuid.uuid4()),
+            skill_id=resolved_skill_id,
             skill_name=payload.skill_name,
             category=payload.category or "Core",
             career_title=payload.career_title,
             target_proficiency=20,
+            subtopic_plan=active_plan,
         )
 
         if not lesson:
-            logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] FAILED: Candidate failed vector pedagogical gate or validation.")
+            logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] FAILED: Candidate rejected by LLM pedagogical regard judge, vector gate, or anti-duplication check.")
             return {
                 "status": "failed",
                 "logs": logs,
@@ -529,6 +740,7 @@ async def trigger_ingestion_pipeline(payload: IngestionTriggerPayload, http_req:
             }
 
         logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Source Verified: '{lesson.get('source_name', 'Authoritative Source')}' ({lesson.get('source_adapter')})")
+        logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] LLM Pedagogical Regard Audit & Semantic Deduplication (<0.90 cosine) passed.")
         logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Synthesized 5 Grounded MCQs. Checkpoint validation passed.")
         logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Committed to Supabase micro_content (ID: {lesson.get('id')})")
 
@@ -546,6 +758,7 @@ async def trigger_ingestion_pipeline(payload: IngestionTriggerPayload, http_req:
             message=f"Live Ingestion: Ingested '{lesson.get('title')}' for {payload.career_title}",
             author="Admin (Live Probe)",
             status="approved",
+            skill_id=resolved_skill_id,
         )
         logs.append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Ingestion Ledger Commit Created: #{commit_rec['commit_hash']}")
 

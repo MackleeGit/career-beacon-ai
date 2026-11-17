@@ -363,3 +363,57 @@ class TestAtomizeRejectsMalformedAiOutput:
         }
         result = await cs.atomize_and_create_quiz(raw_item)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_rejects_when_llm_pedagogical_judge_marks_unaccepted(self):
+        """If the LLM Pedagogical Regard Judge returns accepted=False, atomize_and_create_quiz must abort."""
+        cs = ContentService()
+        cs.ai_service.generate_json = AsyncMock(return_value={
+            "accepted": False,
+            "rejection_reason": "Source is a shallow marketing stub without technical mechanisms.",
+        })
+
+        raw_item = {
+            "title": "Shallow Marketing Stub",
+            "source_url": "https://example.com/stub",
+            "skill_name": "Python",
+            "raw_text": ("Python is a programming language used by many companies. " * 25),
+        }
+        result = await cs.atomize_and_create_quiz(raw_item)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_llm_curriculum_planner_strips_urls_and_plans_subtopics(self):
+        """LLM Curriculum Planner must return progressive sub-topics, strip any accidental URLs from search_query, and filter valid adapters."""
+        cs = ContentService()
+        cs.ai_service.generate_json = AsyncMock(return_value={
+            "subtopics": [
+                {
+                    "subtopic_focus": "Atrial Fibrillation vs Sinus Rhythm on ECG",
+                    "target_difficulty": 2,
+                    "search_query": "https://fake.url/test cardiac telemetry ECG atrial fibrillation nursing",
+                    "preferred_adapters": ["clinical_science", "invalid_adapter"],
+                    "educational_regard_criteria": "Must explain P-wave absence and R-R interval irregularity.",
+                },
+                {
+                    "subtopic_focus": "Ventricular Tachycardia Emergency Alarm Protocol",
+                    "target_difficulty": 3,
+                    "search_query": "ventricular tachycardia telemetry alarm nursing management",
+                    "preferred_adapters": ["youtube"],
+                    "educational_regard_criteria": "Must cover pulse check and defibrillation readiness.",
+                },
+            ]
+        })
+
+        plan = await cs.plan_skill_curriculum_subtopics(
+            skill_name="Telemetry Monitoring Response",
+            career_title="Registered Nurse",
+            category="Clinical Skills",
+            needed_count=2,
+            existing_titles=["Basic Vital Signs Overview"],
+        )
+        assert len(plan) == 2
+        assert "https://" not in plan[0]["search_query"]
+        assert "cardiac telemetry ECG" in plan[0]["search_query"]
+        assert plan[0]["preferred_adapters"] == ["clinical_science"]
+        assert plan[1]["target_difficulty"] == 3

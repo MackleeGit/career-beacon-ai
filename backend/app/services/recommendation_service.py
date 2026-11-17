@@ -34,7 +34,7 @@ from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 from app.core.database import supabase_client
 from app.services.embedding_service import EmbeddingService
-from app.services.content_service import ContentService
+from app.services.content_service import ContentService, is_lesson_rejected
 from app.services.learning_history_service import LearningHistoryService, ATTEMPTS_FILE, ACTIVITY_FILE
 
 logger = logging.getLogger("career_beacon.recommendation_service")
@@ -82,6 +82,8 @@ def _lesson_matches_career(
     Keep generic lessons and canonical skill lessons shared across sibling careers in the same
     occupational domain, while rejecting lessons explicitly branded for an incompatible career/domain.
     """
+    if is_lesson_rejected(item):
+        return False
     lesson_career = _explicit_lesson_career(item)
     if not lesson_career:
         return True
@@ -1077,6 +1079,23 @@ class RecommendationService:
         formatted for the Completed & Reviewed Library tab.
         """
         passed_lesson_ids: List[str] = []
+        # 1. Read remote Supabase assessment_attempts first
+        try:
+            att_res = (
+                supabase_client.table("assessment_attempts")
+                .select("lesson_id")
+                .eq("user_id", user_id)
+                .eq("passed", True)
+                .execute()
+            )
+            for row in (att_res.data or []):
+                lid = row.get("lesson_id")
+                if lid and lid not in passed_lesson_ids:
+                    passed_lesson_ids.append(lid)
+        except Exception:
+            pass
+
+        # 2. Merge local durable assessment attempts fallback
         try:
             from app.services.learning_history_service import ATTEMPTS_FILE
             if os.path.exists(ATTEMPTS_FILE):
@@ -1205,14 +1224,17 @@ class RecommendationService:
 
                 if passed and not already_passed:
                     if current_prof >= diff_ceiling:
-                        # Already above this difficulty tier's ceiling: award +2% review credit
-                        proficiency_increment = min(2, 100 - current_prof)
-                    elif raw_diff is not None and int(raw_diff) >= 3 and percentage == 100.0:
-                        # Perfect score bonus on Intermediate/Advanced/Expert lesson
-                        proficiency_increment = 12
+                        # At or above this difficulty tier's ceiling: higher-tier lessons are required to advance
+                        proficiency_increment = 0
+                        new_proficiency = current_prof
                     else:
-                        proficiency_increment = 10
-                    new_proficiency = min(100, current_prof + proficiency_increment)
+                        if raw_diff is not None and int(raw_diff) >= 3 and percentage == 100.0:
+                            # Perfect score bonus on Intermediate/Advanced/Expert lesson
+                            proficiency_increment = 12
+                        else:
+                            proficiency_increment = 10
+                        new_proficiency = min(diff_ceiling, 100, current_prof + proficiency_increment)
+                        proficiency_increment = max(0, new_proficiency - current_prof)
                 else:
                     # Repeated pass or failed attempt earns 0 increment
                     proficiency_increment = 0
@@ -1232,10 +1254,13 @@ class RecommendationService:
                 ).eq("skill_id", skill_id).execute()
 
             else:
-                # Skill is not yet enrolled in user's profile: initialize record
+                # Skill is not yet enrolled in user's profile: initialize record respecting difficulty ceiling
+                raw_diff = lesson.get("difficulty_level")
+                ceiling_map = {1: 50, 2: 70, 3: 85, 4: 95, 5: 100}
+                diff_ceiling = ceiling_map.get(int(raw_diff), 100) if raw_diff is not None else 100
                 if passed and not already_passed:
-                    proficiency_increment = 10
-                    new_proficiency = 30  # Baseline 20 + 10 quiz verified
+                    new_proficiency = min(diff_ceiling, 30)  # Baseline 20 + up to 10 quiz verified
+                    proficiency_increment = max(0, new_proficiency - 20)
                 else:
                     proficiency_increment = 0
                     new_proficiency = 20

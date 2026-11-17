@@ -1,6 +1,6 @@
 // src/pages/LearnerOnboarding.jsx
 // Handles the full learner onboarding flow (career search -> skill assessment).
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/SupabaseClient';
 import { searchCareer, getCareerById, saveSkills, getOnboardingFields } from '../lib/api';
 import Toast from '../components/Toast';
@@ -567,7 +567,7 @@ function CareerCardGrid({ candidates, scopeRedirectNotice, onSelect, onNoneMatch
                 {cand.field_label && (
                   <div className="mono" style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginBottom: '5px' }}>
                     {cand.field_label}
-                    {cand.track_type === 'licensing_companion' ? ' · Licensing & Code Track' : ''}
+                    {cand.track_type === 'companion_licensing' ? ' · Licensing & Code Track' : ''}
                   </div>
                 )}
                 {cand.description && (
@@ -822,7 +822,7 @@ function CareerNotFound({ onRestart }) {
 function SkillAssessment({ career, skills: initialSkills, source, userId, onComplete }) {
   const [skills, setSkills] = useState(initialSkills);
   const [proficiency, setProficiency] = useState(() =>
-    Object.fromEntries(initialSkills.map((s) => [s.id, 0]))
+    Object.fromEntries(initialSkills.map((s) => [s.id, null]))
   );
   const [selectedOptionalIds, setSelectedOptionalIds] = useState(() => new Set());
   const [newSkillName, setNewSkillName] = useState('');
@@ -830,12 +830,22 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
   const [showAddForm, setShowAddForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [deletedSkillHistory, setDeletedSkillHistory] = useState(null);
+  const [attemptedSave, setAttemptedSave] = useState(false);
+  const [undoQueue, setUndoQueue] = useState([]);
+  const undoTimersRef = useRef({});
   const [showOptional, setShowOptional] = useState(false);
   const [showGeneralCompetencies, setShowGeneralCompetencies] = useState(false);
 
+  useEffect(() => {
+    return () => {
+      Object.values(undoTimersRef.current).forEach((t) => clearTimeout(t));
+      undoTimersRef.current = {};
+    };
+  }, []);
+
   const setLevel = (skillId, value) => {
     setProficiency((prev) => ({ ...prev, [skillId]: value }));
+    setError(null);
   };
 
   const toggleOptionalSkill = (skillId) => {
@@ -847,11 +857,25 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
     });
   };
 
+  const dismissUndo = useCallback((undoId) => {
+    if (undoTimersRef.current[undoId]) {
+      clearTimeout(undoTimersRef.current[undoId]);
+      delete undoTimersRef.current[undoId];
+    }
+    setUndoQueue((prev) => prev.filter((item) => item.undoId !== undoId));
+  }, []);
+
   const handleDeleteSkill = (skillId) => {
     const target = skills.find((s) => s.id === skillId);
     if (!target) return;
-    const prevProf = proficiency[skillId] ?? 0;
-    setDeletedSkillHistory({ skill: target, proficiency: prevProf });
+    const prevProf = proficiency[skillId] ?? null;
+    const undoId = `${skillId}-${Date.now()}`;
+
+    setUndoQueue((prev) => [...prev, { undoId, skill: target, proficiency: prevProf }]);
+    undoTimersRef.current[undoId] = setTimeout(() => {
+      delete undoTimersRef.current[undoId];
+      setUndoQueue((prev) => prev.filter((item) => item.undoId !== undoId));
+    }, 4000);
 
     setSkills((prev) => prev.filter((s) => s.id !== skillId));
     setProficiency((prev) => {
@@ -861,25 +885,30 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
     });
   };
 
-  const handleUndoDelete = () => {
-    if (!deletedSkillHistory) return;
-    const { skill, proficiency: restoredProf } = deletedSkillHistory;
-    setSkills((prev) => [skill, ...prev]);
+  const handleUndoDelete = (undoId) => {
+    const entry = undoQueue.find((item) => item.undoId === undoId);
+    if (!entry) return;
+    dismissUndo(undoId);
+    const { skill, proficiency: restoredProf } = entry;
+    setSkills((prev) => (prev.some((s) => s.id === skill.id) ? prev : [skill, ...prev]));
     setProficiency((prev) => ({ ...prev, [skill.id]: restoredProf }));
-    setDeletedSkillHistory(null);
   };
 
   const handleResetSkills = () => {
+    Object.values(undoTimersRef.current).forEach((t) => clearTimeout(t));
+    undoTimersRef.current = {};
+    setUndoQueue([]);
     setSkills(initialSkills);
     setSelectedOptionalIds(new Set());
     setProficiency((prev) => {
       const reset = {};
       initialSkills.forEach((s) => {
-        reset[s.id] = prev[s.id] ?? 0;
+        reset[s.id] = prev[s.id] ?? null;
       });
       return reset;
     });
-    setDeletedSkillHistory(null);
+    setAttemptedSave(false);
+    setError(null);
   };
 
   const handleAddSkill = (e) => {
@@ -898,7 +927,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
     };
 
     setSkills((prev) => [...prev, newSkill]);
-    setProficiency((prev) => ({ ...prev, [tempId]: 0 }));
+    setProficiency((prev) => ({ ...prev, [tempId]: null }));
     setNewSkillName('');
     setShowAddForm(false);
   };
@@ -913,9 +942,21 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
     ...optionalSkills.filter((s) => selectedOptionalIds.has(s.id)),
   ];
 
+  const unratedSkills = activeSkillsToSave.filter(
+    (s) => proficiency[s.id] === null || proficiency[s.id] === undefined
+  );
+  const ratedCount = activeSkillsToSave.length - unratedSkills.length;
+
   const handleSave = async () => {
+    setAttemptedSave(true);
     if (activeSkillsToSave.length === 0) {
       setError('Your skill graph must have at least one skill selected.');
+      return;
+    }
+    if (unratedSkills.length > 0) {
+      setError(
+        `Please select a proficiency level for all skills before continuing (${unratedSkills.length} remaining).`
+      );
       return;
     }
     setLoading(true);
@@ -924,7 +965,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
       await saveSkills(userId, career, activeSkillsToSave, proficiency);
       onComplete({
         career,
-        skills: activeSkillsToSave.map((s) => ({ ...s, proficiency: proficiency[s.id] ?? 0 })),
+        skills: activeSkillsToSave.map((s) => ({ ...s, proficiency: proficiency[s.id] })),
       });
     } catch (err) {
       setError(err.message || 'Failed to save skill profile. Please try again.');
@@ -990,6 +1031,8 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {catSkills.map((skill) => {
               const isIncluded = !isOptInMode || selectedOptionalIds.has(skill.id);
+              const isUnrated =
+                isIncluded && (proficiency[skill.id] === null || proficiency[skill.id] === undefined);
               return (
                 <div
                   key={skill.id}
@@ -1000,7 +1043,11 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
                     gap: '14px',
                     padding: '12px 14px',
                     background: isIncluded ? 'var(--surface)' : 'var(--surface-subtle)',
-                    border: isIncluded ? '1px solid var(--border)' : '1px dashed var(--border)',
+                    border: !isIncluded
+                      ? '1px dashed var(--border)'
+                      : attemptedSave && isUnrated
+                        ? '1px solid var(--status-warning)'
+                        : '1px solid var(--border)',
                     borderRadius: 'var(--r-md)',
                     flexWrap: 'wrap',
                     opacity: isIncluded ? 1 : 0.78,
@@ -1068,6 +1115,17 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
                             {skill.provenance_label}
                           </span>
                         )}
+                        {isUnrated && (
+                          <span
+                            style={{
+                              fontSize: '0.68rem',
+                              fontWeight: 600,
+                              color: attemptedSave ? 'var(--status-warning)' : 'var(--text-muted)',
+                            }}
+                          >
+                            · Select a level
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1133,7 +1191,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
         {career.field_label && (
           <div className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
             {career.field_label}
-            {career.track_type === 'licensing_companion' ? ' · Technical Licensing & Code Compliance Track' : ''}
+            {career.track_type === 'companion_licensing' ? ' · Technical Licensing & Code Compliance Track' : ''}
           </div>
         )}
         {career.description && (
@@ -1410,6 +1468,29 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
         )}
       </div>
 
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '8px',
+          marginBottom: '10px',
+          fontSize: '0.8rem',
+        }}
+      >
+        <span
+          style={{
+            color: unratedSkills.length === 0 ? 'var(--status-success)' : 'var(--text-secondary)',
+            fontWeight: 600,
+          }}
+        >
+          {unratedSkills.length === 0
+            ? `All ${activeSkillsToSave.length} selected skills calibrated`
+            : `${ratedCount} of ${activeSkillsToSave.length} skills rated · Choose a level for each skill above`}
+        </span>
+      </div>
+
       {error && (
         <div className="alert alert--error" style={{ marginBottom: '16px' }}>
           {error}
@@ -1421,7 +1502,7 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
         type="button"
         className="btn btn--primary btn--full"
         onClick={handleSave}
-        disabled={loading}
+        disabled={loading || activeSkillsToSave.length === 0 || unratedSkills.length > 0}
       >
         {loading ? (
           <>
@@ -1436,14 +1517,80 @@ function SkillAssessment({ career, skills: initialSkills, source, userId, onComp
         )}
       </button>
 
-      {deletedSkillHistory && (
-        <Toast
-          message={`Removed "${deletedSkillHistory.skill.name}" from your roadmap.`}
-          confirmLabel="Undo"
-          cancelLabel="Dismiss"
-          onConfirm={handleUndoDelete}
-          onCancel={() => setDeletedSkillHistory(null)}
-        />
+      {undoQueue.length > 0 && (
+        <div
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            bottom: '18px',
+            right: '16px',
+            zIndex: 950,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            width: 'min(340px, calc(100vw - 32px))',
+            pointerEvents: 'none',
+          }}
+        >
+          {undoQueue.map((item) => (
+            <div
+              key={item.undoId}
+              role="status"
+              style={{
+                pointerEvents: 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '10px',
+                padding: '10px 12px',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--r-md)',
+                boxShadow: 'var(--shadow-lg)',
+                fontSize: '0.8rem',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={`Removed "${item.skill.name}"`}
+              >
+                Removed <strong>{item.skill.name}</strong>
+              </span>
+              <button
+                type="button"
+                className="btn btn--ghost btn--xs"
+                style={{ color: 'var(--accent)', fontWeight: 600, flexShrink: 0, padding: '3px 8px' }}
+                onClick={() => handleUndoDelete(item.undoId)}
+              >
+                <RotateCcw size={12} />
+                <span>Undo</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                onClick={() => dismissUndo(item.undoId)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '2px',
+                  display: 'inline-flex',
+                  flexShrink: 0,
+                }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

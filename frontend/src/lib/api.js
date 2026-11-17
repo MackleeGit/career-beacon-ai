@@ -16,34 +16,37 @@ async function request(path, options = {}) {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
 
+  const { headers: optionHeaders, signal: externalSignal, timeoutMs: customTimeoutMs, ...restOptions } = options;
+
   const headers = {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers,
+    ...optionHeaders,
   };
 
   // Guard against hanging requests when connection drops mid-flight
-  const timeoutMs = options.timeoutMs || 75000;
+  const timeoutMs = customTimeoutMs || 75000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const handleExternalAbort = () => controller.abort();
 
-  if (options.signal) {
-    if (options.signal.aborted) {
+  if (externalSignal) {
+    if (externalSignal.aborted) {
       controller.abort();
     } else {
-      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+      externalSignal.addEventListener('abort', handleExternalAbort, { once: true });
     }
   }
 
   let res;
   try {
     res = await fetch(`${BASE_URL}${path}`, {
+      ...restOptions,
       headers,
       signal: controller.signal,
-      ...options,
     });
   } catch (err) {
-    if (options.signal?.aborted) {
+    if (externalSignal?.aborted) {
       const abortErr = new Error('Request aborted');
       abortErr.name = 'AbortError';
       throw abortErr;
@@ -57,6 +60,9 @@ async function request(path, options = {}) {
     throw new Error('Unable to reach the backend service. Please verify your connection.');
   } finally {
     clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', handleExternalAbort);
+    }
   }
 
   if (!res.ok) {
@@ -106,12 +112,19 @@ export async function getOnboardingFields() {
 export async function saveSkills(userId, career, allSkills, proficiencyMap) {
   const isPending = Boolean(career._pending || !career.id);
 
+  const missingRating = allSkills.find(
+    (s) => proficiencyMap?.[s.id] === null || proficiencyMap?.[s.id] === undefined
+  );
+  if (missingRating) {
+    throw new Error(`Please select a proficiency level for "${missingRating.name}" before saving.`);
+  }
+
   // Unified atomic contract: every skill carries its own name, category, and proficiency
   const unifiedSkills = allSkills.map((s) => ({
     skill_id: s.id && !s.id.startsWith('temp-') && s.id.length === 36 ? s.id : null,
     name: s.name.trim(),
     category: s.category || 'General',
-    proficiency: proficiencyMap[s.id] ?? 20,
+    proficiency: proficiencyMap[s.id],
     importance: s.importance || null,
   }));
 
@@ -393,6 +406,26 @@ export function getSessionIcsDownloadUrl(sessionId) {
   return `${BASE_URL}/api/mentor/sessions/${encodeURIComponent(sessionId)}/calendar.ics`;
 }
 
+export async function downloadSessionIcs(sessionId) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  const res = await fetch(getSessionIcsDownloadUrl(sessionId), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error('Failed to download calendar invite.');
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `CareerBeacon-Session-${sessionId}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 
 export async function resetLearnerAccount() {
   return request('/api/onboarding/reset', { method: 'POST' });
@@ -470,6 +503,7 @@ export async function getAdminIngestionPriorities() {
 export async function runAdminNightlyBatch(maxSkills = 5, targetLessonsPerSkill = 3, forceAll = false) {
   return request('/api/admin/ingestion/run-nightly-batch', {
     method: 'POST',
+    timeoutMs: 180000,
     body: JSON.stringify({
       max_skills: maxSkills,
       target_lessons_per_skill: targetLessonsPerSkill,
@@ -481,6 +515,7 @@ export async function runAdminNightlyBatch(maxSkills = 5, targetLessonsPerSkill 
 export async function runAdminDailyDropBatch() {
   return request('/api/admin/daily-drop/run-batch-worker', {
     method: 'POST',
+    timeoutMs: 180000,
   });
 }
 
